@@ -34,3 +34,6 @@ obj3/
 /.claude/settings.local.json
 /CLAUDE.md
 **/TestResults/
+
+# cargo build output for manual runs in rust/ (MSBuild builds under obj/)
+rust/target/

@@ -1,0 +1,19 @@
+dflog
+=====
+
+Mission Planner optionally builds and bundles the dflog native dataflash log
+parser (dflog_ffi.dll / libdflog_ffi.so / libdflog_ffi.dylib) from the Rust
+sources vendored in the top-level rust/ directory. dflog is first-party code
+licensed under GNU GPL version 3, the same license as this application; the
+complete GPLv3 text is provided in the top-level LICENSE file.
+
+Canonical source (vendored from):
+https://github.com/userepo/MissionPlanner/tree/rust/dflog-core (rust/)
+
+Statically linked third-party Rust crates:
+
+- memmap2 (https://crates.io/crates/memmap2) - MIT OR Apache-2.0; used under
+  Apache-2.0, whose text is provided in this directory (Apache-2.0.txt).
+- The Rust standard library is statically linked and is licensed
+  MIT OR Apache-2.0 (https://github.com/rust-lang/rust); used under
+  Apache-2.0 as above.

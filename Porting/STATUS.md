@@ -1019,6 +1019,260 @@ Updated: **2026-09-17**.
   Next executable steps are physical simultaneous-input acceptance on UDP 14550/14551 and, before
   any later release, an intentional `make bump-local-build` from **2 to 3**.
 
+## Native dataflash log core: combined delivery on PR #34 (all four phases on feature/dflog-native-log-core)
+
+- Why one PR: the 2026-09-16 completeness audit above deferred #34 as a phase-1-only change
+  with no application consumer and asked for the complete feature, reviewed against the
+  then-current master, with managed/native parity, native-required tests and package
+  validation for all four RIDs. The stacked branches were propagated 1 -> 2 -> 3 -> 4 on master
+  through #38 (`f1180f672`) and merged onto the PR's head branch, so #34 now carries the whole
+  feature. The four phase sections below stay as the detailed record of each part.
+- Merge notes: two content conflicts, both where #37's TLOG dispatch met phase 3's native
+  DataFlash paths (`Services/DataFlashLog.cs`, `ViewModels/LogBrowseViewModel.cs`), resolved by
+  keeping the TLOG early return ahead of the DataFlash path in both. `DataFlashLog.ReadFields`
+  (phase 3, public) gained the same TLOG guard: a tlog must never reach `DFLogBuffer`, which is
+  the bug #37 fixed. Everything else merged automatically.
+- The audit's criteria, by name:
+  - Managed/native parity: `DflogNativeTests` (index and column parity, 23 cases),
+    `DflogNativeConsumerTests` (the converted consumers, 16 cases) and the new
+    `DflogNativeMcpParityTests` (4 cases) for the consumer master gained in #36/#37: every
+    DataFlash MCP tool - log schema, flight overview, record pages (two pages, since
+    pagination rides on the line numbers the index assigns), field series plain and instanced,
+    the PARM snapshot, the VIBE report and the ISBH/ISBD spectrum - runs through
+    `McpLogCatalog.Read` (the server's cached-reader path) on all four corpus logs, managed
+    scan then native scan, and the JSON must be byte-identical. Exact equality is the right bar
+    there: those tools read rows through the enumerator and the native scan replaces only the
+    index, so any difference is a defect. Every output is real (1.2-1.3k PARM entries per
+    log, VIBE sensors, batches on rover and copter-isbd), not a rejection both scanners repeat.
+  - Native-required tests: `DFLOG_REQUIRE_NATIVE=1` on the Linux test step turns every parity
+    skip into a failure, and the ABI-drift test fails a built-but-unloadable library.
+  - Package validation for all four RIDs: the linux-x64 `.deb` payload, the win-x64 ZIP/MSI
+    required files, and the Mach-O architecture assert for both macOS RIDs, in the CI and
+    release workflows and in both local package scripts.
+- Verified on the combined tree (Windows host, Rust toolchain present): `cargo fmt --check`,
+  `cargo clippy --workspace --all-targets` and `cargo test` (24+2) clean; Release solution
+  build 0 errors, 3 warnings (the pre-existing `PInvoke005` lines in
+  `ExtLibs/WinUSBNet/NativeMethods.txt`, AnyCPU on a Windows host, none from this work);
+  dflog and MCP test groups 111/111 with `DFLOG_REQUIRE_NATIVE=1`; full suite 1677/1689, the
+  12 being the 11 known environment-dependent failures plus `PluginRuntimeTests`, which
+  passes on rerun (13/13); all six migration/artifact gates pass on the branch content -
+  five in this checkout, and `check-port-source-resolution` (708/708) in a fresh worktree,
+  because this checkout's stale CRLF copies of LF blobs trip its byte-identity checks;
+  `git diff --check` clean apart from upstream's `MavlinkParse.cs` lines, byte-identical to
+  master. Not exercised here: `lipo` - the first CI run on the pushed branch is the proof for
+  the two macOS legs.
+- 2026-09-16 review of the combined diff (eight angles, every finding verified against the
+  code, one empirically). Fixed here: the log browser's rows view had been rebuilt in phase 3 by
+  zipping per-field numeric series from `ReadFields`, which emptied the grid and the CSV export
+  for any type with a text column (PARM/MSG/MODE showed 0 rows on the corpus against 1373 PARM
+  rows on master), formatted every cell as `0.###` (GPS.Lat -35.3632621 became -35.363), and
+  decoded the whole log for a 5000-row preview; it is the row-oriented enumerator again (one
+  record per row, the decoder's display strings, `Take(maxRows)`), pinned by
+  `Rows_view_keeps_text_columns_and_decoder_strings` with and without the library. The
+  per-instance `SaveCache` decision read the process-wide `LastScanNative` mirror, which a
+  concurrent construction (LogIndexService's parallel opens, the MCP catalog's worker) can
+  rewrite; it now reads a method-local. The FFI column offsets were 32-bit products (overflow
+  past ~45M rows of a 7-field query); they are 64-bit. The column fast path is gated on `binary`
+  like the scan, so a text .log no longer gets an extra native scan and a WARN per field. The
+  timed track reads GPS Lat/Lng through one `ReadFields` open instead of two `ReadField` opens.
+  Deferred, recorded here: every column-querying buffer still scans the file natively twice
+  (`dflog_scan_file` for the index, then `dflog_open` rebuilding its own) - removing that needs
+  an FFI accessor for the open handle's index and a crate bump; the ISBH/ISBD merge is written in
+  both FFT and spectrogram, mirroring master's duplicated enumeration loops. `ReadField` is now
+  `ReadFields` with one field: the private per-field core that duplicated the native block is
+  gone, and the managed fallback enumerates the log once for every requested field instead of
+  once per field, pinned against a direct decoder walk by
+  `Read_fields_fallback_matches_the_enumeration_path`. After the fixes:
+  dflog/MCP/log-browser/expression groups 139/139 with `DFLOG_REQUIRE_NATIVE=1`; full suite
+  1679/1691, the same 11 environment-dependent failures plus the flaky `PluginRuntimeTests` case.
+- Remaining blocker: none. Next executable step: push the combined branch to PR #34, rewrite
+  its title and description as the complete feature mapped to the three criteria above, and
+  read the four RID legs of the run, macOS architecture asserts included.
+
+## Native dataflash log core, phase 4: CI and packaging wiring (part 4 of the combined delivery above)
+
+- ci.yml: the Linux test step sets `DFLOG_REQUIRE_NATIVE=1` (the runner has a Rust toolchain,
+  so a missing or unloadable native library now fails the parity tests loudly instead of letting
+  every one of them skip); the Debian payload check asserts
+  `usr/lib/missionplanner10/libdflog_ffi.so`; the Windows ZIP/MSI required-files list gains
+  `dflog_ffi.dll`; the macOS job installs both Apple rustup targets (the arm64 runner
+  cross-compiles osx-x64) and asserts that `libdflog_ffi.dylib` in the publish output is a
+  Mach-O for the RID's CPU (`lipo -archs` = `x86_64` / `arm64`), not merely present.
+- release.yml: the package matrix installs the Apple rustup targets for the osx rows and runs
+  the same architecture assert right after the macOS publish. Linux and Windows release
+  payloads are covered by the same `package.sh` scripts as CI.
+- build/linux/package.sh and build/windows/package.sh assert the native library in the publish
+  payload next to their existing required-file checks, so every packaging path - CI, release,
+  and local - fails loudly rather than shipping a silently managed-parser-only app. A local
+  developer without a Rust toolchain still builds and runs the app normally; only packaging
+  demands the library.
+- Verified: both workflows parse (yaml), both package scripts pass `bash -n`, a local
+  `build/windows/package.sh zip` run exercises the new assert against a real publish, and the
+  full dflog test set passes locally with `DFLOG_REQUIRE_NATIVE=1` set (the failure direction
+  was fault-injected in phase 2).
+- 2026-09-16, folded into the combined branch: the macOS checks were upgraded from a size test
+  to the architecture assert above. PR #34's first live run (34002587483) had established the
+  osx-x64 dylib's architecture only by construction - the library can reach the publish output
+  only through the `--target x86_64-apple-darwin` path - and nothing in CI inspected the Mach-O
+  header. Now it does, in both workflows, per RID.
+- Remaining blocker: none. Next executable step: land the combined branch on PR #34 (the
+  maintainer's 2026-09-16 completeness audit deferred the phase-1-only PR and asked for the
+  full feature: managed/native parity, native-required tests, package validation for all
+  four RIDs), with the measured numbers from the phase-3 checkpoint in the description.
+
+## Native dataflash log core, phase 3: converted consumers (part 3 of the combined delivery above)
+
+- `DataFlashLog.ReadField` takes the native columnar path (value column plus the same time field
+  `DFItem.timems` resolves - TimeMS, then TimeUS, then T - with the managed enumeration loop as
+  in-place fallback); this feeds LogBrowse curves and the timed track. New `ReadFields` decodes
+  one type's fields in a single pass (the timed track's GPS Lat/Lng). The rows view was converted
+  onto it too and reverted in the combined-delivery review above - a text table cannot be built
+  from numeric series. Seconds are computed with the same two-step division as the managed path
+  - a single multiplication by the combined reciprocal differs by 1 ULP and the parity tests
+  catch it.
+- `DataFlashExpressionEvaluator.Evaluate` (the preset/expression graphing path) gained a
+  columnwise evaluation: per referenced type one native decode (fields + time field + instance
+  column when referenced), then the exact latest-value merge the enumeration performs, replayed
+  in global record order via native linenos - the order-sensitive lowpass/delta functions see the
+  same sequence. Any fetch failure falls back to the unchanged enumeration path.
+- `ConfigFFTViewModel` collects ISBH/ISBD batch samples (header/data state machine merged by line
+  number) and IMU/IMU2/IMU3 series natively; `Spectrogram` gained the equivalent ISBH/ISBD fast
+  path (ported from the upstream fork). Deliberately not converted: `OfflineMagFitService` and
+  `LogIndexService` (their `CancellationReadStream` wrapper hides the file path by design),
+  `ReadTrack`/KML export (wall-clock `item.time` semantics, cold path), `ReadOverlay`/messages/
+  parameters (string-valued).
+- Value semantics note, also in the code comments: the managed paths parse display strings
+  (floats rounded to 7 significant digits); the native paths carry raw decoded values. Parity
+  tests bound the difference (timestamps tick-exact; values within display rounding; FFT dB
+  magnitudes within 0.01 dB - rounding amplified through bin cancellation and the log scale).
+- 'M' (flight mode) fields are excluded from every native path (`DFLogBuffer.GetFieldFormatChar`
+  gate in the field reads and the evaluator): the managed decoder renders them as
+  resolver-dependent text, natively they are plain numbers, and a graph must show the same thing
+  with and without the library. Making both paths numeric (which would make MODE graphable) is a
+  deliberate behavior change to raise separately. The FFT/spectrogram batch paths also verify
+  that the numeric and array queries describe the same row count before indexing one by the
+  other, falling back to the enumeration loop otherwise.
+- Tests: `DflogNativeConsumerTests` (16 cases) - field reads, multi-field reads, five expression
+  shapes (single type, interleaved types, instanced reference, lowpass, delta), ISBH and IMU FFT,
+  spectrogram, the mode-field gate (engagement counter must not move), and an always-on
+  fallback-equality test for the multi-field read - each parity case run managed-vs-native with
+  the engagement counter (`DFLogBuffer.NativeColumnHits`) proving the fast path took effect.
+  Parity cases skip on hosts without the library; with the library removed, the full
+  dflog/dataflash/expression set still passes (fallback verified), as does a full-suite run with
+  `DFLOG_NATIVE=0`. Full suite 1568/1580; the failures are the known environment-dependent
+  set, unchanged from master.
+- Measured (medians of 3, warm file cache) over three logs: the 247.7 MiB concatenated SITL
+  corpus (6.37M records; 39k ATT / 196k IMU rows) and two real flight logs from Andrew
+  Tridgell's public archive (uav.tridgell.net/tmp): 00000145.BIN (139.8 MiB, 2024, 169k ATT
+  rows) and 4.0.9Stable_AltitudeRunaway.BIN (259.4 MiB, 2021, 906k IMU rows). Native vs
+  managed: open 1.5-2.4x (0.48 s -> 0.20 s on the 259 MiB log); ReadField (one curve, open +
+  decode) 1.4-2.0x; rows view (7 IMU fields) 7.6 s -> 0.67 s, 3.2 s -> 0.32 s, and 10.4 s ->
+  0.52 s (20x, the dense-IMU real log) - one pass and one open instead of seven, measured on the
+  `ReadFields`-based rows view that the combined-delivery review later reverted, so this number
+  no longer describes the shipped rows view (a bounded row enumerator); decode alone on
+  an open buffer 3-10x; expression evaluation 1.4-1.9x. Row counts cross-checked managed vs
+  native before timing on every log. Observation for a later change: every consumer re-opens the
+  DFLogBuffer per call, so the open dominates single-curve numbers - a shared buffer per loaded
+  log would compound these wins. Logs over 300 MiB currently cannot A/B at all: the managed
+  path's unguarded BinaryFormatter SaveCache (the phase-2 latent-bug note) throws on .NET 10.
+- Remaining blocker: none for this phase. Next executable step: phase 4 - rustup targets in
+  ci.yml/release.yml, `DFLOG_REQUIRE_NATIVE=1` in CI, and packaging assertions for the shipped
+  library.
+
+## Native dataflash log core, phase 2: P/Invoke bindings and DFLogBuffer fast paths (part 2 of the combined delivery above)
+
+- `ExtLibs/Utilities/DFLogNative.cs` (ported from the upstream fork, ABI v5): internal P/Invoke
+  surface over `dflog_ffi` - availability probe (`Available`, gated on the ABI version), whole-log
+  index scan (`TryScan`), and a `ColumnReader` for typed column queries, instance filtering,
+  int16[32] array columns and the GPS time base. Every entry point returns false instead of
+  throwing; the standard .NET native probing finds the library next to the apphost (no resolver
+  needed - unlike GDAL/VLC the library is bundled, not system-provided).
+- `DFLogBuffer` gained the native fast paths: `setlinecount` uses the native index scan for
+  path-backed binary logs (managed scanner unchanged as fallback), `TryGetColumnsNative` /
+  `TryGetArrayColumnNative` (with per-instance filtering and `GetInstanceFieldName`), and
+  `DFLog.GetTimeFromMs` for columnwise time axes. `UseNativeScan` precedence: explicit set >
+  `DFLOG_NATIVE` env > `dflog_native` setting > on by default; `DFLogNative.Available` gates the
+  actual calls, so hosts without the library keep exactly today's behavior. The native path also
+  side-steps the index cache (originally the `BinaryFormatter` cache with its latent .NET 10
+  throw; master has since replaced it via PR #25 and hardened it in `a4f24e82c` - see the merge
+  checkpoint below for how the two compose).
+- Consumers deliberately NOT converted yet (phase 3): `LogBrowseViewModel`, `ConfigFFTViewModel`,
+  `SpectrogramWindow`, `OfflineMagFitService` (the last needs its `CancellationReadStream` wrapper
+  reworked to expose a path before the native path can engage).
+- Tests: `DflogNativeTests` (23 cases) - native-vs-managed index parity over the four vendored
+  corpus logs AND over derived malformed variants (truncation, mid-record truncation, corrupt FMT
+  length byte, garbage prefix flipping the binary sniff - all line-for-line string equality),
+  typed-column/instance/array/time-base parity against the managed enumerator, truncated-tail
+  behavior, and clean failure for unknown fields/types. All return early on hosts without the
+  native library (NativeGdalMapTests pattern; verified both modes), with two guards against
+  silent degradation: a built-but-unloadable library (ABI drift) fails a dedicated test, and
+  `DFLOG_REQUIRE_NATIVE=1` turns the skip into a failure for hosts that must have the native
+  path (set it in CI once phase 4 installs the toolchain). Both failure modes verified by fault
+  injection (corrupted library file; library removed with the variable set). The corpus is copied from
+  `rust/testdata` at build time - no new committed binaries. Full suite 1554/1565 locally; the
+  failures are the known environment-dependent set plus one known-flaky UDP listener test,
+  unchanged from master. Project/binary audit gates pass.
+- 2026-08-31 merge checkpoint: merged `feature/dflog-native-log-core` (carrying master through
+  `1cbe17b87`, which includes the PR #25 index-cache replacement and its `a4f24e82c` hardening)
+  into this branch. One conflict, in `setlinecount`, resolved to compose both change sets: a
+  native-capable open skips the hardened cache in both directions (never loads, never saves - a
+  fresh native index is cheap, and the cache stays a managed-fallback optimization), the managed
+  fallback keeps the working cache, and the save/load calls use the new `CacheSourceIdentity`
+  signatures. `DflogBufferCacheTests.CacheScope` now pins `UseNativeScan = false` (assembly-wide
+  test parallelization is disabled, so the static seams are safe) and a new
+  `Native_capable_open_skips_the_cache_in_both_directions` test pins the composition with the
+  native library confirmed present. Full suite 1594/1605; the 11 failures are the known
+  environment-dependent set, unchanged from master.
+- Remaining blocker: none for this phase. Next executable step: phase 3 - convert
+  `LogBrowseViewModel` columnar reads, then the FFT/spectrogram ISBD path, re-measuring against a
+  large real log; phase 4 wires rustup targets into ci.yml/release.yml for the four RIDs.
+
+## Native dataflash log core, phase 1: vendored Rust workspace and build plumbing (part 1 of the combined delivery above)
+
+- Vendored the dflog parser core from the upstream fork (userepo/MissionPlanner
+  `rust/dflog-core` branch, crates 0.7.1) into the top-level `rust/` directory: `dflog-core`
+  (parser/index/columnar access, bug-for-bug compatible with `DFLogBuffer`/`BinaryLog`) and
+  `dflog-ffi` (`dflog_ffi` cdylib, C ABI v5, panic-safe boundary), plus the SITL corpus in
+  `rust/testdata` that the golden characterization tests pin exact values against. The CLI,
+  Python bindings and fuzz targets stay upstream; parser changes land there first and are
+  re-vendored. `cargo test` (24+2), `cargo fmt --check` and `cargo clippy --workspace
+  --all-targets` are clean in this tree.
+- `MissionPlanner.csproj` builds the cdylib from source when `cargo` is on the PATH
+  (`BuildDflogNative` before `PrepareForBuild`, mirroring `FetchMacSimpleBle`): RID-mapped
+  `--target` triples for win-x64/linux-x64/osx-x64/osx-arm64, host-native build when no RID is
+  set, output under `obj/dflog/` so neither MSBuild nor manual cargo runs (`rust/target/` now
+  gitignored) can dirty the build-identity check. Without cargo the build prints one notice and
+  produces today's app unchanged - the managed parser remains the runtime fallback. The built
+  library is injected as `Content` before `AssignTargetPaths`, so it flows into output, publish,
+  and every package payload; verified end to end with a `win-x64` self-contained publish carrying
+  `dflog_ffi.dll` (191 KB, `strip = true` release profile for the lintian gate).
+- No binaries are checked in and no new project files exist: `check-project-artifacts.sh`,
+  `check-binary-artifacts.sh` and `check-native-surface.sh` all pass unchanged. Third-party
+  notice added as `LICENSES/dflog-NOTICE.txt` (memmap2 and the Rust standard library,
+  Apache-2.0; version-free filename since the vendored source re-syncs from upstream). Full C# suite: 1532/1544 locally, the failures being the known
+  environment-dependent set, unchanged from master.
+- 2026-09-05, first live CI run (PR #34): the `package-macos (osx-x64)` leg failed. The macOS
+  runners are Apple Silicon, so their preinstalled Rust carries only `aarch64-apple-darwin`, and
+  `BuildDflogNative` probed for cargo's presence but not for its ability to build the requested
+  target - so a cross-build to `x86_64-apple-darwin` reached cargo and died on `can't find crate
+  for core` (MSB3073), failing the application build. The other three legs passed because each
+  one's triple is its runner's native target. Two fixes: the macOS job now installs both Apple
+  targets (the step phase 4 already carried, pulled forward byte-identically so the stack merge
+  stays a no-op), and the skip condition is now target-aware, since a toolchain that cannot build
+  for the requested RID is the same situation as no toolchain at all - the documented graceful
+  degradation had a hole that also hit any Apple Silicon developer publishing `osx-x64` locally.
+  The target probe reads `rustup target list --installed` from `rust/` so the toolchain file picks
+  the same toolchain cargo will use; it matches by substring and treats an unreadable list as
+  "attempt the build", so an unexpected reading fails loudly through cargo instead of silently
+  skipping the native library. All three paths verified locally: an uninstalled target
+  (`osx-x64` on this Windows host) prints the notice and exits 0, an installed target
+  (`win-x64`) still builds the cdylib, and a host-native build with no RID is unchanged.
+- Remaining blocker: none for this phase. Next executable step: phase 2 - port `DfLogNative`
+  P/Invoke bindings into `ExtLibs/Utilities` on the `NativeGdalApi` availability pattern, add the
+  `DFLogBuffer` native fast paths, and cover them with synthesized-log parity tests that skip
+  when the native library is absent. The remaining CI wiring for the four RIDs (the
+  `DFLOG_REQUIRE_NATIVE` test gate and the packaging payload assertions) is phase 4.
+
 ## NV4 parameter-catalog synchronization and Debian handoff
 
 - The Hermes source checkpoint is clean GTU `master == origin/master`

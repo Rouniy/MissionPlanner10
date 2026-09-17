@@ -38,11 +38,14 @@ public class DflogBufferCacheTests {
   }
 
   /// <summary>
-  /// Lowers the cache threshold so kilobyte fixtures exercise the cache, and
-  /// removes the per-user cache file on the way out.
+  /// Lowers the cache threshold so kilobyte fixtures exercise the cache, pins
+  /// the managed scan path (native-capable opens deliberately skip the index
+  /// cache in both directions), and removes the per-user cache file on the
+  /// way out.
   /// </summary>
   private sealed class CacheScope : IDisposable {
     private readonly long _oldThreshold;
+    private readonly bool _oldUseNativeScan;
 
     public DirectoryInfo Dir { get; }
     public string LogPath { get; }
@@ -50,7 +53,9 @@ public class DflogBufferCacheTests {
 
     public CacheScope() {
       _oldThreshold = DFLogBuffer.CacheThresholdBytes;
+      _oldUseNativeScan = DFLogBuffer.UseNativeScan;
       DFLogBuffer.CacheThresholdBytes = 1;
+      DFLogBuffer.UseNativeScan = false;
       Dir = Directory.CreateTempSubdirectory("DflogBufferCacheTests");
       LogPath = Path.Combine(Dir.FullName, "test.bin");
     }
@@ -67,6 +72,7 @@ public class DflogBufferCacheTests {
 
     public void Dispose() {
       DFLogBuffer.CacheThresholdBytes = _oldThreshold;
+      DFLogBuffer.UseNativeScan = _oldUseNativeScan;
       try {
         Dir.Delete(true);
       } catch (IOException) {
@@ -129,6 +135,41 @@ public class DflogBufferCacheTests {
     using var cached = new DFLogBuffer(scope.LogPath);
     Assert.True(cached.LastLoadFromCache);
     Assert.Equal(scanned, Lines(cached));
+  }
+
+  /// <summary>
+  /// The contract between the cache and the native scanner: a native-capable
+  /// open neither loads nor saves the index cache - a fresh native index is
+  /// cheap, and the cache stays a managed-fallback optimization.
+  /// </summary>
+  [Fact]
+  public void Native_capable_open_skips_the_cache_in_both_directions() {
+    using var scope = new CacheScope();
+    File.WriteAllBytes(scope.LogPath, BuildLog(50));
+
+    // seed a cache from the pinned managed path
+    using (var buffer = new DFLogBuffer(scope.LogPath)) {
+      scope.TrackCache(buffer);
+    }
+    string cache = scope.RequireCache();
+
+    DFLogBuffer.UseNativeScan = true;
+    if (!DFLogNative.Available) {
+      // no native library on this host - the skip path is unreachable
+      return;
+    }
+
+    using (var buffer = new DFLogBuffer(scope.LogPath)) {
+      Assert.True(DFLogBuffer.LastScanNative, "native scan did not engage");
+      Assert.False(buffer.LastLoadFromCache,
+          "a native-capable open loaded the index cache");
+    }
+
+    File.Delete(cache);
+    using (new DFLogBuffer(scope.LogPath)) {
+    }
+    Assert.False(File.Exists(cache),
+        "a native-capable open saved an index cache");
   }
 
   [Fact]

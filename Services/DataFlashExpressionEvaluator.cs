@@ -36,9 +36,136 @@ internal static class DataFlashExpressionEvaluator {
     }
 
     var compiled = Compile(expression, references);
+    using var log = new DFLogBuffer(path);
+
+    IReadOnlyList<(double, double)> answer =
+        TryEvaluateColumnwise(log, references, compiled)
+        ?? EvaluateByEnumeration(log, references, compiled);
+
+    if (answer.Count == 0) {
+      throw new InvalidOperationException($"'{expression}' produced no finite values.");
+    }
+    return answer;
+  }
+
+  /// <summary>
+  /// Native fast path: fetches every referenced type's columns in one typed
+  /// decode each, then replays the exact latest-value-per-reference merge the
+  /// enumeration path performs, in global record order (native linenos are
+  /// record indexes, so interleaving across types is preserved - the
+  /// order-sensitive lowpass/delta functions see the same sequence). Returns
+  /// null when any column cannot be fetched natively; values are the raw
+  /// decoded values, where the enumeration path parses display strings that
+  /// round floats to 7 significant digits.
+  /// </summary>
+  private static List<(double, double)>? TryEvaluateColumnwise(
+      DFLogBuffer log, IReadOnlyList<DataFlashFieldReference> references, Expression compiled) {
+    var streams = new List<TypeColumns>();
+    foreach (var group in references.GroupBy(
+                 reference => reference.BaseType, StringComparer.OrdinalIgnoreCase)) {
+      var groupReferences = group.ToList();
+      // mixed-case references to one type are pathological; let the
+      // enumeration path define the behavior
+      if (groupReferences.Select(reference => reference.BaseType).Distinct().Count() > 1) {
+        return null;
+      }
+
+      string type = groupReferences[0].BaseType;
+      if (DataFlashLog.TimeField(log, type) is not { } time) {
+        return null;
+      }
+
+      // 'M' (flight mode) fields render as resolver-dependent text in the
+      // enumeration path but decode as plain numbers natively - keep any
+      // expression touching one on the enumeration path
+      if (groupReferences.Any(
+              reference => log.GetFieldFormatChar(type, reference.Field) == 'M')) {
+        return null;
+      }
+
+      string? instanceField = null;
+      if (groupReferences.Any(reference => reference.Instance != null)) {
+        instanceField = log.GetInstanceFieldName(type);
+        if (instanceField == null) {
+          return null;
+        }
+      }
+
+      IEnumerable<string> queried = groupReferences.Select(reference => reference.Field)
+          .Append(time.field);
+      if (instanceField != null) {
+        queried = queried.Append(instanceField);
+      }
+      string[] query = queried.Distinct().ToArray();
+      if (!log.TryGetColumnsNative(type, query, out long[] linenos, out double[][] columns)) {
+        return null;
+      }
+
+      streams.Add(new TypeColumns(
+          Linenos: linenos,
+          Seconds: columns[Array.IndexOf(query, time.field)]
+              .Select(v => v / time.divisorToMs / 1000.0).ToArray(),
+          InstanceValues: instanceField == null
+              ? null
+              : columns[Array.IndexOf(query, instanceField)],
+          References: groupReferences.Select(reference => (
+              reference,
+              columns[Array.IndexOf(query, reference.Field)],
+              reference.Instance == null
+                  ? (double?)null
+                  : double.Parse(reference.Instance, CultureInfo.InvariantCulture))).ToList()));
+    }
+
     var values = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
     var answer = new List<(double, double)>();
-    using var log = new DFLogBuffer(path);
+    var positions = new int[streams.Count];
+    while (true) {
+      int best = -1;
+      long bestLineno = long.MaxValue;
+      for (int s = 0; s < streams.Count; s++) {
+        if (positions[s] < streams[s].Linenos.Length && streams[s].Linenos[positions[s]] < bestLineno) {
+          best = s;
+          bestLineno = streams[s].Linenos[positions[s]];
+        }
+      }
+      if (best == -1) {
+        break;
+      }
+
+      TypeColumns stream = streams[best];
+      int row = positions[best]++;
+      bool updated = false;
+      foreach ((DataFlashFieldReference reference, double[] column, double? instance) in
+               stream.References) {
+        if (instance.HasValue && stream.InstanceValues![row] != instance.Value) {
+          continue;
+        }
+        values[reference.Text] = column[row];
+        updated = true;
+      }
+      if (!updated || values.Count != references.Count) {
+        continue;
+      }
+      foreach (var reference in references) {
+        compiled.setArgumentValue(reference.Argument, values[reference.Text]);
+      }
+      double result = compiled.calculate();
+      if (double.IsFinite(result)) {
+        answer.Add((stream.Seconds[row], result));
+      }
+    }
+
+    return answer;
+  }
+
+  private sealed record TypeColumns(
+      long[] Linenos, double[] Seconds, double[]? InstanceValues,
+      List<(DataFlashFieldReference Reference, double[] Column, double? Instance)> References);
+
+  private static List<(double, double)> EvaluateByEnumeration(
+      DFLogBuffer log, IReadOnlyList<DataFlashFieldReference> references, Expression compiled) {
+    var values = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+    var answer = new List<(double, double)>();
     string[] selectors = references.Select(reference => reference.Type)
         .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
@@ -67,9 +194,6 @@ internal static class DataFlashExpressionEvaluator {
       }
     }
 
-    if (answer.Count == 0) {
-      throw new InvalidOperationException($"'{expression}' produced no finite values.");
-    }
     return answer;
   }
 

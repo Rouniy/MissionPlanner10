@@ -69,26 +69,77 @@ public class DataFlashLog {
     return track;
   }
 
-  public static IReadOnlyList<(double time, double value)> ReadField(string binPath, string msgType, string field) {
-    if (Mcp.McpTelemetryLog.IsTlog(binPath)) { return Mcp.McpTelemetryLog.Series(binPath, msgType, field); }
-    var data = new List<(double time, double value)>();
+  public static IReadOnlyList<(double time, double value)> ReadField(string binPath, string msgType, string field) =>
+      ReadFields(binPath, msgType, new[] { field })[0];
 
+  /// <summary>
+  /// Reads several fields of one message type with a single pass over the
+  /// log, natively or managed. Native values are the raw decoded values; the
+  /// managed path parses the decoder's display strings, which round floats
+  /// to 7 significant digits. 'M' (flight mode) fields keep every requested
+  /// field on the managed path: the display string is resolver-dependent
+  /// text there, a plain number natively, and a graph must show the same
+  /// thing either way.
+  /// </summary>
+  public static IReadOnlyList<IReadOnlyList<(double time, double value)>> ReadFields(
+      string binPath, string msgType, IReadOnlyList<string> fields) {
+    if (Mcp.McpTelemetryLog.IsTlog(binPath)) {
+      return fields.Select(field => Mcp.McpTelemetryLog.Series(binPath, msgType, field)).ToList();
+    }
     using var log = new DFLogBuffer(binPath);
 
-    foreach (var item in log.GetEnumeratorType(new[] { msgType })) {
-      var raw = item[field];
-      if (raw == null) {
-        continue;
+    if (TimeField(log, msgType) is { } time
+        && fields.All(f => log.GetFieldFormatChar(msgType, f) != 'M')) {
+      // the time field may itself be one of the requested fields - never
+      // query a duplicate column name
+      string[] query = fields.Contains(time.field)
+          ? fields.ToArray()
+          : fields.Append(time.field).ToArray();
+      if (log.TryGetColumnsNative(msgType, query, out _, out double[][] columns)) {
+        double[] raw = columns[Array.IndexOf(query, time.field)];
+        double[] seconds = raw.Select(v => v / time.divisorToMs / 1000.0).ToArray();
+        return fields.Select((_, index) => (IReadOnlyList<(double, double)>)seconds
+            .Select((s, row) => (s, columns[index][row])).ToList()).ToList();
       }
-
-      if (!double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var value)) {
-        continue;
-      }
-
-      data.Add((item.timems / 1000.0, value));
     }
 
-    return data;
+    // managed fallback: one enumeration shared by every field, each value
+    // parsed from its display string exactly as before
+    var series = fields.Select(_ => new List<(double time, double value)>()).ToList();
+    foreach (var item in log.GetEnumeratorType(new[] { msgType })) {
+      double seconds = item.timems / 1000.0;
+      for (int f = 0; f < fields.Count; f++) {
+        var raw = item[fields[f]];
+        if (raw != null
+            && double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var value)) {
+          series[f].Add((seconds, value));
+        }
+      }
+    }
+
+    return series;
+  }
+
+  /// <summary>
+  /// The time field DFLog.DFItem.timems reads for <paramref name="msgType"/>
+  /// (TimeMS, then TimeUS, then T) and the divisor that turns it into
+  /// milliseconds, or null when the type has none - callers should then keep
+  /// the managed path and its timems-is-zero behavior. Seconds must be
+  /// computed as (value / divisorToMs) / 1000.0 - the same two-step division
+  /// the enumeration path performs - because a single multiplication by the
+  /// combined reciprocal differs by 1 ULP.
+  /// </summary>
+  internal static (string field, double divisorToMs)? TimeField(DFLogBuffer log, string msgType) {
+    if (log.dflog.FindMessageOffset(msgType, "TimeMS") >= 0) {
+      return ("TimeMS", 1.0);
+    }
+    if (log.dflog.FindMessageOffset(msgType, "TimeUS") >= 0) {
+      return ("TimeUS", 1000.0);
+    }
+    if (log.dflog.FindMessageOffset(msgType, "T") >= 0) {
+      return ("T", 1.0);
+    }
+    return null;
   }
 
   public static void ExportKml(string binPath, string outKmlPath) {
