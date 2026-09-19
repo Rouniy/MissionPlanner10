@@ -19,6 +19,7 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
 
   private TcpSerialHostListener? _tcpHost;
   private CountingCommsSerial? _stream;
+  private volatile bool _writeBackEnabled;
 
   public SerialPassThroughViewModel() {
     RefreshPorts();
@@ -62,6 +63,7 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
       _stream != null && _stream.IsOpen || _tcpHost != null;
 
   partial void OnAllowWriteBackChanged(bool value) {
+    _writeBackEnabled = value;
     _comPort.MirrorStreamWrite = value;
     if (_stream != null) {
 
@@ -104,8 +106,12 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
             _stream = new CountingCommsSerial(tcp);
             _comPort.MirrorStream = _stream;
             _comPort.MirrorStreamWrite = AllowWriteBack;
+            foreach (var mirror in _comPort.Mirrors.Where(
+                mirror => ReferenceEquals(mirror.MirrorStream, _stream))) {
+              mirror.PollInput = false;
+            }
             _tcpHost = new TcpSerialHostListener(
-                IPAddress.Any, 14550, tcp, OnTcpClientConnected);
+                IPAddress.Any, 14550, tcp, OnTcpClientConnected, OnTcpDataReceived);
             ConnectButtonText = "Stop";
             Status = "Listening on TCP 14550 — waiting for a client…";
             return;
@@ -144,6 +150,18 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
         }
       });
 
+  private void OnTcpDataReceived(TcpSerialHostListener host, byte[] buffer, int count) {
+    CountingCommsSerial? stream = Volatile.Read(ref _stream);
+    if (!ReferenceEquals(Volatile.Read(ref _tcpHost), host) || stream == null) {
+      return;
+    }
+
+    stream.CountReceived(count);
+    if (_writeBackEnabled) {
+      _comPort.WriteMirrorDataToVehicle(buffer, 0, count);
+    }
+  }
+
   private void Stop() {
     try {
       Interlocked.Exchange(ref _tcpHost, null)?.Dispose();
@@ -178,11 +196,15 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
 
   private sealed class CountingCommsSerial : ICommsSerial {
     private readonly ICommsSerial _inner;
+    private long _txCount;
+    private long _rxCount;
 
     public CountingCommsSerial(ICommsSerial inner) => _inner = inner;
 
-    public long TxCount { get; private set; }
-    public long RxCount { get; private set; }
+    public long TxCount => Interlocked.Read(ref _txCount);
+    public long RxCount => Interlocked.Read(ref _rxCount);
+
+    public void CountReceived(int count) => Interlocked.Add(ref _rxCount, count);
 
     public Stream BaseStream => _inner.BaseStream;
     public int BaudRate { get => _inner.BaudRate; set => _inner.BaudRate = value; }
@@ -207,14 +229,14 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
 
     public int Read(byte[] buffer, int offset, int count) {
       int n = _inner.Read(buffer, offset, count);
-      RxCount += n;
+      Interlocked.Add(ref _rxCount, n);
       return n;
     }
 
     public int ReadByte() {
       int b = _inner.ReadByte();
       if (b >= 0) {
-        RxCount++;
+        Interlocked.Increment(ref _rxCount);
       }
 
       return b;
@@ -223,7 +245,7 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
     public int ReadChar() {
       int c = _inner.ReadChar();
       if (c >= 0) {
-        RxCount++;
+        Interlocked.Increment(ref _rxCount);
       }
 
       return c;
@@ -231,29 +253,29 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
 
     public string ReadExisting() {
       string s = _inner.ReadExisting() ?? string.Empty;
-      RxCount += s.Length;
+      Interlocked.Add(ref _rxCount, s.Length);
       return s;
     }
 
     public string ReadLine() {
       string s = _inner.ReadLine() ?? string.Empty;
-      RxCount += s.Length;
+      Interlocked.Add(ref _rxCount, s.Length);
       return s;
     }
 
     public void Write(string text) {
       _inner.Write(text);
-      TxCount += text?.Length ?? 0;
+      Interlocked.Add(ref _txCount, text?.Length ?? 0);
     }
 
     public void Write(byte[] buffer, int offset, int count) {
       _inner.Write(buffer, offset, count);
-      TxCount += count;
+      Interlocked.Add(ref _txCount, count);
     }
 
     public void WriteLine(string text) {
       _inner.WriteLine(text);
-      TxCount += (text?.Length ?? 0) + 1;
+      Interlocked.Add(ref _txCount, (text?.Length ?? 0) + 1);
     }
 
     public void toggleDTR() => _inner.toggleDTR();

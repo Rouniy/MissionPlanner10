@@ -7,6 +7,26 @@ namespace MissionPlanner.Tests;
 
 public class TcpSerialHostListenerTests {
   [Fact]
+  public async Task Receive_loop_delivers_client_bytes_without_outbound_traffic() {
+    var serial = new TcpSerial();
+    var received = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var host = new TcpSerialHostListener(
+        IPAddress.Loopback,
+        0,
+        serial,
+        received: (_, buffer, count) => received.TrySetResult(buffer[..count].ToArray()));
+    using var client = new TcpClient();
+    await client.ConnectAsync(IPAddress.Loopback, host.BoundPort);
+
+    byte[] payload = [0xFD, 0x04, 0x01, 0x02, 0x03, 0x04];
+    await client.GetStream().WriteAsync(payload);
+
+    Assert.Equal(payload, await received.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+    host.Dispose();
+    serial.Dispose();
+  }
+
+  [Fact]
   public async Task New_client_replaces_and_closes_the_previous_socket() {
     var serial = new TcpSerial();
     int callbacks = 0;

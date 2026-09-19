@@ -1,6 +1,28 @@
 # Avalonia in-place migration status
 
-Updated: **2026-09-17**.
+Updated: **2026-09-19**.
+
+## MAVLink Mirror TCP-host write-back — 2026-09-19
+
+- Branch `fix/mavlink-mirror-writeback` is based on `origin/master` at
+  `2aefdf98a` (`v1.3.83.4-2aefdf98`). The TCP-host mirror now owns a dedicated
+  asynchronous client receive loop instead of polling client input only while vehicle data is
+  being mirrored. A per-mirror input-ownership flag prevents the legacy polling path from racing
+  that loop, and write-back still uses `MAVLinkInterface`'s vehicle-write lock and raw log.
+- The new listener test exercises client input without any outbound mirror traffic. The focused
+  test command currently cannot compile the existing test project because its unrelated MCP/Tomlyn
+  test dependencies are unresolved (`ModelContextProtocol`, `Tomlyn`, and `CallToolResult`). The
+  command did compile the application successfully before reaching those test-project errors.
+  `dotnet build MissionPlanner.csproj --no-restore -m:1` then passed with **0 warnings / 0 errors**.
+- Live Linux verification used Obriy's coupled ArduCopter on TCP 5760, Mission Planner's TCP Host
+  mirror on 14550 with write-back enabled, and Hermes 3.9.14 as the mirror client. Before the fix,
+  the Mission Planner receive queue grew while mirror Rx stayed at zero. With the fix, mirror Tx/Rx
+  counters both advance, the Mission Planner receive queue stays drained, and SITL reports neutral
+  `RC_CHANNELS` values `1500,1500,1000,1500` with RSSI 255. Physical stick deflection still needs a
+  separate Hermes mapping check; the vendor `RXLOSS` overlay alone is not transport evidence.
+- Pre-existing user changes in five driver/MAVLink graph `.bat` files are deliberately preserved
+  outside this change. No vehicle parameters, Mission Planner joystick settings, Obriy files, or
+  licence data are modified by this fix.
 
 ## Release 1.3.83.4 — merge of feat/mcp-flight-context — 2026-09-17
 
