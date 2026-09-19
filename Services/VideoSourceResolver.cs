@@ -20,22 +20,24 @@ internal static partial class VideoSourceResolver {
       RegexOptions.IgnoreCase)]
   private static partial Regex PayloadRegex();
 
-  public static ResolvedVideoSource Resolve(string source) {
+  public static ResolvedVideoSource Resolve(string source, Func<string, bool>? fileExists = null) {
     string value = (source ?? "").Trim().Trim('"');
     if (value.Length == 0) {
       throw new ArgumentException("Video source is empty.", nameof(source));
     }
 
-    if (File.Exists(value)) {
+    // A real Linux video device also satisfies File.Exists. Resolve its capture
+    // MRL first instead of asking VLC to open the device as a media file.
+    if (value.StartsWith("/dev/video", StringComparison.Ordinal)) {
+      return new ResolvedVideoSource("v4l2://" + value, FromType.FromLocation);
+    }
+
+    if ((fileExists ?? File.Exists)(value)) {
       return new ResolvedVideoSource(Path.GetFullPath(value), FromType.FromPath);
     }
 
     if (LooksLikeGstreamerPipeline(value)) {
       return ResolveGstreamerRtp(value);
-    }
-
-    if (value.StartsWith("/dev/video", StringComparison.Ordinal)) {
-      value = "v4l2://" + value;
     }
 
     value = NormalizeListenMrl(value, "udp://");

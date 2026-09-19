@@ -19,6 +19,14 @@ public class VideoSourceResolverTests {
   }
 
   [Fact]
+  public void Existing_linux_camera_device_is_not_treated_as_a_media_file() {
+    // Deterministic on CI hosts without a physical /dev/video0.
+    var resolved = VideoSourceResolver.Resolve("/dev/video0", fileExists: _ => true);
+    Assert.Equal("v4l2:///dev/video0", resolved.Mrl);
+    Assert.Equal(FromType.FromLocation, resolved.FromType);
+  }
+
+  [Fact]
   public void ConvertsRtpGstreamerPipelineToSdp() {
     var resolved = VideoSourceResolver.Resolve(
         "udpsrc port=5600 ! application/x-rtp,encoding-name=H265,payload=97 ! rtph265depay");
