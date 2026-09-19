@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Diagnostics;
 using MissionPlanner.Comms;
 using MissionPlanner.Services;
 
@@ -66,5 +67,83 @@ public class TcpSerialHostListenerTests {
     while (!predicate()) {
       await Task.Delay(10, timeout.Token);
     }
+  }
+
+  [Fact]
+  public async Task Dispose_is_bounded_when_received_callback_is_blocked() {
+    using var serial = new TcpSerial();
+    using var release = new ManualResetEventSlim();
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var host = new TcpSerialHostListener(IPAddress.Loopback, 0, serial,
+        received: (_, _, _) => {
+          entered.TrySetResult();
+          release.Wait(TimeSpan.FromSeconds(10));
+        });
+    using var client = new TcpClient();
+    Task? stopping = null;
+    try {
+      await client.ConnectAsync(IPAddress.Loopback, host.BoundPort);
+      await client.GetStream().WriteAsync(new byte[] { 1 });
+      await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+      stopping = Task.Run(host.Dispose);
+      await stopping.WaitAsync(TimeSpan.FromSeconds(3));
+    } finally {
+      release.Set();
+      if (stopping != null) {
+        await stopping.WaitAsync(TimeSpan.FromSeconds(3));
+      }
+    }
+  }
+
+  [Fact]
+  public async Task Replacement_client_is_accepted_while_old_callback_is_blocked() {
+    using var serial = new TcpSerial();
+    using var release = new ManualResetEventSlim();
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var replaced = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    int connections = 0;
+    using var host = new TcpSerialHostListener(IPAddress.Loopback, 0, serial,
+        connected: (_, _) => {
+          if (Interlocked.Increment(ref connections) == 2) replaced.TrySetResult();
+        },
+        received: (_, _, _) => {
+          entered.TrySetResult();
+          release.Wait(TimeSpan.FromSeconds(10));
+        });
+    using var first = new TcpClient();
+    using var second = new TcpClient();
+    try {
+      await first.ConnectAsync(IPAddress.Loopback, host.BoundPort);
+      await first.GetStream().WriteAsync(new byte[] { 1 });
+      await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+      await second.ConnectAsync(IPAddress.Loopback, host.BoundPort);
+      await replaced.Task.WaitAsync(TimeSpan.FromSeconds(3));
+      Assert.Equal(2, Volatile.Read(ref connections));
+    } finally {
+      release.Set();
+    }
+  }
+
+  [Theory]
+  [InlineData(false)]
+  [InlineData(true)]
+  public async Task Dispose_from_callback_does_not_wait_for_its_own_task(bool fromReceive) {
+    using var serial = new TcpSerial();
+    var elapsed = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+    void Stop(TcpSerialHostListener listener) {
+      var timer = Stopwatch.StartNew();
+      listener.Dispose();
+      elapsed.TrySetResult(timer.Elapsed);
+    }
+    using var host = new TcpSerialHostListener(IPAddress.Loopback, 0, serial,
+        connected: fromReceive ? null : (listener, _) => Stop(listener),
+        received: fromReceive ? (listener, _, _) => Stop(listener) : null);
+    using var client = new TcpClient();
+    await client.ConnectAsync(IPAddress.Loopback, host.BoundPort);
+    if (fromReceive) {
+      await client.GetStream().WriteAsync(new byte[] { 1 });
+    }
+    Assert.True(await elapsed.Task.WaitAsync(TimeSpan.FromSeconds(3)) < TimeSpan.FromMilliseconds(500));
+    await host.Completion.WaitAsync(TimeSpan.FromSeconds(3));
   }
 }

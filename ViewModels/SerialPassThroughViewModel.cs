@@ -106,6 +106,7 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
             _stream = new CountingCommsSerial(tcp);
             _comPort.MirrorStream = _stream;
             _comPort.MirrorStreamWrite = AllowWriteBack;
+            _writeBackEnabled = AllowWriteBack;
             foreach (var mirror in _comPort.Mirrors.Where(
                 mirror => ReferenceEquals(mirror.MirrorStream, _stream))) {
               mirror.PollInput = false;

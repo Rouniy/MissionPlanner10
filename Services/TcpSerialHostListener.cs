@@ -14,6 +14,11 @@ namespace MissionPlanner.Services;
 /// accepted client remains attached; superseded and late-after-stop sockets are closed promptly.
 /// </summary>
 internal sealed class TcpSerialHostListener : IDisposable {
+  // Callbacks are synchronous, but receive tasks from replacement clients can
+  // overlap. A shared thread-id field would be overwritten by another callback.
+  [ThreadStatic]
+  private static TcpSerialHostListener? _callbackOwner;
+
   private readonly object _sync = new();
   private readonly TcpSerial _serial;
   private readonly TcpListener _listener;
@@ -71,7 +76,10 @@ internal sealed class TcpSerialHostListener : IDisposable {
               _serial.client = accepted;
               if (_received != null) {
                 _clientStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                _clientReadTask = ReadLoopAsync(accepted, _clientStop.Token);
+                CancellationToken clientToken = _clientStop.Token;
+                // Never execute buffered reads/callbacks inline under _sync or
+                // on a caller's UI synchronization context.
+                _clientReadTask = Task.Run(() => ReadLoopAsync(accepted, clientToken));
               } else {
                 _clientStop = null;
                 _clientReadTask = null;
@@ -90,11 +98,7 @@ internal sealed class TcpSerialHostListener : IDisposable {
         previousClientStop?.Cancel();
         previousClientStop?.Dispose();
         previous?.Dispose();
-        try {
-          _connected?.Invoke(this, remote);
-        } catch (Exception ex) {
-          Trace.WriteLine($"TCP host connection callback failed: {ex}");
-        }
+        InvokeCallback(() => _connected?.Invoke(this, remote), "connection");
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
     } catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested) {
@@ -118,13 +122,10 @@ internal sealed class TcpSerialHostListener : IDisposable {
           if (_disposed || !ReferenceEquals(_serial.client, client)) {
             return;
           }
-
-          try {
-            _received?.Invoke(this, buffer, count);
-          } catch (Exception ex) {
-            Trace.WriteLine($"TCP host receive callback failed: {ex}");
-          }
         }
+        // Vehicle writes may block. Do not hold the accept/dispose lock while
+        // dispatching them; the consumer must also check its current ownership.
+        InvokeCallback(() => _received?.Invoke(this, buffer, count), "receive");
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
     } catch (ObjectDisposedException) {
@@ -132,6 +133,18 @@ internal sealed class TcpSerialHostListener : IDisposable {
     } catch (SocketException) {
     } catch (Exception ex) {
       Trace.WriteLine($"TCP host receive loop stopped: {ex}");
+    }
+  }
+
+  private void InvokeCallback(Action callback, string kind) {
+    TcpSerialHostListener? previous = _callbackOwner;
+    _callbackOwner = this;
+    try {
+      callback();
+    } catch (Exception ex) {
+      Trace.WriteLine($"TCP host {kind} callback failed: {ex}");
+    } finally {
+      _callbackOwner = previous;
     }
   }
 
@@ -154,14 +167,17 @@ internal sealed class TcpSerialHostListener : IDisposable {
       _listener.Stop();
     } catch {
     }
-    if (!_acceptTask.IsCompleted && Task.CurrentId != _acceptTask.Id) {
+    // Task.CurrentId is normally null in async continuations. Both callbacks
+    // can call Dispose; neither may wait for the task currently invoking it.
+    bool fromCallback = ReferenceEquals(_callbackOwner, this);
+    if (!_acceptTask.IsCompleted && !fromCallback) {
       try {
         _acceptTask.Wait(TimeSpan.FromSeconds(1));
       } catch (AggregateException ex) {
         Trace.WriteLine($"TCP host accept loop cleanup failed: {ex.Flatten()}");
       }
     }
-    if (clientReadTask != null && !clientReadTask.IsCompleted && Task.CurrentId != clientReadTask.Id) {
+    if (clientReadTask != null && !clientReadTask.IsCompleted && !fromCallback) {
       try {
         clientReadTask.Wait(TimeSpan.FromSeconds(1));
       } catch (AggregateException ex) {
