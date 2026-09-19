@@ -169,6 +169,9 @@ namespace MissionPlanner
         {
             public ICommsSerial MirrorStream { get; set; }
             public bool MirrorStreamWrite { get; set; }
+            // False when another owner (for example, a TCP-host receive loop)
+            // drains this stream independently of vehicle telemetry.
+            public bool PollInput { get; set; } = true;
         }
 
         public List<Mirror> Mirrors { get; set; } = new List<Mirror>();
@@ -5752,7 +5755,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                     {
                         MirrorStream.Write(buffer, 0, buffer.Length);
 
-                        while (MirrorStream.BytesToRead > 0)
+                        while (Mirror.PollInput && MirrorStream.BytesToRead > 0)
                         {
                             var len = MirrorStream.BytesToRead;
 
@@ -5761,13 +5764,7 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                             len = MirrorStream.Read(buf, 0, len);
 
                             if (Mirror.MirrorStreamWrite)
-                                lock (writelock)
-                                {
-                                    BaseStream.Write(buf, 0, len);
-
-                                    if (rawlogfile != null && rawlogfile.CanWrite)
-                                        rawlogfile.Write(buf, 0, len);
-                                }
+                                WriteMirrorDataToVehicle(buf, 0, len);
                         }
                     }
 
@@ -5775,6 +5772,27 @@ Mission Planner waits for 2 valid heartbeat packets before connecting
                 catch
                 {
                 }
+            }
+        }
+
+        internal void WriteMirrorDataToVehicle(byte[] buffer, int offset, int count)
+        {
+            if (buffer == null)
+                throw new ArgumentNullException(nameof(buffer));
+            if (offset < 0 || count < 0 || offset > buffer.Length - count)
+                throw new ArgumentOutOfRangeException();
+            if (count == 0)
+                return;
+
+            lock (writelock)
+            {
+                if (BaseStream == null || !BaseStream.IsOpen)
+                    return;
+
+                BaseStream.Write(buffer, offset, count);
+
+                if (rawlogfile != null && rawlogfile.CanWrite)
+                    rawlogfile.Write(buffer, offset, count);
             }
         }
 
