@@ -79,8 +79,12 @@ asynchronously; capture again if a capture looks partial.
 
 ## State, cancellation and recovery
 
-Every mutation reserves a receipt **before** dispatch. Identical method/typed arguments
-and operationId return the same receipt, including `running`. Reusing an ID with different
+Tools with an `operationId` parameter reserve a receipt **before** dispatch.
+`write_parameters` and `vehicle_command` do not accept this parameter and have no
+journal/replay protection. After an uncertain response, read back parameters, telemetry
+and vehicle messages; do not blindly repeat a vehicle command.
+
+For journaled tools, identical method/typed arguments and operationId return the same receipt, including `running`. Reusing an ID with different
 arguments produces `operation_conflict`. A connection holds at most 256 receipts, without
 eviction. At capacity, inspect uncertain outcomes before starting a new connection.
 

@@ -2,6 +2,33 @@
 
 Updated: **2026-09-20**.
 
+## MCP / X-Office comparison and lifecycle fixes — 2026-09-20
+
+- Dedicated branch `fix/mcp-session-lifecycle` starts at fresh fork `origin/master`
+  `c15c1948227fe06362d08fdbd4b0f0ee14bb2b92` (includes merged PR #40). Source fixes:
+  `ea2fc5f3c` listener readiness/control capacity, `0f5141b42` fixed access toolbar;
+  comparison and retry documentation: `a68b965ed`. No master merge or release.
+- Compared X-Office `b534036d80d7baae86ca1917376f3fbadaef63eb` without modifying it.
+  Its unrelated user-owned CRM changes continued during this review and are untouched.
+  Detailed architecture/differences and deferred product features:
+  [MCP_XOFFICE_REVIEW.md](MCP_XOFFICE_REVIEW.md).
+- Three new regression cases failed before the fixes: both hub open methods returned an
+  unready listener, and DELETE returned HTTP 429 with four blocked tools. All now pass;
+  two further cases cover parallel opens and refusing to restart a revoked listener.
+  An existing layout test exposed the Stop button below the minimum-size window;
+  Allow/Revoke/Disconnect and global controls now remain outside the scrolling body.
+- Full local Release test suite: **1704/1704**, no failures/skips. Release solution build:
+  **0 warnings / 0 errors**. All six migration/source/artifact audits and `git diff --check`
+  pass. Logs: `/tmp/mp-mcp-before.log`, `/tmp/mp-mcp-after.log`,
+  `/tmp/mp-mcp-full.log`, `/tmp/mp-mcp-build.log`.
+- Verification includes real local HTTP sessions and Avalonia headless layout checks.
+  No model invocation, desktop registration change, GUI flight session, SITL/aircraft action
+  or new package build. Cross-platform CI and real client/aircraft acceptance are separate.
+  Claude remains paused. The old standalone Avalonia directory remains absent/untouched.
+- Next: review the pushed branch/PR and its CI; merge only when authorized. Future optional
+  features include concrete application-to-agent requests and reconnect-safe operation
+  receipts, with exact vehicle identity/replay semantics designed before implementation.
+
 ## MAVLink Mirror TCP-host write-back — 2026-09-19
 
 - Branch `fix/mavlink-mirror-writeback` is based on `origin/master` at
