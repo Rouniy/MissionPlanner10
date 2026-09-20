@@ -73,6 +73,93 @@ public partial class ConfigFFTViewModel : ParamPageBase {
       alldata[a] = new FFT2.datastate();
     }
 
+    if (!TryCollectIsbhNative(file, alldata)) {
+      CollectIsbhByEnumeration(file, alldata);
+    }
+
+    bool any = false;
+    foreach (var sensordata in alldata) {
+      if (sensordata.datax.Count <= n) {
+        continue;
+      }
+      BuildSensorSeries(fft, sensordata, sensordata.sample_rate, bins, n, indB, result);
+      any = true;
+    }
+    return any;
+  }
+
+  /// <summary>
+  /// Native fast path for the ISBH/ISBD collection: numeric and array
+  /// columns merged by line number, replaying the header state machine of
+  /// the enumeration loop below. Values are the raw decoded values, where
+  /// the enumeration path parses the headers' display strings (exact for the
+  /// integer fields; smp_rate may differ by display rounding). Returns false
+  /// when the native path is off or a column cannot be fetched.
+  /// </summary>
+  private static bool TryCollectIsbhNative(DFLogBuffer file, FFT2.datastate[] alldata) {
+    if (!file.dflog.logformat.ContainsKey("ISBH") || !file.dflog.logformat.ContainsKey("ISBD")) {
+      return false;
+    }
+
+    if (!file.TryGetColumnsNative("ISBH", new[] { "N", "type", "instance", "smp_rate", "mul" },
+            out long[] hdrLines, out double[][] hdr)
+        || !file.TryGetColumnsNative("ISBD", new[] { "N", "TimeUS" },
+            out long[] smpLines, out double[][] smp)
+        || !file.TryGetArrayColumnNative("ISBD", "x", out long[] xLines, out short[][] xs)
+        || !file.TryGetArrayColumnNative("ISBD", "y", out long[] yLines, out short[][] ys)
+        || !file.TryGetArrayColumnNative("ISBD", "z", out long[] zLines, out short[][] zs)) {
+      return false;
+    }
+
+    // the numeric and array queries are indexed by the same row number below,
+    // so they must describe the same rows
+    if (xLines.Length != smpLines.Length || yLines.Length != smpLines.Length
+        || zLines.Length != smpLines.Length) {
+      return false;
+    }
+
+    int ns = 0, sensorno = 0;
+    double multiplier = -1;
+    int h = 0, s = 0;
+    while (h < hdrLines.Length || s < smpLines.Length) {
+      bool takeHeader = s >= smpLines.Length
+          || (h < hdrLines.Length && hdrLines[h] <= smpLines[s]);
+      if (takeHeader) {
+        ns = (int)hdr[0][h];
+        int type = (int)hdr[1][h];
+        int instance = (int)hdr[2][h];
+        sensorno = type * 6 + instance;
+        if (sensorno < alldata.Length) {
+          alldata[sensorno].sample_rate = hdr[3][h];
+          multiplier = hdr[4][h];
+          alldata[sensorno].type =
+              (type == 0 ? "ACC" : "GYR") + instance.ToString(CultureInfo.InvariantCulture);
+        }
+        h++;
+      } else {
+        if (sensorno < alldata.Length && (int)smp[0][s] == ns) {
+          double time = smp[1][s] / 1000.0;
+          if (time >= alldata[sensorno].lasttime) {
+            alldata[sensorno].lasttime = time;
+            AppendScaled(alldata[sensorno].datax, xs[s], multiplier);
+            AppendScaled(alldata[sensorno].datay, ys[s], multiplier);
+            AppendScaled(alldata[sensorno].dataz, zs[s], multiplier);
+          }
+        }
+        s++;
+      }
+    }
+
+    return true;
+  }
+
+  private static void AppendScaled(List<double> dest, short[] samples, double multiplier) {
+    foreach (short sample in samples) {
+      dest.Add(sample / multiplier);
+    }
+  }
+
+  private void CollectIsbhByEnumeration(DFLogBuffer file, FFT2.datastate[] alldata) {
     int ns = 0, type = 0, instance = 0, sensorno = 0;
     double multiplier = -1;
     int offsetX = 0, offsetY = 0, offsetZ = 0, offsetTime = 0;
@@ -126,16 +213,6 @@ public partial class ConfigFFTViewModel : ParamPageBase {
         AddShorts(alldata[sensorno].dataz, item.raw[offsetZ], multiplier);
       }
     }
-
-    bool any = false;
-    foreach (var sensordata in alldata) {
-      if (sensordata.datax.Count <= n) {
-        continue;
-      }
-      BuildSensorSeries(fft, sensordata, sensordata.sample_rate, bins, n, indB, result);
-      any = true;
-    }
-    return any;
   }
 
   private void ComputeImu(DFLogBuffer file, FFT2 fft, int bins, int n, bool indB, FftResult result) {
@@ -144,17 +221,19 @@ public partial class ConfigFFTViewModel : ParamPageBase {
       alldata[a] = new FFT2.datastate();
     }
 
-    foreach (var item in file.GetEnumeratorType(new[] { "IMU", "IMU2", "IMU3" })) {
-      if (item.msgtype == null || !item.msgtype.StartsWith("IMU", StringComparison.Ordinal)) {
-        continue;
+    if (!TryCollectImuNative(file, alldata)) {
+      foreach (var item in file.GetEnumeratorType(new[] { "IMU", "IMU2", "IMU3" })) {
+        if (item.msgtype == null || !item.msgtype.StartsWith("IMU", StringComparison.Ordinal)) {
+          continue;
+        }
+
+        int sensorno = item.msgtype == "IMU2" ? 1 : item.msgtype == "IMU3" ? 2 : 0;
+        int offsetTime = file.dflog.FindMessageOffset(item.msgtype, "TimeUS");
+        double time = double.Parse(item.items[offsetTime], CultureInfo.InvariantCulture) / 1000.0;
+
+        AddImuSample(alldata[sensorno + 3], item, file, "AccX", "AccY", "AccZ", time, item.msgtype + " ACC");
+        AddImuSample(alldata[sensorno], item, file, "GyrX", "GyrY", "GyrZ", time, item.msgtype + " GYR");
       }
-
-      int sensorno = item.msgtype == "IMU2" ? 1 : item.msgtype == "IMU3" ? 2 : 0;
-      int offsetTime = file.dflog.FindMessageOffset(item.msgtype, "TimeUS");
-      double time = double.Parse(item.items[offsetTime], CultureInfo.InvariantCulture) / 1000.0;
-
-      AddImuSample(alldata[sensorno + 3], item, file, "AccX", "AccY", "AccZ", time, item.msgtype + " ACC");
-      AddImuSample(alldata[sensorno], item, file, "GyrX", "GyrY", "GyrZ", time, item.msgtype + " GYR");
     }
 
     foreach (var sensordata in alldata) {
@@ -164,6 +243,51 @@ public partial class ConfigFFTViewModel : ParamPageBase {
       double samplerate = Math.Round(1000 / sensordata.timedelta, 1);
       BuildSensorSeries(fft, sensordata, samplerate, bins, n, indB, result);
     }
+  }
+
+  /// <summary>
+  /// Native fast path for the IMU/IMU2/IMU3 collection. Per-sensor state is
+  /// independent per type, so one typed decode per present type reproduces
+  /// the enumeration loop; values are the raw decoded values, where the
+  /// enumeration path parses display strings that round floats to 7
+  /// significant digits. Returns false when the native path is off or a
+  /// present type's columns cannot be fetched.
+  /// </summary>
+  private static bool TryCollectImuNative(DFLogBuffer file, FFT2.datastate[] alldata) {
+    bool any = false;
+    foreach (string type in new[] { "IMU", "IMU2", "IMU3" }) {
+      if (!file.dflog.logformat.ContainsKey(type)) {
+        continue;
+      }
+      if (!file.TryGetColumnsNative(type,
+              new[] { "TimeUS", "AccX", "AccY", "AccZ", "GyrX", "GyrY", "GyrZ" },
+              out _, out double[][] cols)) {
+        return false;
+      }
+
+      int sensorno = type == "IMU2" ? 1 : type == "IMU3" ? 2 : 0;
+      for (int i = 0; i < cols[0].Length; i++) {
+        double time = cols[0][i] / 1000.0;
+        AddImuSampleNative(alldata[sensorno + 3], time, type + " ACC",
+            cols[1][i], cols[2][i], cols[3][i]);
+        AddImuSampleNative(alldata[sensorno], time, type + " GYR",
+            cols[4][i], cols[5][i], cols[6][i]);
+      }
+      any = true;
+    }
+    return any;
+  }
+
+  private static void AddImuSampleNative(FFT2.datastate state, double time, string type,
+                                         double x, double y, double z) {
+    state.type = type;
+    if (time != state.lasttime) {
+      state.timedelta = state.timedelta * 0.99 + (time - state.lasttime) * 0.01;
+    }
+    state.lasttime = time;
+    state.datax.Add(x);
+    state.datay.Add(y);
+    state.dataz.Add(z);
   }
 
   private static void AddImuSample(FFT2.datastate state, DFLog.DFItem item, DFLogBuffer file,

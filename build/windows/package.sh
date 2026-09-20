@@ -66,6 +66,9 @@ test -s "$PUBLISH_TEMP/MissionPlanner10.exe"
 test -s "$PUBLISH_TEMP/airports.csv"
 test -s "$PUBLISH_TEMP/simpleble-c.dll"
 test -s "$PUBLISH_TEMP/simpleble.dll"
+# a host without a working Rust toolchain would silently publish the
+# managed-parser-only app; packages must ship the native log parser
+test -s "$PUBLISH_TEMP/dflog_ffi.dll"
 
 sign_windows_file() {
   local target="$1"

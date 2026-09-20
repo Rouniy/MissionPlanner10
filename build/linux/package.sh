@@ -72,6 +72,9 @@ env -u VERSION "$DOTNET" publish "$APP_PROJECT" \
 
 test -x "$PUBLISH_TEMP/MissionPlanner10"
 test -s "$PUBLISH_TEMP/airports.csv"
+# a host without a working Rust toolchain would silently publish the
+# managed-parser-only app; packages must ship the native log parser
+test -s "$PUBLISH_TEMP/libdflog_ffi.so"
 for unwanted in libusb-1.0.dll simpleble-c.dll simpleble.dll; do
   if [[ -e "$PUBLISH_TEMP/$unwanted" ]]; then
     echo "Linux publish contains a Windows-native library: $unwanted" >&2
