@@ -66,14 +66,58 @@ namespace MissionPlanner.Utilities
             return ans;
         }
 
+        private const int MaxCachedZone = 60;
+
+        private static readonly object _inverseTransformsLock = new object();
+        private static readonly Dictionary<int, IMathTransform> _inverseTransforms =
+            new Dictionary<int, IMathTransform>();
+
+        internal static int CachedTransformCount
+        {
+            get
+            {
+                lock (_inverseTransformsLock)
+                {
+                    return _inverseTransforms.Count;
+                }
+            }
+        }
+
+        private static IMathTransform CreateInverseTransform(int zone)
+        {
+            IProjectedCoordinateSystem utm =
+                ProjectedCoordinateSystem.WGS84_UTM(Math.Abs(zone), zone >= 0);
+
+            return ctfac.CreateFromCoordinateSystems(wgs84, utm).MathTransform.Inverse();
+        }
+
+        // The signed zone carries the hemisphere. A cached transform is safe to share between
+        // threads because Transform only reads immutable state; the lock guards the dictionary.
+        // WGS84_UTM accepts any zone number, so zones outside the real range are converted
+        // without caching to keep the cache bounded when the zone comes from user input.
+        private static IMathTransform GetInverseTransform(int zone)
+        {
+            if (zone < -MaxCachedZone || zone > MaxCachedZone)
+            {
+                return CreateInverseTransform(zone);
+            }
+
+            lock (_inverseTransformsLock)
+            {
+                if (!_inverseTransforms.TryGetValue(zone, out IMathTransform inverse))
+                {
+                    inverse = CreateInverseTransform(zone);
+                    _inverseTransforms[zone] = inverse;
+                }
+
+                return inverse;
+            }
+        }
+
         public PointLatLngAlt ToLLA()
         {
-            IProjectedCoordinateSystem utm = ProjectedCoordinateSystem.WGS84_UTM(Math.Abs(zone), zone < 0 ? false : true);
-
-            ICoordinateTransformation trans = ctfac.CreateFromCoordinateSystems(wgs84, utm);
-
             // get leader utm coords
-            double[] pll = trans.MathTransform.Inverse().Transform(this);
+            double[] pll = GetInverseTransform(zone).Transform(this);
 
             PointLatLngAlt ans = new PointLatLngAlt(pll[1], pll[0]);
             if (this.Tag != null)
