@@ -110,7 +110,9 @@ public sealed class GeoPackageOverlayTests {
   private static void WithGeoPackage(Action<string, SqliteConnection> test) {
     string path = Path.Combine(Path.GetTempPath(), "mp-overlay-" + Guid.NewGuid() + ".gpkg");
     try {
-      using var connection = new SqliteConnection($"Data Source={path}");
+      // A pooled connection keeps the file open after Dispose, and Windows then refuses to
+      // delete it.
+      using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
       connection.Open();
       using (SqliteCommand command = connection.CreateCommand()) {
         command.CommandText = """

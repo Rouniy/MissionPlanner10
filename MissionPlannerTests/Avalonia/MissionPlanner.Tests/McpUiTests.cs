@@ -99,7 +99,7 @@ public sealed class McpUiTests {
   [AvaloniaFact]
   public async Task Log_ui_uses_native_plot_and_rejects_stale_hidden_revoked_and_cross_session_controls() {
     string path = McpServerTests.TemporaryLog();
-    using var logs = new McpLogCatalog(); var host = new McpUiHost(null!, logs, () => null);
+    var logs = new McpLogCatalog(); var host = new McpUiHost(null!, logs, () => null);
     var session = new McpConnectionSession(null!, "", "test", true, true);
     string? viewId = null;
     try {
@@ -161,7 +161,11 @@ public sealed class McpUiTests {
       } finally { window.Close(); viewId = null; File.Delete(other); }
       Dispatcher.UIThread.RunJobs();
       await Assert.ThrowsAsync<InvalidOperationException>(() => host.Invoke(fresh, snapshot, toggle.Id, default));
-    } finally { if (viewId != null) { await host.CloseLog(viewId, default); } File.Delete(path); }
+    } finally {
+      if (viewId != null) { await host.CloseLog(viewId, default); }
+      // The catalog keeps the attached log open; Windows cannot delete it until it is disposed.
+      logs.Dispose(); File.Delete(path);
+    }
   }
 
   private sealed class CountingCommand : System.Windows.Input.ICommand {

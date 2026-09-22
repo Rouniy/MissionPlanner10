@@ -19,11 +19,11 @@ public class UpstreamPortTests {
 
     var linux = AppPaths.Resolve(
         AppPlatform.Linux, "/home/test", "", "", EmptyEnvironment);
-    Assert.Equal("/home/test/.config/MissionPlanner10", linux.ConfigRoot);
-    Assert.Equal("/home/test/.local/share/MissionPlanner10", linux.DataRoot);
-    Assert.Equal("/home/test/.cache/MissionPlanner10", linux.CacheRoot);
-    Assert.Equal("/home/test/.local/state/MissionPlanner10", linux.StateRoot);
-    Assert.Equal("/home/test/.cache/MissionPlanner/map-tiles", linux.MapTileCacheRoot);
+    Assert.Equal("/home/test/.config/MissionPlanner10", Posix(linux.ConfigRoot));
+    Assert.Equal("/home/test/.local/share/MissionPlanner10", Posix(linux.DataRoot));
+    Assert.Equal("/home/test/.cache/MissionPlanner10", Posix(linux.CacheRoot));
+    Assert.Equal("/home/test/.local/state/MissionPlanner10", Posix(linux.StateRoot));
+    Assert.Equal("/home/test/.cache/MissionPlanner/map-tiles", Posix(linux.MapTileCacheRoot));
 
     var windows = AppPaths.Resolve(
         AppPlatform.Windows,
@@ -40,9 +40,11 @@ public class UpstreamPortTests {
         AppPlatform.MacOS, "/Users/test", "", "", EmptyEnvironment);
     Assert.Equal(
         "/Users/test/Library/Application Support/MissionPlanner10",
-        mac.ConfigRoot);
-    Assert.Equal("/Users/test/Library/Caches/MissionPlanner10", mac.CacheRoot);
-    Assert.Equal("/Users/test/Library/Caches/MissionPlanner/map-tiles", mac.MapTileCacheRoot);
+        Posix(mac.ConfigRoot));
+    Assert.Equal("/Users/test/Library/Caches/MissionPlanner10", Posix(mac.CacheRoot));
+    Assert.Equal(
+        "/Users/test/Library/Caches/MissionPlanner/map-tiles",
+        Posix(mac.MapTileCacheRoot));
   }
 
   [Fact]
@@ -60,11 +62,11 @@ public class UpstreamPortTests {
         "",
         name => values.GetValueOrDefault(name));
 
-    Assert.Equal("/xdg/config/MissionPlanner10", layout.ConfigRoot);
-    Assert.Equal("/home/test/.local/share/MissionPlanner10", layout.DataRoot);
-    Assert.Equal("/xdg/cache/MissionPlanner10", layout.CacheRoot);
-    Assert.Equal("/xdg/state/MissionPlanner10", layout.StateRoot);
-    Assert.Equal("/xdg/cache/MissionPlanner/map-tiles", layout.MapTileCacheRoot);
+    Assert.Equal("/xdg/config/MissionPlanner10", Posix(layout.ConfigRoot));
+    Assert.Equal("/home/test/.local/share/MissionPlanner10", Posix(layout.DataRoot));
+    Assert.Equal("/xdg/cache/MissionPlanner10", Posix(layout.CacheRoot));
+    Assert.Equal("/xdg/state/MissionPlanner10", Posix(layout.StateRoot));
+    Assert.Equal("/xdg/cache/MissionPlanner/map-tiles", Posix(layout.MapTileCacheRoot));
   }
 
   [Fact]
@@ -178,4 +180,9 @@ public class UpstreamPortTests {
       }
     }
   }
+
+  // Resolve joins with the host's separator, so on Windows the Linux and macOS layouts come back
+  // with backslashes; compare them as POSIX paths there. Elsewhere a backslash is a real defect.
+  private static string Posix(string path) =>
+      OperatingSystem.IsWindows() ? path.Replace('\\', '/') : path;
 }
