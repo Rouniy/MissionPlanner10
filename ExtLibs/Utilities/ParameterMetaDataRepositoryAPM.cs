@@ -17,6 +17,8 @@ namespace MissionPlanner.Utilities
 
         private static XDocument _parameterMetaDataXML;
 
+        private static volatile MetaDataIndex _index;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="ParameterMetaDataRepository"/> class.
         /// </summary>
@@ -71,29 +73,21 @@ namespace MissionPlanner.Utilities
         {
             CheckLoad();
 
-            if (_parameterMetaDataXML != null)
+            XDocument document = _parameterMetaDataXML;
+            if (document != null)
             {
                 // Use this to find the endpoint node we are looking for
                 // Either it will be pulled from a file in the ArduPlane hierarchy or the ArduCopter hierarchy
                 try
                 {
-                    var elements = _parameterMetaDataXML.Element("Params").Elements(vechileType);
-
-                    foreach (var element in elements)
+                    MetaDataIndex index = _index;
+                    if (index == null || !ReferenceEquals(index.Document, document))
                     {
-                        if (element != null && element.HasElements)
-                        {
-                            var node = element.Element(nodeKey);
-                            if (node != null && node.HasElements)
-                            {
-                                var metaValue = node.Element(metaKey);
-                                if (metaValue != null)
-                                {
-                                    return metaValue.Value;
-                                }
-                            }
-                        }
+                        index = new MetaDataIndex(document);
+                        _index = index;
                     }
+
+                    return index.Find(nodeKey, metaKey, vechileType);
                 }
                 catch
                 {
@@ -101,6 +95,83 @@ namespace MissionPlanner.Utilities
             }
 
             return string.Empty;
+        }
+
+        // Lookup table for one loaded document, rebuilt when Reload installs another. A vehicle
+        // element has thousands of parameter children and XContainer.Element scans them linearly,
+        // which made every lookup proportional to the size of the file.
+        internal sealed class MetaDataIndex
+        {
+            // Vehicle element name to one name-to-parameter map per vehicle element, in
+            // document order.
+            private readonly Dictionary<XName, List<Dictionary<XName, XElement>>> _vehicles =
+                new Dictionary<XName, List<Dictionary<XName, XElement>>>();
+
+            public MetaDataIndex(XDocument document)
+            {
+                Document = document;
+
+                XElement root = document.Element("Params");
+                if (root == null)
+                {
+                    return;
+                }
+
+                foreach (XElement vehicle in root.Elements())
+                {
+                    if (!_vehicles.TryGetValue(
+                            vehicle.Name, out List<Dictionary<XName, XElement>> vehicles))
+                    {
+                        vehicles = new List<Dictionary<XName, XElement>>(1);
+                        _vehicles.Add(vehicle.Name, vehicles);
+                    }
+
+                    // Only the first child with a given name was ever consulted.
+                    var parameters = new Dictionary<XName, XElement>();
+                    foreach (XElement parameter in vehicle.Elements())
+                    {
+                        if (!parameters.ContainsKey(parameter.Name))
+                        {
+                            parameters.Add(parameter.Name, parameter);
+                        }
+                    }
+
+                    vehicles.Add(parameters);
+                }
+            }
+
+            public XDocument Document { get; }
+
+            // Throws for a key that is not a valid XML name, as the XContainer lookups did; the
+            // caller turns that into an empty answer.
+            public string Find(string nodeKey, string metaKey, string vehicleType)
+            {
+                XName vehicleName = vehicleType;
+                XName nodeName = nodeKey;
+                XName metaName = metaKey;
+                if (vehicleName == null || nodeName == null || metaName == null)
+                {
+                    return string.Empty;
+                }
+
+                if (_vehicles.TryGetValue(
+                        vehicleName, out List<Dictionary<XName, XElement>> vehicles))
+                {
+                    foreach (Dictionary<XName, XElement> parameters in vehicles)
+                    {
+                        if (parameters.TryGetValue(nodeName, out XElement node) && node.HasElements)
+                        {
+                            XElement metaValue = node.Element(metaName);
+                            if (metaValue != null)
+                            {
+                                return metaValue.Value;
+                            }
+                        }
+                    }
+                }
+
+                return string.Empty;
+            }
         }
     }
 }

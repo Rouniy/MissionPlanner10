@@ -88,6 +88,10 @@ public class ResxTranslationEditorTests {
     using var source = TempDirectory.Create();
     WriteResx(Path.Combine(source.Path, "View.resx"),
         ("first.Text", "First", null, null));
+    if (File.Exists(Path.Combine(source.Path, "view.RESX"))) {
+      // A case-insensitive file system (Windows, default macOS) cannot hold both files.
+      return;
+    }
     WriteResx(Path.Combine(source.Path, "view.RESX"),
         ("second.Text", "Second", null, null));
 

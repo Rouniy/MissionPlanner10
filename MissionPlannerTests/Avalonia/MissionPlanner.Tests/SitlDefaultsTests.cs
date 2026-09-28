@@ -112,6 +112,8 @@ public class SitlDefaultsTests {
   public void Swarm_identity_parameters_match_official_mission_planner() {
     string identity = SitlLauncher.BuildIdentityParameters(17);
 
+    // The launcher writes LF on every platform; the raw literal takes this file's line endings,
+    // which are CRLF in a Windows checkout.
     Assert.Equal("""
         SERIAL0_PROTOCOL=2
         SERIAL1_PROTOCOL=2
@@ -124,7 +126,7 @@ public class SitlDefaultsTests {
         SIM_DRIFT_SPEED=0
         SIM_DRIFT_TIME=0
 
-        """, identity);
+        """.ReplaceLineEndings("\n"), identity);
   }
 
   [Fact]

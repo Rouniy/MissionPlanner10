@@ -1,6 +1,30 @@
 # Avalonia in-place migration status
 
-Updated: **2026-09-20**.
+Updated: **2026-09-28**.
+
+## Mavlink Mirror windows keep their own mirror — 2026-09-28
+
+- Branch `fix/mavlink-mirror-windows` is based on `origin/master` at `c15c19482` (#40). Mirror
+  windows wrote the legacy `MirrorStream`/`MirrorStreamWrite` properties, which address
+  `Mirrors[0]`, so a second window's Start replaced the first window's live stream. For TCP Host
+  the stream was attached before the 14550 bind, so a busy port then removed that shared entry
+  while the first window still looked active. Toggling write-back in any window, even a stopped
+  one, changed the first mirror or added an empty entry.
+- Each window now binds/opens first and then adds its own entry through
+  `MAVLinkInterface.AddMirror`, changes write-back only on that entry, and Stop removes only it.
+  `AddMirror`/`RemoveMirror` replace the list under a lock because the read loop enumerates
+  `Mirrors` without one.
+- The three new `SerialPassThroughViewModelTests` cases failed against `c15c19482` and pass after
+  the fix; a temporary variant also showed a stopped window's write-back toggle turning off the
+  running mirror's write-back before the fix. Mirror, listener and MCP tests: **115/115**. Full
+  application suite: **1702/1702**, zero skipped, .NET SDK 10.0.112, XDG paths redirected to a
+  temporary directory. Native-surface validation: **1623 rows, 0 blockers**.
+- Live check (2026-09-28, this build under Xvfb, stock ArduCopter 4.0.3 SITL over TCP, driven through
+  MCP): one Mavlink Mirror window on TCP Host - 14550 forwarded heartbeats and position to a
+  pymavlink client, write-back was switched on in the running window, and disconnect/reconnect
+  worked with the mirror running. Two mirror windows at once were not run live.
+- The CRLF-normalisation differences in five `.bat` files that appear on checkout are excluded.
+- Next executable step: review and merge the PR, then rebuild the local application.
 
 ## MAVLink Mirror TCP-host write-back — 2026-09-19
 

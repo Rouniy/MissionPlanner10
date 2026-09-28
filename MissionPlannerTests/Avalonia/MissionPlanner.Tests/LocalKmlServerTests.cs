@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using MissionPlanner.Services;
 
 namespace MissionPlanner.Tests;
@@ -79,6 +80,54 @@ public sealed class LocalKmlServerTests {
     string response = await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
     Assert.StartsWith("HTTP/1.1 431 ", response, StringComparison.Ordinal);
+  }
+
+  // Input left unread when a socket closes makes Windows reset the connection, which drops the
+  // response before the client reads it. The next three tests cover the server's drain.
+  [Fact]
+  public async Task RejectedMethodWithALargeBodyStillGetsItsResponse() {
+    using var server = new LocalKmlServer(() => [], preferredPort: 0);
+    Uri uri = server.EnsureStarted();
+    using HttpClient client = Client();
+
+    // Many receive calls' worth of input, but under the server's 64 KiB drain limit.
+    using HttpResponseMessage post = await client.PostAsync(
+        uri, new ByteArrayContent(new byte[48 * 1024]));
+
+    Assert.Equal(HttpStatusCode.MethodNotAllowed, post.StatusCode);
+  }
+
+  [Fact]
+  public async Task OversizedRequestHeaderWithTrailingInputStillGetsItsResponse() {
+    using var server = new LocalKmlServer(() => [], preferredPort: 0);
+    int port = server.EnsureStarted().Port;
+    using var client = new TcpClient();
+    await client.ConnectAsync(IPAddress.Loopback, port);
+    await using NetworkStream stream = client.GetStream();
+    await stream.WriteAsync(Enumerable.Repeat((byte)'A', 8192 + 4096).ToArray());
+    using var reader = new StreamReader(stream);
+
+    string response = await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+    Assert.StartsWith("HTTP/1.1 431 ", response, StringComparison.Ordinal);
+  }
+
+  [Fact]
+  public async Task RejectedRequestIsClosedWhenTheClientStopsSending() {
+    using var server = new LocalKmlServer(() => [], preferredPort: 0);
+    int port = server.EnsureStarted().Port;
+    using var client = new TcpClient();
+    await client.ConnectAsync(IPAddress.Loopback, port);
+    await using NetworkStream stream = client.GetStream();
+    // The announced body never arrives and the connection stays open.
+    await stream.WriteAsync(Encoding.ASCII.GetBytes(
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 100\r\n\r\n"));
+    using var reader = new StreamReader(stream);
+
+    // The drain gives up after about a second, well before the five-second request timeout.
+    string response = await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(4));
+
+    Assert.StartsWith("HTTP/1.1 405 ", response, StringComparison.Ordinal);
   }
 
   [Fact]
