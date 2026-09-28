@@ -1,8 +1,7 @@
 # dflog - native dataflash log core
 
-Rust implementation of ArduPilot dataflash (`.bin`) log parsing, vendored
-from the upstream fork (userepo/MissionPlanner, `rust/` on branch
-`rust/dflog-core`, crates 0.7.1). Two crates:
+Rust implementation of ArduPilot dataflash (`.bin`) log parsing (crates
+0.7.2). Two crates:
 
 - `crates/dflog-core` - parser, index scan, typed columnar access, units and
   GPS time-base metadata. Behavior is bug-for-bug compatible with the C#
@@ -26,6 +25,6 @@ cargo fmt --check
 cargo clippy --workspace --all-targets
 ```
 
-The upstream fork carries the wider surface (CLI, Python bindings, fuzz
-targets, benchmarks). Changes to the parser core should land there first and
-be re-vendored here, keeping crate versions in sync.
+Every change bumps both crate versions together. A change to the C ABI also
+bumps `DFLOG_ABI_VERSION` in `crates/dflog-ffi` and `AbiVersion` in
+`ExtLibs/Utilities/DFLogNative.cs`, which must match.

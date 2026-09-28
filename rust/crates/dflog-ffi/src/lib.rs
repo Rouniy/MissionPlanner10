@@ -8,6 +8,8 @@
 //! - `dflog_scan_file` allocates a `DflogIndex`; release it with
 //!   `dflog_index_free`. The `offsets`/`types` pointers stay valid until then.
 //! - Panics never cross the boundary: they convert to `DFLOG_ERR_PANIC`.
+//! - Logs are read into memory, never memory-mapped: see
+//!   `dflog_core::LogFile::open` for why.
 
 use std::cell::RefCell;
 use std::ffi::CStr;

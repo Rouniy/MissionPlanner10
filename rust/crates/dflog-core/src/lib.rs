@@ -21,11 +21,10 @@
 //!   partial `Stream.Read` into a zeroed array does.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::path::Path;
-
-use memmap2::Mmap;
 
 pub mod access;
 pub mod columns;
@@ -65,10 +64,19 @@ fn ascii_trim_nul(bytes: &[u8]) -> String {
     text.trim_matches('\0').to_string()
 }
 
+/// A log's bytes, owned. Debug prints the length, not the contents.
+struct Image(Vec<u8>);
+
+impl fmt::Debug for Image {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Image").field("len", &self.0.len()).finish()
+    }
+}
+
 /// A scanned log kept open for typed column queries.
 #[derive(Debug)]
 pub struct LogFile {
-    map: Mmap,
+    image: Image,
     pub index: LogIndex,
     /// FMT definitions by message type id, last definition per id winning.
     pub fmts: HashMap<u8, FmtDef>,
@@ -77,35 +85,35 @@ pub struct LogFile {
 }
 
 impl LogFile {
+    /// Read the log at `path` into memory, up to the length it has when
+    /// opened; bytes a writer appends meanwhile are left out.
+    ///
+    /// Logs are never memory-mapped: Mission Planner opens logs another
+    /// process may still be writing, and on Unix touching a mapped page past
+    /// a truncated end of file raises SIGBUS, which no panic handler can
+    /// catch.
     pub fn open(path: &Path) -> io::Result<LogFile> {
-        let file = File::open(path)?;
-        // mmap of an empty file fails; give it one anonymous zero byte
-        let map = if file.metadata()?.len() == 0 {
-            memmap2::MmapMut::map_anon(1)?.make_read_only()?
-        } else {
-            // SAFETY: read-only mapping, same caveats as scan_file
-            unsafe { Mmap::map(&file)? }
-        };
-        let len = file.metadata()?.len() as usize;
-        Self::build(map, len)
+        Ok(Self::build(Image(read_file(path)?)))
     }
 
-    /// Open an in-memory log image (fuzzing, and stream-backed callers that
-    /// have no file to map).
+    /// Take ownership of an in-memory log image without copying it.
+    pub fn from_image(image: Box<[u8]>) -> LogFile {
+        Self::build(Image(image.into_vec()))
+    }
+
+    /// Open a copy of an in-memory log image (fuzzing, and callers that hold
+    /// only a borrowed buffer).
     pub fn open_bytes(data: &[u8]) -> io::Result<LogFile> {
-        let mut map = memmap2::MmapMut::map_anon(data.len().max(1))?;
-        map[..data.len()].copy_from_slice(data);
-        let len = data.len();
-        Self::build(map.make_read_only()?, len)
+        Ok(Self::build(Image(data.to_vec())))
     }
 
-    fn build(map: Mmap, len: usize) -> io::Result<LogFile> {
-        let index = scan(&map[..len]);
+    fn build(image: Image) -> LogFile {
+        let data: &[u8] = &image.0;
+        let index = scan(data);
 
         // re-read the FMT payloads the scan indexed (type 0x80 records)
         let mut fmts = HashMap::new();
         let mut name_to_id = HashMap::new();
-        let data = &map[..len];
         for (i, &t) in index.types.iter().enumerate() {
             if t != FMT_TYPE {
                 continue;
@@ -128,16 +136,16 @@ impl LogFile {
             fmts.insert(def.id, def);
         }
 
-        Ok(LogFile {
-            map,
+        LogFile {
+            image,
             index,
             fmts,
             name_to_id,
-        })
+        }
     }
 
     pub fn data(&self) -> &[u8] {
-        &self.map
+        &self.image.0
     }
 }
 
@@ -217,17 +225,32 @@ pub fn scan(data: &[u8]) -> LogIndex {
     index
 }
 
-/// Scan a log file via a memory map.
+/// Scan the log at `path`, read into memory for the scan (never mapped, for
+/// the reason given on [`LogFile::open`]).
 pub fn scan_file(path: &Path) -> io::Result<LogIndex> {
+    Ok(scan(&read_file(path)?))
+}
+
+/// Read the file at `path` up to the length it has when opened; bytes a
+/// writer appends during the read are left out. A failed allocation for the
+/// bytes is an `ErrorKind::OutOfMemory` error, but the index a scan builds
+/// afterwards grows like any `Vec` and aborts if memory runs out.
+fn read_file(path: &Path) -> io::Result<Vec<u8>> {
     let file = File::open(path)?;
-    if file.metadata()?.len() == 0 {
-        return Ok(LogIndex::default());
-    }
-    // SAFETY: the mapping is read-only and lives only for the duration of the
-    // scan; concurrent truncation of the underlying file is undefined in the
-    // same way it is for the C# stream-based scanner.
-    let map = unsafe { Mmap::map(&file)? };
-    Ok(scan(&map))
+    let len = file.metadata()?.len();
+    read_prefix(file, len)
+}
+
+/// Read at most `len` bytes from `reader` into a buffer reserved once,
+/// exactly and fallibly: a reader holding more stops at `len`, one holding
+/// less ends early, and neither grows the buffer.
+fn read_prefix(reader: impl Read, len: u64) -> io::Result<Vec<u8>> {
+    let capacity =
+        usize::try_from(len).map_err(|e| io::Error::new(io::ErrorKind::OutOfMemory, e))?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(capacity)?;
+    reader.take(len).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -254,6 +277,49 @@ mod tests {
             assert_eq!(index.len() as u64, expected, "{name}");
             assert_eq!(index.offsets.len(), index.types.len(), "{name}");
         }
+    }
+
+    #[test]
+    fn empty_file_opens_as_an_empty_log() {
+        let dir = std::env::temp_dir().join(format!("dflog-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("empty.bin");
+        std::fs::write(&path, []).unwrap();
+
+        let log = LogFile::open(&path).unwrap();
+        assert!(log.index.is_empty());
+        assert!(log.data().is_empty());
+        assert!(scan_file(&path).unwrap().is_empty());
+
+        drop(log);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_prefix_stops_at_the_sampled_length_without_growing() {
+        let data: Vec<u8> = (0..100u8).collect();
+        // The capacity checks rely on Vec reporting exactly what
+        // try_reserve_exact requested, which std does today; growth would
+        // at least double it.
+
+        // a writer appended 40 bytes after the length was sampled
+        let bytes = read_prefix(data.as_slice(), 60).unwrap();
+        assert_eq!(bytes, &data[..60]);
+        assert_eq!(
+            bytes.capacity(),
+            60,
+            "the buffer grew past the sampled length"
+        );
+
+        // a file that shrank below the sampled length ends early
+        let short = read_prefix(&data[..30], 60).unwrap();
+        assert_eq!(short, &data[..30]);
+        assert_eq!(short.capacity(), 60);
+
+        // the empty-file case reserves nothing and reads nothing
+        let empty = read_prefix(data.as_slice(), 0).unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(empty.capacity(), 0);
     }
 
     #[test]

@@ -9,7 +9,7 @@ license = "GPL-3.0"
 # Every crate opts in with `[lints] workspace = true`. Deliberately absent:
 # `clippy::pedantic` (its cast lints fight the bug-for-bug parity casts that
 # mirror C# semantics), `clippy::cargo`, and `clippy::unwrap_used` (the
-# no-panic guarantee is enforced by the upstream fork's fuzz net and the FFI
+# no-panic guarantee is enforced by the fuzz-smoke tests and the FFI
 # catch_unwind barrier instead; production unwraps are infallible patterns).
 [workspace.lints.rust]
 ambiguous_negative_literals = "warn"

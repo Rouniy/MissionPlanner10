@@ -1,10 +1,9 @@
 # rust/testdata
 
-SITL corpus logs used by the Rust crates' golden characterization tests.
-Byte-for-byte copies of the canonical corpus maintained in the upstream fork
-(userepo/MissionPlanner, `rust/testdata` on branch `rust/dflog-core`), which
-in turn mirrors that fork's C# characterization corpus.
+SITL corpus logs used by the Rust crates' golden characterization tests and,
+through a link in `MissionPlanner.Tests.csproj`, by the C# dflog tests that
+compare the native and managed parsers over them.
 
-If the canonical corpus is ever regenerated upstream, refresh these copies
-too - several Rust tests pin exact values from them (record counts, GPS.Lat
-units, MSG text), the same way C# characterization goldens do.
+Several Rust tests pin exact values from them (record counts, GPS.Lat units,
+MSG text), so regenerating a log means updating those tests too. The C#
+tests compare the two parsers rather than pinning values.
