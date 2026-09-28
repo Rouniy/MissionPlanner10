@@ -463,6 +463,31 @@ namespace MissionPlanner
             }
         }
 
+        private readonly object _mirrorsLock = new object();
+
+        /// <summary>
+        /// Adds one owner's mirror without touching other entries. The read loop enumerates
+        /// <see cref="Mirrors"/> without a lock, so the list is replaced rather than mutated.
+        /// </summary>
+        internal void AddMirror(Mirror mirror)
+        {
+            if (mirror == null)
+                throw new ArgumentNullException(nameof(mirror));
+
+            lock (_mirrorsLock)
+                Mirrors = new List<Mirror>(Mirrors) { mirror };
+        }
+
+        /// <summary>Removes only this entry; other owners' mirrors stay attached.</summary>
+        internal void RemoveMirror(Mirror mirror)
+        {
+            lock (_mirrorsLock)
+            {
+                if (Mirrors.Contains(mirror))
+                    Mirrors = Mirrors.Where(m => !ReferenceEquals(m, mirror)).ToList();
+            }
+        }
+
 
         public static ISpeech Speech;
 
