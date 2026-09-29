@@ -90,6 +90,10 @@ namespace MissionPlanner.Utilities
         DFLogNative.ColumnReader nativeColumns;
         bool nativeColumnsTried;
 
+        /// <summary>basestream's length when the index was built: the native
+        /// readers read exactly this much, whatever a writer did since</summary>
+        long _scanLength;
+
         object locker = new object();
 
         /// <summary>
@@ -125,14 +129,9 @@ namespace MissionPlanner.Utilities
 
             lock (locker)
             {
-                if (!nativeColumnsTried)
-                {
-                    nativeColumnsTried = true;
-                    nativeColumns = DFLogNative.ColumnReader.Open(_filename);
-                }
-
-                var ok = nativeColumns != null &&
-                         nativeColumns.TryGetColumns(type, fields, instance, out linenos, out columns);
+                var reader = NativeColumnReader();
+                var ok = reader != null &&
+                         reader.TryGetColumns(type, fields, instance, out linenos, out columns);
                 if (ok)
                     System.Threading.Interlocked.Increment(ref NativeColumnHits);
                 return ok;
@@ -158,18 +157,39 @@ namespace MissionPlanner.Utilities
 
             lock (locker)
             {
-                if (!nativeColumnsTried)
-                {
-                    nativeColumnsTried = true;
-                    nativeColumns = DFLogNative.ColumnReader.Open(_filename);
-                }
-
-                var ok = nativeColumns != null &&
-                         nativeColumns.TryGetArrayColumn(type, field, out linenos, out rows);
+                var reader = NativeColumnReader();
+                var ok = reader != null &&
+                         reader.TryGetArrayColumn(type, field, out linenos, out rows);
                 if (ok)
                     System.Threading.Interlocked.Increment(ref NativeColumnHits);
                 return ok;
             }
+        }
+
+        /// <summary>
+        /// The native column reader, opened on first use from basestream -
+        /// not the path, which may name a different file by now - over the
+        /// length the index was built from, and kept only if its index
+        /// matches this buffer's record for record, so its line numbers mean
+        /// this buffer's rows. Null when native columns are unavailable; not
+        /// retried after a refusal. Call under locker.
+        /// </summary>
+        DFLogNative.ColumnReader NativeColumnReader()
+        {
+            if (!nativeColumnsTried)
+            {
+                nativeColumnsTried = true;
+                var reader = DFLogNative.ColumnReader.FromStream(basestream, _scanLength);
+                if (reader != null && !reader.IndexMatches(linestartoffset))
+                {
+                    reader.Dispose();
+                    reader = null;
+                }
+
+                nativeColumns = reader;
+            }
+
+            return nativeColumns;
         }
 
         long indexcachelineno = -1;
@@ -236,6 +256,9 @@ namespace MissionPlanner.Utilities
             // constructed concurrently rewrites it, so this instance's own
             // outcome decides whether it saves a cache
             var scannedNative = false;
+            // sampled before the cache decision: a cache-loaded index needs
+            // it too, for the native column reader's length
+            _scanLength = basestream.Length;
 
             CacheSourceIdentity sourceIdentity;
             var hasSourceIdentity = TryGetSourceIdentity(out sourceIdentity);
@@ -248,10 +271,24 @@ namespace MissionPlanner.Utilities
                 var lineCount = 0L;
                 if (binary)
                 {
-                    long length = basestream.Length;
+                    long length = _scanLength;
 
-                    if (UseNativeScan && !string.IsNullOrEmpty(_filename) &&
-                        DFLogNative.TryScan(_filename, out var nativeOffsets, out var nativeTypes))
+                    long[] nativeOffsets = null;
+                    byte[] nativeTypes = null;
+                    if (nativeCapable)
+                    {
+                        // index basestream itself, so the index describes the
+                        // file the managed reads below see, not whatever the
+                        // path resolves to now; the image is freed on dispose,
+                        // before the lists below grow
+                        using (var reader = DFLogNative.ColumnReader.FromStream(basestream, length))
+                        {
+                            if (reader == null || !reader.TryGetIndex(out nativeOffsets, out nativeTypes))
+                                nativeOffsets = null;
+                        }
+                    }
+
+                    if (nativeOffsets != null)
                     {
                         // the record count is known upfront - size the index once
                         // instead of letting the list double its way there

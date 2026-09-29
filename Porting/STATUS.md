@@ -1148,9 +1148,11 @@ Updated: **2026-09-28**.
   past ~45M rows of a 7-field query); they are 64-bit. The column fast path is gated on `binary`
   like the scan, so a text .log no longer gets an extra native scan and a WARN per field. The
   timed track reads GPS Lat/Lng through one `ReadFields` open instead of two `ReadField` opens.
-  Deferred, recorded here: every column-querying buffer still scans the file natively twice
-  (`dflog_scan_file` for the index, then `dflog_open` rebuilding its own) - removing that needs
-  an FFI accessor for the open handle's index and a crate bump; the ISBH/ISBD merge is written in
+  Deferred, recorded here: every column-querying buffer still reads and scans the file natively
+  twice, once for the index and once for the column reader (since the 2026-09-28 review fixes
+  below, both reads go through the buffer's stream and the second is verified against the
+  first; keeping the construction reader for short-lived column consumers would remove it);
+  the ISBH/ISBD merge is written in
   both FFT and spectrogram, mirroring master's duplicated enumeration loops. `ReadField` is now
   `ReadFields` with one field: the private per-field core that duplicated the native block is
   gone, and the managed fallback enumerates the log once for every requested field instead of
@@ -1158,6 +1160,37 @@ Updated: **2026-09-28**.
   `Read_fields_fallback_matches_the_enumeration_path`. After the fixes:
   dflog/MCP/log-browser/expression groups 139/139 with `DFLOG_REQUIRE_NATIVE=1`; full suite
   1679/1691, the same 11 environment-dependent failures plus the flaky `PluginRuntimeTests` case.
+- 2026-09-28 review by obazna (changes requested, three threads). Two were one root cause: the
+  native side opened the log by path and memory-mapped it, independently of the managed
+  `basestream`. Fixed in two commits:
+  - The mapping: on Linux and macOS a log truncated while mapped raised SIGBUS, which no panic
+    barrier catches, so the app died before any fallback. dflog-core now reads logs into
+    memory, sampling the length at open into one exact, fallible allocation; memmap2 is gone
+    (crates 0.7.2).
+  - The path reopen: the index scan and the lazy column reader each reopened the path, so a
+    path replaced after the stream was opened gave the index or the columns another file's
+    records (the reviewer's reproduction: 20,885 plane.bin records for a 31,867-record
+    copter.bin stream). Both now read the buffer's own `basestream` into a caller-filled
+    native image (`dflog_image_new`, `dflog_open_image`, `dflog_file_index`; ABI 6, crates
+    0.8.0; `dflog_scan_file` and `dflog_index_free` removed) over the length sampled when the
+    index was built, and the column reader is kept only if its index matches the buffer's
+    record for record. A shrunk file or a moved record boundary refuses native columns.
+  - Trade-off against the mapping: a native open briefly allocates the file's size while the
+    scan runs, and a column reader holds the file in memory; steady-state memory matches the
+    managed parser. The image allocation fails cleanly; the index vectors the scan builds
+    (about 9 bytes per record) still abort if memory runs out, which the FFI docs state.
+  - rust/ is now dflog's home: the userepo/MissionPlanner fork it began as a copy of is set
+    aside, so the vendoring notes in rust/README.md, rust/testdata/README.md and the dflog
+    notice are gone.
+  - Tests: 6 FFI tests (image round trip, zero length, unopened free, truncated images,
+    refused lengths, ABI 6); `DflogNativeTests` +6 (replaced path for the index and for the
+    columns, truncation after and before the column reader opened, moved boundaries, a short or
+    failing stream into `FromStream`; the two replaced-path ones return early on Windows,
+    which refuses to rename over an open file); `DflogBufferCacheTests` +1 (native columns
+    verified against a fresh and a cache-loaded managed index). Verified on Windows: `cargo fmt
+    --check` and `cargo clippy --workspace --all-targets` clean, Rust 26+2+6, full suite
+    1786/1786 with `DFLOG_REQUIRE_NATIVE=1`. The Linux-only tests run on the Linux CI leg.
+  - The third thread (ConfigFFT adding partial native IMU results twice) is fixed separately.
 - Remaining blocker: none. Next executable step: push the combined branch to PR #34, rewrite
   its title and description as the complete feature mapped to the three criteria above, and
   read the four RID legs of the run, macOS architecture asserts included.

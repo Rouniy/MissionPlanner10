@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using log4net;
 
@@ -19,16 +21,25 @@ namespace MissionPlanner.Utilities
         /// <summary>the ABI this build expects; the library built from
         /// rust/crates/dflog-ffi by the BuildDflogNative MSBuild target must
         /// report it</summary>
-        internal const uint AbiVersion = 5;
+        internal const uint AbiVersion = 6;
+
+        /// <summary>chunk size for copying a stream into a native image</summary>
+        const int ImageChunkSize = 1024 * 1024;
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         static extern uint dflog_abi_version();
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        static extern int dflog_scan_file(byte[] pathUtf8, out IntPtr index);
+        static extern int dflog_image_new(ulong len, out IntPtr image, out IntPtr data);
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
-        static extern void dflog_index_free(IntPtr index);
+        static extern void dflog_image_free(IntPtr image);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        static extern int dflog_open_image(IntPtr image, out IntPtr file);
+
+        [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
+        static extern int dflog_file_index(IntPtr file, out IntPtr offsets, out IntPtr types, out ulong count);
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         static extern int dflog_last_error(byte[] buf, UIntPtr cap);
@@ -57,15 +68,6 @@ namespace MissionPlanner.Utilities
 
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)]
         static extern int dflog_time_base(IntPtr file, out long gpsStartUnixMs, out long msOffset);
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct NativeIndex
-        {
-            public ulong count;
-            public IntPtr offsets;
-            public IntPtr types;
-            // followed by rust-owned storage; opaque to this side
-        }
 
         [StructLayout(LayoutKind.Sequential)]
         struct NativeColumns
@@ -123,6 +125,162 @@ namespace MissionPlanner.Utilities
                     log.Warn("dflog_open failed", ex);
                     return null;
                 }
+            }
+
+            /// <summary>
+            /// Copy the first <paramref name="length"/> bytes of
+            /// <paramref name="stream"/> into a native image and index them,
+            /// so the native side sees exactly the bytes the managed reader
+            /// sees - never a path that may now name a different file.
+            /// Returns null (never throws) when the library is unavailable,
+            /// the image cannot be allocated, or the stream fails or ends
+            /// before <paramref name="length"/> bytes (the file shrank since
+            /// it was measured). The stream position is restored.
+            /// </summary>
+            public static ColumnReader FromStream(Stream stream, long length)
+            {
+                if (!Available || stream == null || length < 0)
+                    return null;
+
+                long position;
+                try
+                {
+                    position = stream.Position;
+                }
+                catch (Exception ex)
+                {
+                    log.Warn("cannot read the log stream position", ex);
+                    return null;
+                }
+
+                var image = IntPtr.Zero;
+                try
+                {
+                    var rc = dflog_image_new((ulong)length, out image, out var data);
+                    if (rc != 0)
+                    {
+                        log.WarnFormat("dflog_image_new({0}) failed ({1}): {2}", length, rc, LastError());
+                        return null;
+                    }
+
+                    stream.Position = 0;
+                    var buffer = new byte[Math.Min(length, ImageChunkSize)];
+                    long copied = 0;
+                    while (copied < length)
+                    {
+                        var read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, length - copied));
+                        if (read <= 0)
+                        {
+                            log.WarnFormat("log stream ended after {0} of {1} bytes; it shrank since it was measured",
+                                copied, length);
+                            return null;
+                        }
+
+                        Marshal.Copy(buffer, 0, new IntPtr(data.ToInt64() + copied), read);
+                        copied += read;
+                    }
+
+                    // the image is consumed whether or not the open succeeds
+                    rc = dflog_open_image(image, out var file);
+                    image = IntPtr.Zero;
+                    if (rc != 0)
+                    {
+                        log.WarnFormat("dflog_open_image failed ({0}): {1}", rc, LastError());
+                        return null;
+                    }
+
+                    return new ColumnReader(file);
+                }
+                catch (Exception ex)
+                {
+                    log.Warn("reading the log into a native image failed", ex);
+                    return null;
+                }
+                finally
+                {
+                    if (image != IntPtr.Zero)
+                        dflog_image_free(image);
+
+                    try
+                    {
+                        // a stream disposed meanwhile reports CanSeek false
+                        if (stream.CanSeek)
+                            stream.Position = position;
+                    }
+                    catch (IOException ex)
+                    {
+                        log.Warn("cannot restore the log stream position", ex);
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Copy the record index this reader built: the byte offset and
+            /// message type of every record, in scan order. Returns false
+            /// (never throws) on failure.
+            /// </summary>
+            public bool TryGetIndex(out long[] offsets, out byte[] types)
+            {
+                offsets = null;
+                types = null;
+
+                if (_file == IntPtr.Zero)
+                    return false;
+
+                try
+                {
+                    var rc = dflog_file_index(_file, out var offsetsPtr, out var typesPtr, out var count);
+                    if (rc != 0)
+                    {
+                        log.WarnFormat("dflog_file_index failed ({0}): {1}", rc, LastError());
+                        return false;
+                    }
+
+                    if (count > int.MaxValue)
+                    {
+                        log.WarnFormat("dflog index too large for managed copy: {0}", count);
+                        return false;
+                    }
+
+                    var n = (int)count;
+                    offsets = new long[n];
+                    types = new byte[n];
+                    if (n > 0)
+                    {
+                        Marshal.Copy(offsetsPtr, offsets, 0, n);
+                        Marshal.Copy(typesPtr, types, 0, n);
+                    }
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    log.Warn("dflog_file_index failed", ex);
+                    offsets = null;
+                    types = null;
+                    return false;
+                }
+            }
+
+            /// <summary>
+            /// Whether this reader indexed exactly the records at
+            /// <paramref name="lineOffsets"/>, record for record - the check
+            /// that its column line numbers mean the same rows as the caller's
+            /// index. Logs a warning on a mismatch.
+            /// </summary>
+            public bool IndexMatches(IReadOnlyList<long> lineOffsets)
+            {
+                if (!TryGetIndex(out var offsets, out _))
+                    return false;
+
+                var matches = offsets.Length == lineOffsets.Count;
+                for (var i = 0; matches && i < offsets.Length; i++)
+                    matches = offsets[i] == lineOffsets[i];
+
+                if (!matches)
+                    log.WarnFormat("native index ({0} records) does not match the managed index ({1}); " +
+                                   "the log changed since it was indexed", offsets.Length, lineOffsets.Count);
+                return matches;
             }
 
             /// <summary>
@@ -321,63 +479,6 @@ namespace MissionPlanner.Utilities
             }
 
             return "(unknown)";
-        }
-
-        /// <summary>
-        /// Index the log at <paramref name="path"/>. Returns false (never
-        /// throws) when the native library is missing or the scan fails, so
-        /// the caller can use the managed scanner instead.
-        /// </summary>
-        public static bool TryScan(string path, out long[] offsets, out byte[] types)
-        {
-            offsets = null;
-            types = null;
-
-            if (!Available)
-                return false;
-
-            var handle = IntPtr.Zero;
-            try
-            {
-                // netstandard2.0 has no LPUTF8Str - marshal the path by hand
-                var pathUtf8 = System.Text.Encoding.UTF8.GetBytes(path + "\0");
-                var rc = dflog_scan_file(pathUtf8, out handle);
-                if (rc != 0)
-                {
-                    log.WarnFormat("dflog_scan_file failed ({0}): {1}", rc, LastError());
-                    return false;
-                }
-
-                var index = Marshal.PtrToStructure<NativeIndex>(handle);
-                if (index.count > int.MaxValue)
-                {
-                    log.WarnFormat("dflog index too large for managed copy: {0}", index.count);
-                    return false;
-                }
-
-                var count = (int)index.count;
-                offsets = new long[count];
-                types = new byte[count];
-                if (count > 0)
-                {
-                    Marshal.Copy(index.offsets, offsets, 0, count);
-                    Marshal.Copy(index.types, types, 0, count);
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                log.Warn("dflog native scan failed", ex);
-                offsets = null;
-                types = null;
-                return false;
-            }
-            finally
-            {
-                if (handle != IntPtr.Zero)
-                    dflog_index_free(handle);
-            }
         }
     }
 }

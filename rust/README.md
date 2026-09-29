@@ -1,13 +1,13 @@
 # dflog - native dataflash log core
 
 Rust implementation of ArduPilot dataflash (`.bin`) log parsing (crates
-0.7.2). Two crates:
+0.8.0). Two crates:
 
 - `crates/dflog-core` - parser, index scan, typed columnar access, units and
   GPS time-base metadata. Behavior is bug-for-bug compatible with the C#
   parser in `ExtLibs/Utilities` (`DFLogBuffer`/`BinaryLog`), pinned by the
   golden characterization tests over `testdata/`.
-- `crates/dflog-ffi` - `dflog_ffi` cdylib exposing a C ABI (ABI version 5)
+- `crates/dflog-ffi` - `dflog_ffi` cdylib exposing a C ABI (ABI version 6)
   consumed from `ExtLibs/Utilities` over P/Invoke. Every export catches
   panics at the boundary.
 

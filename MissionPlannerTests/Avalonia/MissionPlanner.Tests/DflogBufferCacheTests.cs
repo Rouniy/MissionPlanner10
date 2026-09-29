@@ -1,3 +1,4 @@
+using System.Globalization;
 using MissionPlanner.Utilities;
 
 namespace MissionPlanner.Tests;
@@ -305,6 +306,54 @@ public class DflogBufferCacheTests {
       Assert.False(buffer.LastLoadFromCache);
       Assert.Equal(scanned, Lines(buffer));
       Assert.Equal(50, buffer.GetEnumeratorType("TST").Count());
+    }
+  }
+
+  /// <summary>
+  /// A managed index - freshly scanned or loaded from the cache - still gets
+  /// native columns, but only once the column reader's own index is verified
+  /// against it, so the native line numbers are this buffer's rows.
+  /// </summary>
+  [Fact]
+  public void Managed_index_serves_verified_native_columns_fresh_and_cached() {
+    if (NativeMissing) {
+      return;
+    }
+
+    using var scope = new CacheScope();
+    File.WriteAllBytes(scope.LogPath, BuildLog(50));
+
+    foreach (bool expectCache in new[] { false, true }) {
+      // a native-capable open skips the cache in both directions
+      DFLogBuffer.UseNativeScan = false;
+      using var buffer = new DFLogBuffer(scope.LogPath);
+      scope.TrackCache(buffer);
+      Assert.Equal(expectCache, buffer.LastLoadFromCache);
+
+      DFLogBuffer.UseNativeScan = true;
+      long hitsBefore = DFLogBuffer.NativeColumnHits;
+      Assert.True(buffer.TryGetColumnsNative("TST", new[] { "V" }, out long[] linenos,
+          out double[][] columns));
+      Assert.True(DFLogBuffer.NativeColumnHits > hitsBefore, "the native column path did not engage");
+
+      var managed = buffer.GetEnumeratorType(new[] { "TST" }).ToList();
+      Assert.Equal(managed.Select(item => (long)item.lineno), linenos);
+      Assert.Equal(managed.Select(item => double.Parse(item["V"], CultureInfo.InvariantCulture)),
+          columns[0]);
+    }
+  }
+
+  private static bool NativeMissing {
+    get {
+      if (DFLogNative.Available) {
+        return false;
+      }
+
+      // Hosts that build the native library set DFLOG_REQUIRE_NATIVE=1 so a
+      // broken native build fails loudly instead of quietly skipping.
+      Assert.True(Environment.GetEnvironmentVariable("DFLOG_REQUIRE_NATIVE") != "1",
+          "DFLOG_REQUIRE_NATIVE=1 but the dflog native library is unavailable");
+      return true;
     }
   }
 }

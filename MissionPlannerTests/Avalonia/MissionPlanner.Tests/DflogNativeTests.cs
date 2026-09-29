@@ -489,4 +489,236 @@ public class DflogNativeTests {
 
     return (linenos.ToArray(), cols.Select(c => c.ToArray()).ToArray());
   }
+
+  /// <summary>
+  /// The native index is read through the buffer's own stream, so a path
+  /// replaced after the stream was opened cannot hand the index another file
+  /// (on the old path-based scan, plane.bin's 20,885 records were indexed
+  /// for copter.bin's stream).
+  /// </summary>
+  [Fact]
+  public void Native_index_describes_the_open_stream_not_a_replaced_path() {
+    // Windows refuses to replace a file that is open
+    if (OperatingSystem.IsWindows() || NativeMissing) {
+      return;
+    }
+
+    DirectoryInfo dir = Directory.CreateTempSubdirectory("DflogNativeTests");
+    try {
+      string path = Path.Combine(dir.FullName, "log.bin");
+      string replacement = Path.Combine(dir.FullName, "replacement.bin");
+      File.Copy(TestData("copter"), path);
+      File.Copy(TestData("plane"), replacement);
+
+      using (ForceNativeScan(true))
+      using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+          FileShare.ReadWrite | FileShare.Delete)) {
+        File.Move(replacement, path, overwrite: true);
+        using var buffer = new DFLogBuffer(stream);
+        Assert.True(DFLogBuffer.LastScanNative, "native scan did not engage");
+        Assert.Equal(31867, buffer.Count);
+      }
+    } finally {
+      dir.Delete(true);
+    }
+  }
+
+  /// <summary>
+  /// The column reader opens lazily; it too reads the buffer's stream, so a
+  /// path replaced in between cannot make its line numbers point at another
+  /// file's records.
+  /// </summary>
+  [Fact]
+  public void Native_columns_describe_the_open_stream_not_a_replaced_path() {
+    // Windows refuses to replace a file that is open
+    if (OperatingSystem.IsWindows() || NativeMissing) {
+      return;
+    }
+
+    DirectoryInfo dir = Directory.CreateTempSubdirectory("DflogNativeTests");
+    try {
+      string path = Path.Combine(dir.FullName, "log.bin");
+      string replacement = Path.Combine(dir.FullName, "replacement.bin");
+      File.Copy(TestData("copter"), path);
+      File.Copy(TestData("plane"), replacement);
+
+      using (ForceNativeScan(true)) {
+        int expectedRows = ImuRows(TestData("copter"));
+        using var buffer = new DFLogBuffer(path);
+        File.Move(replacement, path, overwrite: true);
+
+        Assert.True(buffer.TryGetColumnsNative("IMU", new[] { "TimeUS" }, out long[] linenos, out _));
+        Assert.Equal(expectedRows, linenos.Length);
+        Assert.All(linenos, lineno => Assert.StartsWith("IMU,", buffer[(int)lineno]));
+      }
+    } finally {
+      dir.Delete(true);
+    }
+  }
+
+  /// <summary>
+  /// Once open, the column reader owns its copy of the log: truncating the
+  /// file changes nothing (on Linux and macOS the old mapped reader died with
+  /// SIGBUS here).
+  /// </summary>
+  [Fact]
+  public void Native_columns_survive_truncation_after_the_reader_opened() {
+    if (NativeMissing) {
+      return;
+    }
+
+    DirectoryInfo dir = Directory.CreateTempSubdirectory("DflogNativeTests");
+    try {
+      string path = Path.Combine(dir.FullName, "log.bin");
+      File.Copy(TestData("copter"), path);
+      string[] fields = { "TimeUS", "GyrX" };
+
+      using (ForceNativeScan(true))
+      using (var buffer = new DFLogBuffer(OpenShared(path))) {
+        Assert.True(buffer.TryGetColumnsNative("IMU", fields, out long[] before, out double[][] beforeColumns));
+        Truncate(path, new FileInfo(path).Length / 2);
+
+        // no line rendering after this point: managed record reads past the
+        // new end of file fail
+        Assert.True(buffer.TryGetColumnsNative("IMU", fields, out long[] after, out double[][] afterColumns));
+        Assert.Equal(before, after);
+        Assert.Equal(beforeColumns, afterColumns);
+      }
+    } finally {
+      dir.Delete(true);
+    }
+  }
+
+  /// <summary>
+  /// A file truncated before the first column query cannot fill the column
+  /// reader's image: native columns are refused and callers fall back.
+  /// </summary>
+  [Fact]
+  public void Native_columns_are_refused_when_the_file_shrank_before_the_first_query() {
+    if (NativeMissing) {
+      return;
+    }
+
+    DirectoryInfo dir = Directory.CreateTempSubdirectory("DflogNativeTests");
+    try {
+      string path = Path.Combine(dir.FullName, "log.bin");
+      File.Copy(TestData("copter"), path);
+
+      using (ForceNativeScan(true))
+      using (var buffer = new DFLogBuffer(OpenShared(path))) {
+        Truncate(path, new FileInfo(path).Length / 2);
+
+        long hitsBefore = DFLogBuffer.NativeColumnHits;
+        Assert.False(buffer.TryGetColumnsNative("IMU", new[] { "TimeUS" }, out _, out _));
+        Assert.Equal(hitsBefore, DFLogBuffer.NativeColumnHits);
+      }
+    } finally {
+      dir.Delete(true);
+    }
+  }
+
+  /// <summary>
+  /// A rewrite in place that moves record boundaries leaves the column
+  /// reader's index disagreeing with the buffer's, so native columns are
+  /// refused rather than served for the wrong rows.
+  /// </summary>
+  [Fact]
+  public void Native_columns_are_refused_when_record_boundaries_moved() {
+    if (NativeMissing) {
+      return;
+    }
+
+    DirectoryInfo dir = Directory.CreateTempSubdirectory("DflogNativeTests");
+    try {
+      string path = Path.Combine(dir.FullName, "log.bin");
+      File.Copy(TestData("copter"), path);
+      long length = new FileInfo(path).Length;
+      // rover.bin is shorter than copter.bin, so the length stays the same
+      byte[] rover = File.ReadAllBytes(TestData("rover"));
+      Assert.True(rover.Length < length);
+
+      using (ForceNativeScan(true))
+      using (var buffer = new DFLogBuffer(OpenShared(path))) {
+        using (var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite)) {
+          writer.Write(rover, 0, rover.Length);
+        }
+
+        Assert.Equal(length, new FileInfo(path).Length);
+        Assert.False(buffer.TryGetColumnsNative("IMU", new[] { "TimeUS" }, out _, out _));
+      }
+    } finally {
+      dir.Delete(true);
+    }
+  }
+
+  /// <summary>
+  /// FromStream never throws and never leaves the stream moved: a stream
+  /// shorter than the requested length, or one whose reads fail part-way,
+  /// yields null.
+  /// </summary>
+  [Fact]
+  public void From_stream_refuses_a_short_or_failing_stream_without_throwing() {
+    if (NativeMissing) {
+      return;
+    }
+
+    byte[] log = File.ReadAllBytes(TestData("copter"));
+    using var stream = new MemoryStream(log);
+    stream.Position = 123;
+
+    Assert.Null(DFLogNative.ColumnReader.FromStream(stream, log.Length + 1));
+    Assert.Equal(123L, stream.Position);
+
+    using (var failing = new FailingStream(log, failAfter: 4096)) {
+      Assert.Null(DFLogNative.ColumnReader.FromStream(failing, log.Length));
+    }
+
+    using var reader = DFLogNative.ColumnReader.FromStream(stream, log.Length);
+    Assert.NotNull(reader);
+    Assert.True(reader.TryGetIndex(out long[] offsets, out _));
+    Assert.Equal(31867, offsets.Length);
+    Assert.Equal(123L, stream.Position);
+  }
+
+  private static int ImuRows(string path) {
+    using var buffer = new DFLogBuffer(path);
+    Assert.True(buffer.TryGetColumnsNative("IMU", new[] { "TimeUS" }, out long[] linenos, out _));
+    return linenos.Length;
+  }
+
+  /// <summary>
+  /// A read stream that lets another handle write to the file. The native
+  /// side reads the buffer's stream, never its path, so this opens the buffer
+  /// as faithfully as DFLogBuffer(string) does, whose read-only sharing
+  /// Windows enforces against the tests' writers.
+  /// </summary>
+  private static FileStream OpenShared(string path) {
+    return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+  }
+
+  private static void Truncate(string path, long length) {
+    using (var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite)) {
+      writer.SetLength(length);
+    }
+
+    // the test must not pass because the truncation silently failed
+    Assert.Equal(length, new FileInfo(path).Length);
+  }
+
+  /// <summary>A stream whose reads throw once it reaches a set position.</summary>
+  private sealed class FailingStream : MemoryStream {
+    private readonly long _failAfter;
+
+    public FailingStream(byte[] data, long failAfter) : base(data) {
+      _failAfter = failAfter;
+    }
+
+    public override int Read(byte[] buffer, int offset, int count) {
+      if (Position >= _failAfter) {
+        throw new IOException("simulated read failure");
+      }
+
+      return base.Read(buffer, offset, (int)Math.Min(count, _failAfter - Position));
+    }
+  }
 }
