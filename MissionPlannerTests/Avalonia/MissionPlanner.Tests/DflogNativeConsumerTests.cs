@@ -371,4 +371,95 @@ public class DflogNativeConsumerTests {
       DFLogBuffer.UseNativeScan = old;
     }
   }
+
+  /// <summary>
+  /// When IMU goes native and IMU2 then fails, the enumeration fallback must
+  /// start from clean state: before the fix IMU's native samples stayed in
+  /// place and the fallback added them again, doubling IMU and skewing its
+  /// sample rate. With the fix both runs are fully managed, so the results
+  /// are identical, not just close.
+  /// </summary>
+  [Fact]
+  public void Fft_imu_fallback_does_not_repeat_partial_native_results() {
+    if (NativeMissing) {
+      return;
+    }
+
+    DirectoryInfo dir = Directory.CreateTempSubdirectory("DflogNativeConsumerTests");
+    bool old = DFLogBuffer.UseNativeScan;
+    try {
+      string path = Path.Combine(dir.FullName, "imu.bin");
+      File.WriteAllBytes(path, BuildImuLogWithTextGyrZ(rows: 256));
+      var viewModel = new MissionPlanner.ViewModels.GCSViews.ConfigurationView.ConfigFFTViewModel {
+        // 32-sample windows: 256 rows per type give the averaging loop work
+        Bins = 5,
+      };
+
+      DFLogBuffer.UseNativeScan = false;
+      var managed = viewModel.ComputeFft(path);
+      Assert.NotEmpty(managed.Series);
+
+      DFLogBuffer.UseNativeScan = true;
+      long hitsBefore = DFLogBuffer.NativeColumnHits;
+      var native = viewModel.ComputeFft(path);
+      Assert.True(DFLogBuffer.NativeColumnHits > hitsBefore,
+          "IMU did not go native before IMU2 failed");
+
+      Assert.Equal(managed.SampleRate, native.SampleRate);
+      Assert.Equal(managed.Series.Select(s => s.Label), native.Series.Select(s => s.Label));
+      for (int s = 0; s < managed.Series.Count; s++) {
+        Assert.Equal(managed.Series[s].Freq, native.Series[s].Freq);
+        Assert.Equal(managed.Series[s].Mag, native.Series[s].Mag);
+      }
+    } finally {
+      DFLogBuffer.UseNativeScan = old;
+      dir.Delete(true);
+    }
+  }
+
+  /// <summary>
+  /// A synthetic log (invented values): IMU and IMU2 share the seven fields
+  /// the FFT reads, but IMU2 declares GyrZ as `n` (char[4]) holding numeric
+  /// text. The native decoder refuses `n`, while the managed path parses the
+  /// rendered text, so IMU succeeds natively, IMU2 fails, and the managed
+  /// fallback runs cleanly.
+  /// </summary>
+  private static byte[] BuildImuLogWithTextGyrZ(int rows) {
+    const string labels = "TimeUS,AccX,AccY,AccZ,GyrX,GyrY,GyrZ";
+    var data = new List<byte>();
+
+    void AddFmt(byte id, string name, string format) {
+      var fmt = new byte[86];
+      fmt[0] = id;
+      fmt[1] = 3 + 8 + 6 * 4;
+      System.Text.Encoding.ASCII.GetBytes(name).CopyTo(fmt, 2);
+      System.Text.Encoding.ASCII.GetBytes(format).CopyTo(fmt, 6);
+      System.Text.Encoding.ASCII.GetBytes(labels).CopyTo(fmt, 22);
+      data.AddRange(new byte[] { 0xA3, 0x95, 0x80 });
+      data.AddRange(fmt);
+    }
+
+    AddFmt(0xA1, "IMU", "Qffffff");
+    AddFmt(0xA2, "IMU2", "Qfffffn");
+
+    for (int i = 0; i < rows; i++) {
+      ulong timeUs = 1_000_000UL + (ulong)i * 1000;
+      double t = i / 1000.0;
+      foreach (byte id in new byte[] { 0xA1, 0xA2 }) {
+        data.AddRange(new byte[] { 0xA3, 0x95, id });
+        data.AddRange(BitConverter.GetBytes(timeUs));
+        for (int f = 0; f < 5; f++) {
+          data.AddRange(BitConverter.GetBytes((float)Math.Sin(2 * Math.PI * (40 + 10 * f) * t)));
+        }
+
+        if (id == 0xA1) {
+          data.AddRange(BitConverter.GetBytes((float)Math.Sin(2 * Math.PI * 90 * t)));
+        } else {
+          data.AddRange(System.Text.Encoding.ASCII.GetBytes("0.25"));
+        }
+      }
+    }
+
+    return data.ToArray();
+  }
 }

@@ -251,9 +251,17 @@ public partial class ConfigFFTViewModel : ParamPageBase {
   /// the enumeration loop; values are the raw decoded values, where the
   /// enumeration path parses display strings that round floats to 7
   /// significant digits. Returns false when the native path is off or a
-  /// present type's columns cannot be fetched.
+  /// present type's columns cannot be fetched, leaving
+  /// <paramref name="alldata"/> untouched: samples are staged and copied in
+  /// only once every present type succeeded, so the enumeration fallback
+  /// never adds a type's samples a second time.
   /// </summary>
   private static bool TryCollectImuNative(DFLogBuffer file, FFT2.datastate[] alldata) {
+    var staged = new FFT2.datastate[alldata.Length];
+    for (int a = 0; a < staged.Length; a++) {
+      staged[a] = new FFT2.datastate();
+    }
+
     bool any = false;
     foreach (string type in new[] { "IMU", "IMU2", "IMU3" }) {
       if (!file.dflog.logformat.ContainsKey(type)) {
@@ -268,12 +276,16 @@ public partial class ConfigFFTViewModel : ParamPageBase {
       int sensorno = type == "IMU2" ? 1 : type == "IMU3" ? 2 : 0;
       for (int i = 0; i < cols[0].Length; i++) {
         double time = cols[0][i] / 1000.0;
-        AddImuSampleNative(alldata[sensorno + 3], time, type + " ACC",
+        AddImuSampleNative(staged[sensorno + 3], time, type + " ACC",
             cols[1][i], cols[2][i], cols[3][i]);
-        AddImuSampleNative(alldata[sensorno], time, type + " GYR",
+        AddImuSampleNative(staged[sensorno], time, type + " GYR",
             cols[4][i], cols[5][i], cols[6][i]);
       }
       any = true;
+    }
+
+    if (any) {
+      Array.Copy(staged, alldata, staged.Length);
     }
     return any;
   }

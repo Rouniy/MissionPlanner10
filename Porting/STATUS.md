@@ -1189,8 +1189,16 @@ Updated: **2026-09-28**.
     which refuses to rename over an open file); `DflogBufferCacheTests` +1 (native columns
     verified against a fresh and a cache-loaded managed index). Verified on Windows: `cargo fmt
     --check` and `cargo clippy --workspace --all-targets` clean, Rust 26+2+6, full suite
-    1786/1786 with `DFLOG_REQUIRE_NATIVE=1`. The Linux-only tests run on the Linux CI leg.
-  - The third thread (ConfigFFT adding partial native IMU results twice) is fixed separately.
+    1786/1786 with `DFLOG_REQUIRE_NATIVE=1`; the dflog tests, the Linux-only ones included,
+    also pass on Linux (WSL, 61/61).
+  - The third thread: ConfigFFT's native IMU collection filled the shared state type by
+    type, so when IMU succeeded natively and IMU2 then failed, the enumeration fallback added
+    IMU's samples a second time, doubling them and skewing the sample-rate estimate. The
+    native samples are now staged and copied in only once every present IMU type succeeded.
+    `DflogNativeConsumerTests` +1 (a synthetic log whose IMU2 declares GyrZ as `n` text, which
+    the native decoder refuses and the managed path parses: native-enabled and managed results
+    must be identical); on the old code its frequency table comes out doubled. Full suite
+    1787/1787 with `DFLOG_REQUIRE_NATIVE=1`.
 - Remaining blocker: none. Next executable step: push the combined branch to PR #34, rewrite
   its title and description as the complete feature mapped to the three criteria above, and
   read the four RID legs of the run, macOS architecture asserts included.
