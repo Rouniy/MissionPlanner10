@@ -172,7 +172,8 @@ namespace MissionPlanner.Utilities
         /// length the index was built from, and kept only if its index
         /// matches this buffer's record for record, so its line numbers mean
         /// this buffer's rows. Null when native columns are unavailable; not
-        /// retried after a refusal. Call under locker.
+        /// retried after a refusal. Once open it holds a private copy of the
+        /// log until the buffer is disposed. Call under locker.
         /// </summary>
         DFLogNative.ColumnReader NativeColumnReader()
         {

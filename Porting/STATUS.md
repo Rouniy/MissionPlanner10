@@ -1152,6 +1152,8 @@ Updated: **2026-09-28**.
   twice, once for the index and once for the column reader (since the 2026-09-28 review fixes
   below, both reads go through the buffer's stream and the second is verified against the
   first; keeping the construction reader for short-lived column consumers would remove it);
+  the column reader holds a private copy of the file for the buffer's lifetime (a
+  positioned-read block reader would bound it; see the 2026-09-28 review bullets below);
   the ISBH/ISBD merge is written in
   both FFT and spectrogram, mirroring master's duplicated enumeration loops. `ReadField` is now
   `ReadFields` with one field: the private per-field core that duplicated the native block is
@@ -1175,9 +1177,16 @@ Updated: **2026-09-28**.
     0.8.0; `dflog_scan_file` and `dflog_index_free` removed) over the length sampled when the
     index was built, and the column reader is kept only if its index matches the buffer's
     record for record. A shrunk file or a moved record boundary refuses native columns.
-  - Trade-off against the mapping: a native open briefly allocates the file's size while the
-    scan runs, and a column reader holds the file in memory; steady-state memory matches the
-    managed parser. The image allocation fails cleanly; the index vectors the scan builds
+  - Trade-off against the mapping, measured on a 1 GB log (copter.bin concatenated, 26.3 M
+    records; Windows, Release, index cache off, medians of 10; mapped / stream read / managed
+    only): open 2,754 / 2,952 / 3,704 ms, first column query 565 / 731 / 1,434 ms, later
+    queries 54 / 54 / 1,337 ms. The open's temporary copy of the file is freed before the
+    managed index peaks, so memory at open does not grow. The cost is the column reader: once
+    a buffer has queried columns it holds a private copy of the file until disposed (held
+    after the first query, medians of 6 after forced collections: 1,869 / 2,836 / 1,402 MB),
+    where the mapped pages were file-backed and reclaimable. A positioned-read block reader
+    would bound that, but `Record` borrows payload slices from the whole image, so it is
+    follow-up work. The image allocation fails cleanly; the index vectors the scan builds
     (about 9 bytes per record) still abort if memory runs out, which the FFI docs state.
   - rust/ is now dflog's home: the userepo/MissionPlanner fork it began as a copy of is set
     aside, so the vendoring notes in rust/README.md, rust/testdata/README.md and the dflog
