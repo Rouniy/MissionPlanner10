@@ -6,27 +6,34 @@ Updated: **2026-10-04**.
 
 - Branch `fix/mcp-mavlink-command` is based on `origin/master` at
   `6da955d27cfd275e0d1632e4fb59f0516d38e1b2`. Implementation commit:
-  `eee8dfd2a68f552dd56ab369a1b0b17e7889c804`. PR #45 targets `master`:
+  `eee8dfd2a68f552dd56ab369a1b0b17e7889c804`; precision follow-up:
+  `055146104df7ccab7bb3af4d210e05b651440d30`. PR #45 targets `master`:
   https://github.com/Rouniy/MissionPlanner10/pull/45.
 - `ParseMavlinkCommandId` validates integer IDs in 0..65535 before passing a `ushort`
   to `Enum.IsDefined`. It also accepts case-insensitive MAV_CMD names with or without
   `MAV_CMD_`; `vehicle_command` advertises this format. Unknown, fractional,
   out-of-range and malformed values produce an `ArgumentException` mentioning commandId.
+- Independent review found that decimal conversion could round very precise fractional
+  IDs into valid commands. The follow-up parses the original numeric text directly with
+  `ushort.TryParse`, preserving integral decimal/exponent forms while rejecting fractions
+  and underflow. The added regressions produced **12 failures** before the fix and pass
+  afterward.
 - .NET SDK **10.0.112**: normal test-project restore/build succeeded, including the native
-  DataFlash library and the application executable. **34/34** new parser tests passed
+  DataFlash library and the application executable. **48/48** parser tests passed
   (including 115/CONDITION_YAW, 201/DO_SET_ROI and every defined enum value).
-  Full suite with `DFLOG_REQUIRE_NATIVE=1`: **1821/1821**, zero skipped. Two existing
+  Full suite with `DFLOG_REQUIRE_NATIVE=1`: **1835/1835**, zero skipped. Two existing
   nullable warnings in `ParameterMetadataIndexTests.cs`. Checks used isolated XDG
   directories; `git diff --check` passed.
 - Live qualification used the worktree build under Xvfb, an isolated HOME, and stock
   **ArduCopter V4.0.3 (ffd08628)** over TCP. MCP set GUIDED, armed and took off to 10 m.
+  This rerun used the rebuilt precision fix after normal GPS/EKF initialization.
   Numeric commandId **115** with `p1=90,p2=30,p3=1,p4=0` was acknowledged and yaw changed
-  **352.8° -> 91.8°**. `MAV_CMD_CONDITION_YAW` with `p1=180` reached **178.3°**.
-  MCP then landed; final telemetry showed **disarmed**, altitude 0.056 m. The test
+  **352.7° -> 89.9°**. `MAV_CMD_CONDITION_YAW` with `p1=180` reached **178.9°**.
+  MCP then landed; final telemetry showed **disarmed**, altitude 0.037 m. The test
   session, application, SITL and Xvfb were stopped. DO_SET_ROI has parser coverage;
   its vehicle effect was not live-tested. No hardware qualification or hermes-sim changes.
-- Hosted CI/package and CodeQL checks passed at `b0d5a69b05f623812e69c505a82a3cbc9286c056`,
-  before this documentation-only correction.
+- Hosted CI/package and CodeQL checks passed at `d91c5ea11b4cb694738d0189d47b1010dad45f06`,
+  before the precision follow-up. Checks for the follow-up remain pending.
 - The primary checkout remains on `master` at `6da955d27`, with its six original modified
   files unchanged. Five unstaged checkout line-ending differences remain in the worktree:
   `Drivers/inf2cat.bat`, `Drivers/uninstall_drivers.bat`, `ExtLibs/Mavlink/regenerate.bat`,
