@@ -1,6 +1,43 @@
 # Avalonia in-place migration status
 
-Updated: **2026-09-29**.
+Updated: **2026-10-04**.
+
+## ENG-24 — MCP MAV_CMD parsing — 2026-10-04
+
+- Worktree `/home/obazna/dev/skycomm/worktrees/MissionPlanner10-mavlink-command`, branch
+  `fix/mcp-mavlink-command`, based on `origin/master` at
+  `6da955d27cfd275e0d1632e4fb59f0516d38e1b2`. Implementation commit:
+  `eee8dfd2a68f552dd56ab369a1b0b17e7889c804`; this record is a separate status-only
+  commit. PR #45 targets `master`: https://github.com/Rouniy/MissionPlanner10/pull/45.
+- `ParseMavlinkCommandId` validates integer IDs in 0..65535 before passing a `ushort`
+  to `Enum.IsDefined`. It also accepts case-insensitive MAV_CMD names with or without
+  `MAV_CMD_`; `vehicle_command` advertises this format. Unknown, fractional,
+  out-of-range and malformed values produce an `ArgumentException` mentioning commandId.
+- .NET SDK **10.0.112**: normal test-project restore/build succeeded, including the native
+  DataFlash library and the worktree's `bin/Debug/net10.0/MissionPlanner` executable.
+  **34/34** new parser tests passed (including 115/CONDITION_YAW, 201/DO_SET_ROI and
+  every defined enum value). Full suite with `DFLOG_REQUIRE_NATIVE=1`: **1821/1821**,
+  zero skipped. Two existing nullable warnings in `ParameterMetadataIndexTests.cs`.
+  Checks used isolated XDG directories under `/tmp/eng24-checks`; `git diff --check` passed.
+- Live qualification used this worktree build under Xvfb `:131`, isolated
+  `HOME=/tmp/eng24-live/home`, and stock **ArduCopter V4.0.3 (ffd08628)** on TCP 5770.
+  MCP set GUIDED, armed and took off to 10 m. Numeric commandId **115** with
+  `p1=90,p2=30,p3=1,p4=0` was acknowledged and yaw changed **352.8° -> 91.8°**.
+  `MAV_CMD_CONDITION_YAW` with `p1=180` reached **178.3°**. MCP then landed; final
+  telemetry showed **disarmed**, altitude 0.056 m. Logs and telemetry are in
+  `/tmp/eng24-live/yaw-check.log` and `yaw-result.json`. The test session, application,
+  SITL and Xvfb were stopped. DO_SET_ROI has parser coverage; its vehicle effect was not
+  live-tested. No hardware qualification or hermes-sim changes.
+- ENG-24 is **REVIEW**, with a comment identifying **PR #45** without GitHub links.
+  GitHub CI/package and CodeQL checks were running at handoff; local checks are complete.
+- The primary checkout stays on `master` at `6da955d27`, with all six original modified
+  files verified byte-for-byte unchanged. The worktree has only five unstaged checkout
+  line-ending differences after committing this record: `Drivers/inf2cat.bat`,
+  `Drivers/uninstall_drivers.bat`, `ExtLibs/Mavlink/regenerate.bat`,
+  `ExtLibs/Mavlink/updatexmls.bat`, `graphs/updatexmls.bat`. They have no differences under
+  `git diff --ignore-space-at-eol` and were excluded from both commits.
+- Remaining implementation/live-test blockers: **none**. Next executable step:
+  `gh pr checks 45 --repo Rouniy/MissionPlanner10`; review the PR and its hosted checks.
 
 ## Release 1.3.83.5 — native DataFlash parser — 2026-09-29
 
