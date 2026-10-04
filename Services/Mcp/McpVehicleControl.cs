@@ -115,26 +115,26 @@ internal sealed partial class McpVehicleAccess {
       foreach (var property in element.EnumerateObject()) {
         if (!property.Name.Equals("commandId", StringComparison.OrdinalIgnoreCase)) { continue; }
         var value = property.Value;
-        decimal id;
+        string text;
         if (value.ValueKind == JsonValueKind.String) {
-          string text = value.GetString()!.Trim();
+          text = value.GetString()!.Trim();
           string name = text.StartsWith("MAV_CMD_", StringComparison.OrdinalIgnoreCase) ? text[8..] : text;
           if (Enum.GetNames<MAVLink.MAV_CMD>().Contains(name, StringComparer.OrdinalIgnoreCase)) {
             return Enum.Parse<MAVLink.MAV_CMD>(name, true);
           }
-          if (!decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out id)) {
-            throw new ArgumentException("commandId must be an integer in 0..65535 or a known MAV_CMD name.");
-          }
-        } else if (value.ValueKind != JsonValueKind.Number || !value.TryGetDecimal(out id)) {
+        } else if (value.ValueKind == JsonValueKind.Number) {
+          text = value.GetRawText();
+        } else {
           throw new ArgumentException("commandId must be an integer in 0..65535 or a known MAV_CMD name.");
         }
-        if (id is < 0 or > ushort.MaxValue || decimal.Truncate(id) != id) {
-          throw new ArgumentException("commandId must be an integer in 0..65535.");
+        // Parse the original text so a high-precision fraction cannot round into a command ID.
+        if (!ushort.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out ushort id)) {
+          throw new ArgumentException("commandId must be an integer in 0..65535 or a known MAV_CMD name.");
         }
-        if (!Enum.IsDefined(typeof(MAVLink.MAV_CMD), (ushort)id)) {
+        if (!Enum.IsDefined(typeof(MAVLink.MAV_CMD), id)) {
           throw new ArgumentException("commandId is not a known MAV_CMD.");
         }
-        return (MAVLink.MAV_CMD)(ushort)id;
+        return (MAVLink.MAV_CMD)id;
       }
     }
     throw new ArgumentException("Argument commandId is required.");
