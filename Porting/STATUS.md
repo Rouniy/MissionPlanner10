@@ -2,40 +2,36 @@
 
 Updated: **2026-10-04**.
 
-## ENG-24 — MCP MAV_CMD parsing — 2026-10-04
+## MCP MAV_CMD parsing — 2026-10-04
 
-- Worktree `/home/obazna/dev/skycomm/worktrees/MissionPlanner10-mavlink-command`, branch
-  `fix/mcp-mavlink-command`, based on `origin/master` at
+- Branch `fix/mcp-mavlink-command` is based on `origin/master` at
   `6da955d27cfd275e0d1632e4fb59f0516d38e1b2`. Implementation commit:
-  `eee8dfd2a68f552dd56ab369a1b0b17e7889c804`; this record is a separate status-only
-  commit. PR #45 targets `master`: https://github.com/Rouniy/MissionPlanner10/pull/45.
+  `eee8dfd2a68f552dd56ab369a1b0b17e7889c804`. PR #45 targets `master`:
+  https://github.com/Rouniy/MissionPlanner10/pull/45.
 - `ParseMavlinkCommandId` validates integer IDs in 0..65535 before passing a `ushort`
   to `Enum.IsDefined`. It also accepts case-insensitive MAV_CMD names with or without
   `MAV_CMD_`; `vehicle_command` advertises this format. Unknown, fractional,
   out-of-range and malformed values produce an `ArgumentException` mentioning commandId.
 - .NET SDK **10.0.112**: normal test-project restore/build succeeded, including the native
-  DataFlash library and the worktree's `bin/Debug/net10.0/MissionPlanner` executable.
-  **34/34** new parser tests passed (including 115/CONDITION_YAW, 201/DO_SET_ROI and
-  every defined enum value). Full suite with `DFLOG_REQUIRE_NATIVE=1`: **1821/1821**,
-  zero skipped. Two existing nullable warnings in `ParameterMetadataIndexTests.cs`.
-  Checks used isolated XDG directories under `/tmp/eng24-checks`; `git diff --check` passed.
-- Live qualification used this worktree build under Xvfb `:131`, isolated
-  `HOME=/tmp/eng24-live/home`, and stock **ArduCopter V4.0.3 (ffd08628)** on TCP 5770.
-  MCP set GUIDED, armed and took off to 10 m. Numeric commandId **115** with
-  `p1=90,p2=30,p3=1,p4=0` was acknowledged and yaw changed **352.8° -> 91.8°**.
-  `MAV_CMD_CONDITION_YAW` with `p1=180` reached **178.3°**. MCP then landed; final
-  telemetry showed **disarmed**, altitude 0.056 m. Logs and telemetry are in
-  `/tmp/eng24-live/yaw-check.log` and `yaw-result.json`. The test session, application,
-  SITL and Xvfb were stopped. DO_SET_ROI has parser coverage; its vehicle effect was not
-  live-tested. No hardware qualification or hermes-sim changes.
-- ENG-24 is **REVIEW**, with a comment identifying **PR #45** without GitHub links.
-  GitHub CI/package and CodeQL checks were running at handoff; local checks are complete.
-- The primary checkout stays on `master` at `6da955d27`, with all six original modified
-  files verified byte-for-byte unchanged. The worktree has only five unstaged checkout
-  line-ending differences after committing this record: `Drivers/inf2cat.bat`,
-  `Drivers/uninstall_drivers.bat`, `ExtLibs/Mavlink/regenerate.bat`,
+  DataFlash library and the application executable. **34/34** new parser tests passed
+  (including 115/CONDITION_YAW, 201/DO_SET_ROI and every defined enum value).
+  Full suite with `DFLOG_REQUIRE_NATIVE=1`: **1821/1821**, zero skipped. Two existing
+  nullable warnings in `ParameterMetadataIndexTests.cs`. Checks used isolated XDG
+  directories; `git diff --check` passed.
+- Live qualification used the worktree build under Xvfb, an isolated HOME, and stock
+  **ArduCopter V4.0.3 (ffd08628)** over TCP. MCP set GUIDED, armed and took off to 10 m.
+  Numeric commandId **115** with `p1=90,p2=30,p3=1,p4=0` was acknowledged and yaw changed
+  **352.8° -> 91.8°**. `MAV_CMD_CONDITION_YAW` with `p1=180` reached **178.3°**.
+  MCP then landed; final telemetry showed **disarmed**, altitude 0.056 m. The test
+  session, application, SITL and Xvfb were stopped. DO_SET_ROI has parser coverage;
+  its vehicle effect was not live-tested. No hardware qualification or hermes-sim changes.
+- Hosted CI/package and CodeQL checks passed at `b0d5a69b05f623812e69c505a82a3cbc9286c056`,
+  before this documentation-only correction.
+- The primary checkout remains on `master` at `6da955d27`, with its six original modified
+  files unchanged. Five unstaged checkout line-ending differences remain in the worktree:
+  `Drivers/inf2cat.bat`, `Drivers/uninstall_drivers.bat`, `ExtLibs/Mavlink/regenerate.bat`,
   `ExtLibs/Mavlink/updatexmls.bat`, `graphs/updatexmls.bat`. They have no differences under
-  `git diff --ignore-space-at-eol` and were excluded from both commits.
+  `git diff --ignore-space-at-eol` and were excluded from the commits.
 - Remaining implementation/live-test blockers: **none**. Next executable step:
   `gh pr checks 45 --repo Rouniy/MissionPlanner10`; review the PR and its hosted checks.
 
@@ -56,7 +52,7 @@ Updated: **2026-10-04**.
   ZIP/DMG for both architectures), two additional Linux/Windows updater ZIPs, four
   manifests, four signatures and `SHA256SUMS` (18 entries). No local application
   build or GUI, simulator or hardware qualification was run during this release operation.
-- The original `/home/obazna/dev/skycomm/MissionPlanner10` checkout was left on local
+- The primary checkout was left on local
   `master` at `f65fc96e8` with its uncommitted `Porting/STATUS.md` addition and five
   `.bat` line-ending differences preserved; it was not used to build or tag the release.
   This release record is a post-tag documentation commit, so it does not change released
@@ -127,8 +123,7 @@ Updated: **2026-10-04**.
   **1699/1699**, zero skipped, with .NET SDK 10.0.112 and normal package restore.
 - Verification ran in a detached temporary worktree with the exact patched C# source bytes,
   not over the running application's binaries. Full-suite application paths were redirected
-  to temporary XDG directories. TRX reports are under
-  `/tmp/missionplanner-pr40-review-KSDK7gJp/results-{before,after,full,full-fixed}/`.
+  to temporary XDG directories. TRX reports were retained outside the repository.
   Native-surface validation passes: **1623 rows, 0 blockers**. No GUI/simulator/vehicle
   session was launched; these are offline lifecycle and application tests, not flight evidence.
 - Pre-existing edits in the five driver/MAVLink `.bat` files and the separate uncommitted
@@ -247,9 +242,9 @@ Updated: **2026-10-04**.
   session's real Claude Code launch on the same layout (`gui/07-claude.png` of the earlier
   scratchpad) reported the server and its tools without analysing logs.
 - Hazard found and repaired: the previous acceptance ran the real Claude Code with
-  `XDG_DATA_HOME` pointing into a `/tmp` scratchpad; Claude's native installer re-installed
-  itself there and re-pointed `~/.local/bin/claude` at that temporary copy. The symlink was
-  restored to `~/.local/share/claude/versions/2.1.274`. For future acceptance use fake CLIs
+  `XDG_DATA_HOME` pointing into a temporary scratchpad; Claude's native installer re-installed
+  itself there and re-pointed the local launcher at that temporary copy. The symlink was
+  restored to the installed version 2.1.274. For future acceptance use fake CLIs
   on PATH, or keep `XDG_DATA_HOME` real / set `DISABLE_AUTOUPDATER=1` when a real Claude must
   run. Leftover Xvfb processes of the crashed session (old Mission Planner, terminal broker,
   interactive claude) were terminated.
@@ -375,7 +370,7 @@ Updated: **2026-10-04**.
 - Linux Xvfb GUI acceptance found three installed agents and launched a fake CLI through
   the actual terminal button. It initialized MCP, read the UI mission and appeared as
   an Allowed session. Opening the second port then Close all connections closed both
-  sockets. Screenshots retained outside the repository in `/tmp/mp-mcp-gui-check/`.
+  sockets. Screenshots were retained outside the repository.
   No real model, Claude delegation, aircraft operation or user client-config edit occurred.
 - Platform packages and CI are being produced for this branch. Actual provider login,
   model sessions and installed Windows/macOS client activation remain manual acceptance.
@@ -587,9 +582,9 @@ Updated: **2026-10-04**.
 ## Retained standalone Linux launcher — 2026-09-16
 
 - Corrected the launch handoff: `bin/Release/net10.0/MissionPlanner` is framework-dependent
-  and ordinary desktop launch cannot find the SDK installed only in `/tmp/mp-dotnet`.
+  and ordinary desktop launch cannot find an SDK installed only in a temporary directory.
   Published and **retained** the self-contained application at
-  `/home/alex/src/MissionPlanner10/out/linux-x64/MissionPlanner`. Launch this executable;
+  `out/linux-x64/MissionPlanner`. Launch this executable;
   keep the entire `out/linux-x64` directory together. No `DOTNET_ROOT` or system .NET
   installation is required. This supersedes the earlier temporary publish cleanup.
 - Git checkpoint: `port/avalonia-in-place` HEAD
@@ -600,8 +595,8 @@ Updated: **2026-10-04**.
   10.0.12 and MCP payloads. A child process with all `DOTNET_ROOT*` variables removed
   loaded `libhostfxr.so` and `libcoreclr.so` from the published directory and reached
   Avalonia X11 initialization. The smoke deliberately used no display and stopped at
-  `XOpenDisplay`; it verifies runtime resolution, not graphical acceptance. Logs:
-  `/tmp/mp-mcp-launch-publish.log` and `/tmp/mp-launch-smoke-g9qxc_pt/`.
+  `XOpenDisplay`; it verifies runtime resolution, not graphical acceptance. Logs were
+  retained outside the repository.
   Restored the normal solution package graph afterwards. No source changes or test-suite
   rerun; the 1608-pass product checkpoint below still applies.
 - Next executable step: run `./MissionPlanner` from `out/linux-x64` in the user's graphical
@@ -640,8 +635,8 @@ Updated: **2026-10-04**.
   No push or master merge occurred. Only the pre-existing unstaged `graphs/updatexmls.bat`
   line-ending change remains outside these commits. The reference source repository was
   not modified. The earlier PR #34 decision remains: defer its incomplete feature stack.
-- Local verification used SDK **10.0.401**, installed outside the repository at
-  `/tmp/mp-dotnet` because the initial PATH had no SDK:
+- Local verification used SDK **10.0.401**, installed outside the repository because
+  the initial PATH had no SDK:
   - `dotnet restore MissionPlanner.slnx`: pass.
   - `dotnet build MissionPlanner.slnx -c Release --no-restore`: **0 warnings, 0 errors**.
   - `dotnet test MissionPlannerTests/Avalonia/MissionPlanner.Tests/MissionPlanner.Tests.csproj
@@ -656,16 +651,15 @@ Updated: **2026-10-04**.
     the inherited self-replacement entry for `Program.cs`; the normal CI gate passes.
   - Self-contained publishes pass for **linux-x64, win-x64, osx-x64 and osx-arm64**,
     using `dotnet publish MissionPlanner.csproj -c Release -r <RID> --self-contained true
-    -m:1 -p:DebugType=none -p:BaseOutputPath=/tmp/mp-mcp-build/ -o /tmp/mp-mcp-publish-<RID>`.
+    -m:1 -p:DebugType=none -p:BaseOutputPath=<build-output>/ -o <publish-output>`.
     Verified apphost/main assembly, all MCP assemblies and ASP.NET Core/Kestrel runtime
     payloads, plus macOS SimpleBLE/VLC libraries/plugins. These are cross-publish/payload
     checks, not native installer/runtime acceptance.
-- Packaging initially exhausted the separate `/home` filesystem while copying Windows VLC
+- Packaging initially exhausted the home filesystem while copying Windows VLC
   files into test output. Removed only this task's temporary/generated outputs, restored
-  the normal solution graph and moved cross-RID build outputs to `/tmp`; final checks above
+  the normal solution graph and moved cross-RID build outputs to temporary storage; final checks above
   supersede that failed attempt. Publish payloads were verified and removed afterwards to
-  conserve disk. Logs remain in `/tmp/mp-mcp-verified-tests.log`,
-  `/tmp/mp-mcp-release-build.log`, `/tmp/mp-mcp-publish-summary.log` and per-RID publish logs.
+  conserve disk. Test, build and per-RID publish logs were retained outside the repository.
 - Remaining acceptance: no paid/model-backed external-agent run, SITL session, physical
   vehicle write or flight was performed. Native Windows/macOS execution, installer checks,
   Linux GUI smoke (no Xvfb here) and new CI/CodeQL runs remain unverified in this environment.
@@ -673,7 +667,7 @@ Updated: **2026-10-04**.
   freshness guarantees; legacy plugins do not share a universal transaction service.
   Those limits are explicit in the operating instructions. Flight stability is not certified.
 - Next executable step: in a graphical session run
-  `/tmp/mp-dotnet/dotnet run --project MissionPlanner.csproj -c Release`, open **AI**, attach a
+  `dotnet run --project MissionPlanner.csproj -c Release`, open **AI**, attach a
   representative flight log and launch an authenticated local Codex. Use the built-in
   **SIMULATION** workflow from [SITL-TESTING.md](../SITL-TESTING.md) to exercise discovery,
   refresh/download, proposal review, stale-value rejection and revocation before physical
@@ -745,8 +739,7 @@ Updated: **2026-10-04**.
   restores the original Mission Planner defaults for the general Jump action: the target prompt
   starts at waypoint **1**, and the resulting `DO_JUMP` row receives `P1=target`, `P2=5` instead
   of the incorrect `P1=0`, `P2=-1`. The existing explicit Jump Start action is unchanged.
-- The reference is the local current Mission Planner clone at
-  `/home/alex/SRC/MP/Oroginal/MissionPlanner`, specifically the Jump handlers in
+- The reference is the current upstream Mission Planner clone, specifically the Jump handlers in
   `GCSViews/FlightPlanner.cs`. The fix keeps the existing Avalonia dialog and undo boundary and
   only centralizes the two original defaults in `FlightPlannerViewModel`.
 - The new focused regression passes **1/1** and the complete `PlannerPortParityTests` group passes
@@ -829,7 +822,7 @@ Updated: **2026-10-04**.
   708/708 pinned port paths, and clean WinForms/project/binary/key audits).
 - The code and initial handoff commits were pushed to the newly published
   `origin/port/avalonia-in-place` branch. The first `make linux-deb` attempt encountered the known
-  logical/physical checkout alias (`/home/alex/src` versus `/home/alex/SRC`) in stale Release
+  logical/physical checkout alias in stale Release
   intermediates; a standard solution clean followed by the physical-path package script resolved
   it without source changes. The resulting package is
   `out/packages/missionplanner10_1.3.83.2-6264c722_amd64.deb`: 60,143,970 bytes, Debian version
@@ -1482,7 +1475,7 @@ Updated: **2026-10-04**.
   check could not be repeated because the pinned `MissionPlanner-Avalonia` worktree is no longer
   present locally, while its committed digest check passes.
 - The first earlier `make linux-deb` attempt encountered the known local logical/physical checkout
-  alias (`/home/alex/src` versus `/home/alex/SRC`) in stale MSBuild intermediates. A standard Release
+  alias in stale MSBuild intermediates. A standard Release
   clean followed by the physical-path package script resolved it without source changes. The final
   clean-tree package is
   `out/packages/missionplanner10_1.3.83.1-69886aea_amd64.deb`: 60,129,156 bytes, Debian version
@@ -2125,8 +2118,8 @@ Updated: **2026-10-04**.
 
 ## GTU synchronization checkpoint
 
-- NV modem behavior was most recently compared with clean
-  `/home/alex/src/AgroSky/GTU` `master == origin/master` at `3eebb35d6d35be5b5fb4c1a753017baff107b082`.
+- NV modem behavior was most recently compared with a clean GTU checkout,
+  `master == origin/master` at `3eebb35d6d35be5b5fb4c1a753017baff107b082`.
   Earlier checkpoints remain represented: `77af510a` keeps key targeting independent of
   `DIVERSITY` and supplies **Revert selected**; `f196ea689` supplies unlocked-channel RSSI
   semantics; and changes through `d74f4308` supply acquisition presets, frame validation, typed
