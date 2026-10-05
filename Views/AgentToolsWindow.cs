@@ -74,6 +74,12 @@ internal sealed class AgentToolsWindow : Window {
       _proposals, new WrapPanel { Children = { Button("Review / apply selected", ApplyAsync), Button("Export selected…", ExportAsync) } },
       Button("Attach flight log…", AttachAsync),
     } } };
+    // Access controls stay reachable even when agent details or Advanced need scrolling.
+    var sessionActions = new WrapPanel { Children = {
+      Button("Allow", () => SessionAction(0)), Button("Revoke", () => SessionAction(1), true),
+      Button("Disconnect", () => SessionAction(2), true), Button("Allow all", AllowAllAsync),
+      Button("Revoke all", RevokeAllAsync, true), Button("Stop all connections", StopAsync, true),
+    } };
     var body = new StackPanel { Spacing = 8, Children = {
       new TextBlock { Text = "AI agent connection", FontSize = 20 },
       new TextBlock { Text = "Launch gives the agent full control of Mission Planner: screens, controls, missions, parameters, logs and vehicle commands, "
@@ -83,9 +89,7 @@ internal sealed class AgentToolsWindow : Window {
       new TextBlock { Text = "Initial task for terminal agents" }, _task,
       new TextBlock { Text = "Sessions — names are reported by the clients", FontWeight = FontWeight.Bold },
       _sessions,
-      new WrapPanel { Children = { Button("Allow", () => SessionAction(0)), Button("Revoke", () => SessionAction(1), true),
-        Button("Disconnect", () => SessionAction(2), true), Button("Allow all", AllowAllAsync), Button("Revoke all", RevokeAllAsync, true),
-        Button("Stop all connections", StopAsync, true) } },
+
       new TextBlock { Text = "Persistent local port for desktop applications", FontWeight = FontWeight.Bold },
       new WrapPanel { Children = { _desktopPort, Button("Open port", OpenDesktopAsync), Button("Close port", StopDesktopAsync, true), _autoOpen } },
       _desktopEndpoint, _desktopState,
@@ -93,9 +97,10 @@ internal sealed class AgentToolsWindow : Window {
       new TextBlock { Text = "Activity", FontWeight = FontWeight.Bold },
       _output,
     } };
-    Content = new Avalonia.Controls.Grid { Margin = new Thickness(12), RowDefinitions = new RowDefinitions("*,Auto"), RowSpacing = 8,
-      Children = { new ScrollViewer { Content = body }, _status } };
-    Avalonia.Controls.Grid.SetRow(_status, 1);
+    Content = new Avalonia.Controls.Grid { Margin = new Thickness(12), RowDefinitions = new RowDefinitions("*,Auto,Auto"), RowSpacing = 8,
+      Children = { new ScrollViewer { Content = body }, sessionActions, _status } };
+    Avalonia.Controls.Grid.SetRow(sessionActions, 1);
+    Avalonia.Controls.Grid.SetRow(_status, 2);
     _output.Text = hub.RecentOutput;
     _onOutput = Output; hub.Output += _onOutput;
     _timer.Tick += (_, _) => Refresh(); _timer.Start();

@@ -33,10 +33,13 @@ tools; the AI window is excluded from inspection.
    `log_spectrum`/`log_batch_spectrum`, `log_response`, `ui_open_log`/`ui_plot_log`.
    Use these for noise/vibration filtering (INS_HNTCH_*, INS_GYRO_FILTER, INS_ACCEL_FILTER)
    and tuning before or instead of AUTOTUNE; document evidence and validation flights.
-6. Give every mutation a unique `operationId` (1..64 ASCII letters/digits plus `. _ : -`,
-   starting with a letter/digit). Retrying identical arguments with the same ID returns
+6. For tools whose schema includes `operationId`, give each mutation a unique ID
+   (1..64 ASCII letters/digits plus `. _ : -`, starting with a letter/digit). Retrying identical arguments with the same ID returns
    its receipt; changed arguments require a new ID. After a timeout use
-   `ui_operation_status` and inspect actual state. See UI_API for recovery limits.
+   `ui_operation_status` and inspect actual state. `write_parameters` and `vehicle_command`
+   have no operation receipt or replay protection: after a timeout read back parameters,
+   telemetry and vehicle messages before deciding whether another command is appropriate.
+   See UI_API for recovery limits.
 
 Safety conventions: announce intent before arming, takeoff, motor tests, mission uploads,
 reboots and in-flight parameter changes; prefer disarmed configuration; verify results

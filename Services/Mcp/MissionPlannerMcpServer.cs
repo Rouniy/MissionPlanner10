@@ -120,7 +120,7 @@ internal sealed class MissionPlannerMcpServer : IAsyncDisposable {
   internal async Task StartAsync(Func<CancellationToken, Task<object>> mission, CancellationToken ct = default) {
     await _lifecycle.WaitAsync(ct).ConfigureAwait(false);
     try {
-      ObjectDisposedException.ThrowIf(_stopped != 0, this);
+      ObjectDisposedException.ThrowIf(_stopped != 0 || _stop.IsCancellationRequested, this);
       if (_app != null) { return; }
       var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions {
         Args = [], ApplicationName = typeof(MissionPlannerMcpServer).Assembly.GetName().Name,
@@ -191,7 +191,10 @@ internal sealed class MissionPlannerMcpServer : IAsyncDisposable {
         }
         // No long-lived GET/SSE stream: request/response MCP leaves capacity for cancellation and other clients.
         if (HttpMethods.IsGet(context.Request.Method)) { context.Response.StatusCode = 405; return; }
-        if (!await requests.WaitAsync(0, context.RequestAborted).ConfigureAwait(false)) {
+        // Session DELETE must be able to cancel work even when every tool slot is occupied.
+        // Authentication above still applies, and Kestrel bounds total connections.
+        bool usesRequestSlot = !HttpMethods.IsDelete(context.Request.Method);
+        if (usesRequestSlot && !await requests.WaitAsync(0, context.RequestAborted).ConfigureAwait(false)) {
           context.Response.StatusCode = 429; return;
         }
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, _stop.Token);
@@ -199,7 +202,7 @@ internal sealed class MissionPlannerMcpServer : IAsyncDisposable {
         context.RequestAborted = lifetime.Token;
         try { await next(context).ConfigureAwait(false); }
         finally {
-          requests.Release();
+          if (usesRequestSlot) { requests.Release(); }
           Activity?.Invoke($"MCP {context.Request.Method} {context.Response.StatusCode}");
         }
       });
