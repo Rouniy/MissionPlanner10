@@ -6,8 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
 using SharpKml.Dom;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using static MissionPlanner.Log.LogOutput;
 
 namespace MissionPlanner.Utilities
@@ -19,7 +18,7 @@ namespace MissionPlanner.Utilities
 
         private static MemoryCache cache = new MemoryCache(new MemoryCacheOptions() { });
 
-        public static Image<Rgba32> GenerateImage(DFLogBuffer cb, out double[] freqtout,
+        public static SKBitmap GenerateImage(DFLogBuffer cb, out double[] freqtout,
             out List<(double timeus, double[] value)> allfftdata, string type = "ACC1", string field = "AccX",
             string timeus = "TimeUS", int min = -80, int max = -20)
         {
@@ -137,7 +136,7 @@ namespace MissionPlanner.Utilities
                 // batch sampling is non continuous
                 int divisor = 1;
                 count *= divisor;
-                var img = new Image<Rgba32>(count, freqt.Length);
+                var img = new SKBitmap(count, freqt.Length, SKColorType.Rgba8888, SKAlphaType.Unpremul);
                 log.Debug("done and count ");
 
                 foreach (var fftdata in data.Windowed(N, divisor))
@@ -163,7 +162,7 @@ namespace MissionPlanner.Utilities
                     var i = 0;
                     foreach (var y in freqt)
                     {
-                        img[done, (freqt.Length - 1) - i] = GetColor(fftanswerz[i], min, max);
+                        img.SetPixel(done, (freqt.Length - 1) - i, GetColor(fftanswerz[i], min, max));
                         i++;
                     }
 
@@ -206,7 +205,7 @@ namespace MissionPlanner.Utilities
                     divisor = 1;
                 count *= divisor;
                 Console.WriteLine("Image Size " + count + " " + N / 2);
-                var img = new Image<Rgba32>(count, N / 2);
+                var img = new SKBitmap(count, N / 2, SKColorType.Rgba8888, SKAlphaType.Unpremul);
                 log.Debug("done and count ");
 
 
@@ -239,7 +238,7 @@ namespace MissionPlanner.Utilities
                     var i = 0;
                     foreach (var y in Enumerable.Range(0, N/2))
                     {
-                        img[done, ((N / 2) - 1) - i] = GetColor(fftanswerz[i], min, max);
+                        img.SetPixel(done, ((N / 2) - 1) - i, GetColor(fftanswerz[i], min, max));
                         i++;
                     }
 
@@ -326,12 +325,12 @@ namespace MissionPlanner.Utilities
 
         static double SCALE = 20 / Math.Log(10);
 
-        static Rgba32 GetRainbowColor(byte i)
+        static SKColor GetRainbowColor(byte i)
         {
             return HSL2RGB(i / 255.0, 0.5, 0.5);
         }
 
-        public static Rgba32 HSL2RGB(double h, double sl, double l)
+        public static SKColor HSL2RGB(double h, double sl, double l)
         {
             double v;
             double r, g, b;
@@ -389,14 +388,10 @@ namespace MissionPlanner.Utilities
                         break;
                 }
             }
-            Rgba32 rgb = new Rgba32(0, 0, 0);
-            rgb.R = Convert.ToByte(r * 255);
-            rgb.G = Convert.ToByte(g * 255);
-            rgb.B = Convert.ToByte(b * 255);
-            return rgb;
+            return new SKColor(Convert.ToByte(r * 255), Convert.ToByte(g * 255), Convert.ToByte(b * 255));
         }
 
-        static Rgba32 GetColor(double actualValue, int min = -80, int max = -20)
+        static SKColor GetColor(double actualValue, int min = -80, int max = -20)
         {
             var scale = actualValue;// SCALE * Math.Log(actualValue + double.Epsilon);
 
