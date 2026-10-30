@@ -67,7 +67,7 @@ public partial class DroneCANInspectorViewModel : ViewModelBase, IDisposable {
 
     byte bus = (byte)(SelectedBusIndex == 1 ? 2 : 1);
     if (!_bridge.Start(bus)) {
-      Status = "Not connected — open the MAVLink link first.";
+      Status = _bridge.LastError ?? "Not connected — open the MAVLink link first.";
       return;
     }
 
