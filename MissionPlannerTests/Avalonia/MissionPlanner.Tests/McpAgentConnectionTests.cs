@@ -36,6 +36,28 @@ public sealed class McpAgentConnectionTests {
       Assert.Throws<InvalidOperationException>(() => McpDesktopRegistration.Edit(original, 47183));
 
   [Fact]
+  public void Desktop_registration_readopts_the_entry_after_codex_normalizes_its_config() {
+    // Codex rewrites config.toml without comments; this is the exact shape it leaves behind.
+    string normalized = string.Join("\n", new[] { "model = 'chosen-model'", "", "[mcp_servers.codex]", "args = [ 'mcp-server' ]", "command = 'codex'", "",
+      "[mcp_servers.missionplanner10_desktop]", "startup_timeout_sec = 5.0", "tool_timeout_sec = 720.0", "url = 'http://127.0.0.1:33159/mcp'", "enabled = true", "",
+      "[mcp_servers.node_repl]", "command = 'node'", "" });
+    string changed = McpDesktopRegistration.Edit(normalized, 47183);
+    Assert.DoesNotContain("33159", changed); Assert.Contains(":47183/mcp", changed);
+    Assert.Contains("[mcp_servers.codex]", changed); Assert.Contains("[mcp_servers.node_repl]", changed);
+    Assert.Equal(changed, McpDesktopRegistration.Edit(changed, 47183));
+    Assert.Equal("Outdated — Register updates the port", McpDesktopRegistration.RegistrationState(McpAgentKind.OpenAiDesktop, 47183, WriteTemp(normalized)));
+    var model = TomlSerializer.Deserialize<TomlTable>(McpDesktopRegistration.Edit(normalized, null))!;
+    Assert.Equal(2, ((TomlTable)model["mcp_servers"]!).Count);
+    // A table with extra keys or a non-loopback url belongs to the user and is still refused.
+    Assert.Throws<InvalidOperationException>(() => McpDesktopRegistration.Edit(normalized.Replace("enabled = true", "enabled = true\nbearer_token = 'x'"), 47183));
+    Assert.Throws<InvalidOperationException>(() => McpDesktopRegistration.Edit(normalized.Replace("127.0.0.1", "10.0.0.5"), 47183));
+  }
+  private static string WriteTemp(string text) {
+    string path = Path.Combine(Path.GetTempPath(), "mp-codex-" + Guid.NewGuid().ToString("N") + ".toml");
+    File.WriteAllText(path, text); return path;
+  }
+
+  [Fact]
   public void Desktop_registration_does_not_overwrite_user_edits_or_markers_inside_strings() {
     string managed = McpDesktopRegistration.Edit("", 47183);
     Assert.Throws<InvalidOperationException>(() => McpDesktopRegistration.Edit(managed.Replace("enabled = true", "enabled = false"), null));

@@ -83,6 +83,28 @@ internal static class McpDesktopRegistration {
     "enabled = true", "startup_timeout_sec = 5", "tool_timeout_sec = 720", End, "",
   });
 
+  private static readonly string[] OwnedKeys = { "url", "enabled", "startup_timeout_sec", "tool_timeout_sec" };
+  /// <summary>Removes a marker-less missionplanner10_desktop table that only holds the keys Mission Planner writes and a loopback /mcp url; null when the table is anything else.</summary>
+  private static string? RemoveNormalizedBlock(string original, TomlTable entry) {
+    if (!entry.TryGetValue("url", out var value) || value is not string url || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        || uri.Scheme != Uri.UriSchemeHttp || !uri.IsLoopback || uri.AbsolutePath != "/mcp") { return null; }
+    foreach (string key in entry.Keys) { if (Array.IndexOf(OwnedKeys, key) < 0) { return null; } }
+    string header = $"[mcp_servers.{ServerName}]";
+    int start = -1;
+    for (int at = original.IndexOf(header, StringComparison.Ordinal); at >= 0; at = original.IndexOf(header, at + 1, StringComparison.Ordinal)) {
+      bool lineStart = at == 0 || original[at - 1] == '\n';
+      int after = at + header.Length;
+      bool lineEnd = after == original.Length || original[after] == '\n' || original[after] == '\r';
+      if (lineStart && lineEnd) { start = at; break; }
+    }
+    if (start < 0) { return null; }
+    int next = original.IndexOf("\n[", start + header.Length, StringComparison.Ordinal);
+    int end = next < 0 ? original.Length : next + 1;
+    string outside = original.Remove(start, end - start);
+    if (Entry(Parse(outside)) != null || OtherSettings(Parse(original)) != OtherSettings(Parse(outside))) { return null; }
+    return outside;
+  }
+
   private static TomlTable Parse(string text) {
     try { return TomlSerializer.Deserialize<TomlTable>(text) ?? new(); }
     catch (Exception e) when (e is TomlException) { throw new InvalidOperationException("Cannot edit invalid Codex TOML configuration. Fix it in the client's settings first.", e); }
@@ -121,8 +143,11 @@ internal static class McpDesktopRegistration {
       if (OtherSettings(Parse(original)) != OtherSettings(Parse(outside))) {
         throw new InvalidOperationException("Registration markers overlap other settings; config was not changed.");
       }
-    } else if (Entry(before) != null) {
-      throw new InvalidOperationException("An unmanaged missionplanner10_desktop entry already exists; config was not changed.");
+    } else if (Entry(before) is TomlTable bare) {
+      // Codex rewrites config.toml when it saves its own settings and drops comments, so the block Mission Planner
+      // wrote comes back as a bare table with the same loopback url. Adopt only that shape; anything else is the user's.
+      outside = RemoveNormalizedBlock(original, bare)
+          ?? throw new InvalidOperationException("An unmanaged missionplanner10_desktop entry already exists; config was not changed.");
     }
     if (port == null) { return outside; }
     string newline = original.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
