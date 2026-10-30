@@ -22,12 +22,18 @@ Updated: **2026-10-30**.
 - Flake fixed: `Node_status_from_an_unnamed_node_requests_its_node_info_immediately` doubled
   its request when the library's ten-second sweep coincided with the test; the sweep now skips
   nodes whose info is known.
-- Verification: full Release tests **1869/1869**, no skipped; `MissionPlanner.slnx` Release
+- Verification: full Release tests **1871/1871**, no skipped; `MissionPlanner.slnx` Release
   build **0 warnings / 0 errors**; six `build/porting/check-*.sh` audits and `git diff --check`
   pass. Builds ran with `-m:1`.
 - Not claimed: hosted CI for this branch; flashing a node through the new dialog on hardware
   (the download and the updater call are the same code path the live test and the existing
   "Update Firmware…" button use); Windows/macOS GUI checks.
+- Connect dialog (user report, 2026-10-31): closing "Connecting Mavlink" with the title-bar
+  button during parameter loading cancelled the read while the autopilot kept streaming, so the
+  toolbar progress under Connect froze. Closing now only hides the dialog
+  (`ProgressReporter.ContinueInBackgroundOnClose`); "Skip Parameters" still cancels. Checked on
+  the X7 under Xvfb+Metacity: after the close the toolbar kept showing "Got param …" with a
+  growing bar and ended at "Connected. 944 params.".
 - Draft PR #47 (base `fix/dronecan-mavlink-session`): https://github.com/Rouniy/MissionPlanner10/pull/47
 - Next executable step: watch CI on PR #47; once PR #46 merges, retarget this
   PR to `master`. If the user wants the L431 on 4.7.2, select node 125 on MAVLink-CAN2,
