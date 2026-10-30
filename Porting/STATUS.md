@@ -34,6 +34,16 @@ Updated: **2026-10-30**.
   (`ProgressReporter.ContinueInBackgroundOnClose`); "Skip Parameters" still cancels. Checked on
   the X7 under Xvfb+Metacity: after the close the toolbar kept showing "Got param …" with a
   growing bar and ended at "Connected. 944 params.".
+- Install Firmware (user report, 2026-10-31): the page never rebooted a connected board into
+  its bootloader (type check against System.IO.Ports.SerialPort), the checksum step was
+  inverted so a different image was reported as "already present", and only one build per
+  vehicle was offered. Now `AutopilotFirmwareCatalog` lists every manifest build for the
+  board id from AUTOPILOT_VERSION (`CurrentState.board_version`, hwdef name from the banner),
+  `AutopilotFirmwareDialog` lets the operator pick, and the upload goes reboot → bootloader
+  scan → checksum → erase/program/verify. The Setup backstage no longer hides
+  vehicle-free pages behind the parameter overlay when an idle listener becomes active.
+  Verified on the X7: 4.7.0-dev → stable 4.7.2 flashed in 51 s, 933 parameters preserved;
+  a second run reported the identical image. Full Release tests **1900/1900**.
 - Draft PR #47 (base `fix/dronecan-mavlink-session`): https://github.com/Rouniy/MissionPlanner10/pull/47
 - Next executable step: watch CI on PR #47; once PR #46 merges, retarget this
   PR to `master`. If the user wants the L431 on 4.7.2, select node 125 on MAVLink-CAN2,
