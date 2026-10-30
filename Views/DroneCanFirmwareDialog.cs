@@ -28,7 +28,8 @@ internal sealed class DroneCanFirmwareDialog : Window {
       Name = "FirmwareOptions",
       ItemsSource = viewModel.FirmwareOptions,
       SelectedItem = viewModel.SelectedFirmwareOption,
-      ItemTemplate = new FuncDataTemplate<DroneCanFirmwareOption>((option, _) => new StackPanel {
+      // Virtualised lists recycle containers by rebuilding the template with null; never dereference it.
+      ItemTemplate = new FuncDataTemplate<DroneCanFirmwareOption>((option, _) => option == null ? new Panel() : new StackPanel {
         Spacing = 2, Margin = new Thickness(2),
         Children = {
           new TextBlock { Text = $"{option.Channel} {option.Version}" + (option.Installed ? "  (installed)" : ""), FontWeight = FontWeight.Bold },
@@ -59,6 +60,8 @@ internal sealed class DroneCanFirmwareDialog : Window {
       },
     };
   }
+
+  internal ListBox OptionList => _list;
 
   private static Control Row(Control control, int row) { Avalonia.Controls.Grid.SetRow(control, row); return control; }
 

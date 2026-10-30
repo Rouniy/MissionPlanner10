@@ -27,7 +27,8 @@ internal sealed class AutopilotFirmwareDialog : Window {
       Name = "FirmwareOptions",
       ItemsSource = options,
       SelectedItem = selected,
-      ItemTemplate = new FuncDataTemplate<AutopilotFirmwareOption>((option, _) => new StackPanel {
+      // Virtualised lists recycle containers by rebuilding the template with null; never dereference it.
+      ItemTemplate = new FuncDataTemplate<AutopilotFirmwareOption>((option, _) => option == null ? new Panel() : new StackPanel {
         Spacing = 2, Margin = new Thickness(2),
         Children = {
           new TextBlock { Text = option.Title, FontWeight = FontWeight.Bold },
@@ -56,6 +57,8 @@ internal sealed class AutopilotFirmwareDialog : Window {
       },
     };
   }
+
+  internal ListBox OptionList => _list;
 
   private static Control Row(Control control, int row) { Avalonia.Controls.Grid.SetRow(control, row); return control; }
 

@@ -628,3 +628,22 @@ public class DroneCanSessionSafetyTests {
     }
   }
 }
+
+public class FirmwareDialogTemplateTests {
+  [AvaloniaFact]
+  public void Firmware_option_templates_survive_container_recycling_with_null_items() {
+    var option = new MissionPlanner.Services.AutopilotFirmwareOption("stable", "V4.7.2", "fb773567",
+        new Uri("https://firmware.ardupilot.org/Rover/stable/CUAV-X7/ardurover.apj"), "CUAV-X7", 1010, "Rover", "GROUND_ROVER");
+    var autopilot = new MissionPlanner.Views.AutopilotFirmwareDialog("CUAV-X7", new[] { option }, option);
+    var template = autopilot.OptionList.ItemTemplate!;
+    Assert.NotNull(template.Build(option));
+    Assert.NotNull(template.Build(null));
+
+    using var viewModel = new ConfigDroneCanViewModel(() => null, serialPortNames: () => [], serialPortFactory: (_, _) => null!, canFactory: () => new DroneCAN.DroneCAN());
+    var droneCan = new MissionPlanner.Views.DroneCanFirmwareDialog(viewModel);
+    var nodeTemplate = droneCan.OptionList.ItemTemplate!;
+    Assert.NotNull(nodeTemplate.Build(new MissionPlanner.Services.DroneCanFirmwareOption("stable", "4.7.2", "fb77",
+        new Uri("https://example.org/fw.bin"), null, "example.org")));
+    Assert.NotNull(nodeTemplate.Build(null));
+  }
+}
