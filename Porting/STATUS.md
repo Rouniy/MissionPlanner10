@@ -44,8 +44,10 @@ Updated: **2026-10-30**.
   `git diff --check` pass. Builds ran with `-m:1` because the machine was loaded.
 - Not claimed: hosted CI, packages, CodeQL for this branch; Windows/macOS GUI checks;
   launching a real agent from the new rows (the launch code is unchanged).
-- Next executable step: push the branch, open a draft PR against `master`, let CI run,
-  then have the user select **MAVLink-CAN2** on the DroneCAN page with the L431 attached.
+- Branch pushed; draft PR #46 targets `master`:
+  https://github.com/Rouniy/MissionPlanner10/pull/46 (docs commit `b34aef85b`).
+- Next executable step: watch CI on PR #46, then have the user select **MAVLink-CAN2** on
+  the DroneCAN page with the L431 attached; merge only when explicitly authorized.
   PR #41 (`fix/mcp-session-lifecycle`) stays open; its toolbar change was re-applied here.
 
 ## MCP MAV_CMD parsing — 2026-10-04
