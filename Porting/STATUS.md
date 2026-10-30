@@ -1,6 +1,52 @@
 # Avalonia in-place migration status
 
-Updated: **2026-10-04**.
+Updated: **2026-10-30**.
+
+## DroneCAN over MAVLink CAN, AI agent window — 2026-10-30
+
+- Branch `fix/dronecan-mavlink-session` is based on `origin/master` at
+  `bdf6a5ac5` ("fix: accept MAV_CMD ids in MCP mavlink_command"). Commits: `8c1d5c4a0`
+  (SkiaSharp PNGs, ImageSharp removed), `d897bc770` (no CAN echo, one shared forwarding
+  session), `459d02026` (opt-in live CAN acceptance), `22df27980` (X-Office-style agent
+  rows, case-insensitive desktop discovery), `9f47848f7` (re-adopt the Codex desktop entry).
+- Hardware finding (CUAV X7 running ArduRover 4.7.0-dev `eb9a1b3c`, Matek L431 AP_Periph
+  1.7 as node 125, autopilot node 10): the adapter is wired to **CAN2**. `@SYS/can0_stats.txt`
+  showed zero successful transmissions and only timeouts, `can1_stats.txt` carried all
+  traffic. Listening on MAVLink-CAN1 therefore showed nothing, and Mission Planner gave no
+  hint. The L431's red LED is power and the blinking blue LED is AP_Periph running:
+  the firmware is healthy, **no firmware was flashed**.
+- Software root causes fixed in `ExtLibs/DroneCAN/DroneCAN.cs`, new
+  `ViewModels/MavlinkCanTransport.cs`, `ViewModels/DroneCanBridge.cs` and
+  `ConfigDroneCanViewModel.cs`: every received CAN frame was echoed back to the vehicle
+  (RX equalled TX in the tlog, doubling bus load and self-processing); the DroneCAN page and
+  the Inspector used exclusive subscriptions and separate `MAV_CMD_CAN_FORWARD` loops, so
+  opening one broke the other; node names took up to 10 s per node because GetNodeInfo was
+  only sent by the periodic sweep; the library's own node 127 appeared as a device. The page
+  now says after 6 s when only the autopilot is visible and names the other bus; one
+  transport per link refuses a second bus with a clear message.
+- Live acceptance through Mission Planner's own code path (`DroneCanLiveHardwareTests`, env
+  `MP_LIVE_CAN_PORT/BUS/NODE`): on CAN2 nodes 10 and 125 were named in 0.7 s and all 85
+  parameters of node 125 arrived in 2.1–3.2 s; on CAN1 the "only the autopilot itself" hint
+  appears. Node 10 can stay unnamed on the empty CAN1 bus (edge case, not pursued).
+- Restore had failed on NuGet audit NU1902/NU1903 for `SixLabors.ImageSharp` 2.1.12
+  (2.1.13 and 3.1.12 are flagged too; 4.x needs a licence). Spectrogram and propagation
+  PNGs are rendered with the already referenced SkiaSharp; ImageSharp is gone.
+- AI window (`Views/AgentToolsWindow.cs`): one row per installed agent as in X-Office's
+  assistant panel (name, kind, location, Launch, Register/Unregister), Find agents,
+  sessions, persistent port; task text and activity moved under Advanced. Discovery
+  finds `com.anthropic.Claude.desktop` on Linux (case-insensitive file match). Verified
+  under Xvfb: Codex CLI, Claude Code, ChatGPT Desktop and Claude Desktop discovered.
+  Codex rewrites `~/.codex/config.toml` without comments, which turned the managed MCP
+  block into a bare table that Mission Planner refused forever; such a table (only the
+  keys Mission Planner writes plus a loopback `/mcp` url) is re-adopted now.
+- Verification: full Release tests **1849/1849**, no skipped; `MissionPlanner.slnx`
+  Release build **0 warnings / 0 errors**; six `build/porting/check-*.sh` audits and
+  `git diff --check` pass. Builds ran with `-m:1` because the machine was loaded.
+- Not claimed: hosted CI, packages, CodeQL for this branch; Windows/macOS GUI checks;
+  launching a real agent from the new rows (the launch code is unchanged).
+- Next executable step: push the branch, open a draft PR against `master`, let CI run,
+  then have the user select **MAVLink-CAN2** on the DroneCAN page with the L431 attached.
+  PR #41 (`fix/mcp-session-lifecycle`) stays open; its toolbar change was re-applied here.
 
 ## MCP MAV_CMD parsing — 2026-10-04
 
