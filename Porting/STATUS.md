@@ -28,7 +28,8 @@ Updated: **2026-10-30**.
 - Not claimed: hosted CI for this branch; flashing a node through the new dialog on hardware
   (the download and the updater call are the same code path the live test and the existing
   "Update Firmware…" button use); Windows/macOS GUI checks.
-- Next executable step: watch CI on the stacked draft PR; once PR #46 merges, retarget this
+- Draft PR #47 (base `fix/dronecan-mavlink-session`): https://github.com/Rouniy/MissionPlanner10/pull/47
+- Next executable step: watch CI on PR #47; once PR #46 merges, retarget this
   PR to `master`. If the user wants the L431 on 4.7.2, select node 125 on MAVLink-CAN2,
   Check for Updates…, choose stable, Download and flash. Merge only when authorized.
 
