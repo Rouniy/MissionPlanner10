@@ -11,6 +11,7 @@ public partial class ConfigDroneCanView : UserControl {
   public ConfigDroneCanView() {
     AvaloniaXamlLoader.Load(this);
     this.FindControl<Button>("FirmwareUpdateBtn")!.Click += OnFirmwareUpdate;
+    this.FindControl<Button>("FirmwareCheckBtn")!.Click += OnFirmwareCheck;
     this.FindControl<Button>("BusInspectorBtn")!.Click +=
         (_, _) => MissionPlanner.Views.DroneCANInspectorWindow.OpenWindow();
   }
@@ -40,6 +41,22 @@ public partial class ConfigDroneCanView : UserControl {
       }
     };
     return item;
+  }
+
+  private async void OnFirmwareCheck(object? sender, RoutedEventArgs e) {
+    if (DataContext is not ConfigDroneCanViewModel vm) {
+      return;
+    }
+
+    if (!await vm.CheckFirmwareUpdatesAsync()) {
+      return;
+    }
+
+    var owner = TopLevel.GetTopLevel(this) as Window;
+    var choice = await MissionPlanner.Views.DroneCanFirmwareDialog.ShowAsync(owner, vm);
+    if (choice != null) {
+      await vm.InstallFirmwareOptionAsync(choice);
+    }
   }
 
   private async void OnFirmwareUpdate(object? sender, RoutedEventArgs e) {
