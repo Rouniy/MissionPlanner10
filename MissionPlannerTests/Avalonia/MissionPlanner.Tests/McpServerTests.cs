@@ -55,7 +55,8 @@ public sealed class McpServerTests {
     Assert.Contains(tools, t => t.Name == "vehicle_health");
     Assert.Contains(tools, t => t.Name == "log_vibration_report");
     foreach (string name in new[] { "read_vehicle_messages", "telemetry_packet_inventory", "log_events",
-        "log_time_series", "compare_log_parameters", "compare_vehicle_parameters_to_log" }) {
+        "log_time_series", "compare_log_parameters", "compare_vehicle_parameters_to_log",
+        "dronecan_nodes", "dronecan_read_parameters", "dronecan_write_parameters", "dronecan_node_command" }) {
       Assert.Contains(tools, t => t.Name == name);
     }
     Assert.DoesNotContain(tools, t => t.Name.Contains("arm") || t.Name == "apply_parameter_changes");
