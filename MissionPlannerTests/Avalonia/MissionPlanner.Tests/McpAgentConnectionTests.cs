@@ -101,6 +101,20 @@ public sealed class McpAgentConnectionTests {
     Assert.Contains("Agent failed", McpAgentProcess.FormatLine("""{"type":"result","is_error":true,"result":"Login required"}"""));
   }
 
+  [Fact]
+  public void Discovery_finds_desktop_entries_regardless_of_file_name_case() {
+    string dir = Path.Combine(Path.GetTempPath(), "mp-apps-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dir);
+    try {
+      string claude = Path.Combine(dir, "com.anthropic.Claude.desktop");
+      File.WriteAllText(claude, "[Desktop Entry]\nType=Application\nName=Claude\nExec=/opt/Claude/claude %U\n");
+      Assert.Equal(claude, McpAgentDiscovery.FindDesktopFile(dir, "com.anthropic.claude.desktop"));
+      Assert.Null(McpAgentDiscovery.FindDesktopFile(dir, "codex.desktop"));
+      Assert.Null(McpAgentDiscovery.FindDesktopFile(Path.Combine(dir, "missing"), "codex.desktop"));
+      Assert.Contains("com.anthropic.claude.desktop", McpAgentDiscovery.DesktopEntryFiles);
+    } finally { Directory.Delete(dir, true); }
+  }
+
   [Theory]
   [InlineData("Claude Code URL Handler", "claude --handle-uri %u", null)]
   [InlineData("Claude", "claude", null)]
