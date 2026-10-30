@@ -42,6 +42,20 @@ public class BackstageLifecycleTests {
     Assert.Equal(1, first.DeactivationCount);
   }
 
+  [Fact]
+  public void Pages_that_work_without_a_vehicle_never_get_the_parameter_overlay() {
+    var firmware = new BackstagePage("Install Firmware", () => new LifecycleViewModel());
+    var vehicle = new BackstagePage("Flight Modes", () => new LifecycleViewModel(), requiresConnection: true);
+    var partial = new BackstagePage("Full Parameter List", () => new LifecycleViewModel(), requiresConnection: true,
+        allowsPartialParameters: true);
+    Assert.True(BackstageViewModel.PageBypassesParameterOverlay(firmware));
+    Assert.False(BackstageViewModel.PageBypassesParameterOverlay(vehicle));
+    Assert.True(BackstageViewModel.PageBypassesParameterOverlay(partial));
+    Assert.False(BackstageViewModel.PageBypassesParameterOverlay(null));
+    Assert.False(BackstageViewModel.ShouldShowParameterLoading(true, false, BackstageViewModel.PageBypassesParameterOverlay(firmware)));
+    Assert.True(BackstageViewModel.ShouldShowParameterLoading(true, false, BackstageViewModel.PageBypassesParameterOverlay(vehicle)));
+  }
+
   private sealed class TestBackstage : BackstageViewModel {
     public TestBackstage() {
       Add("First", () => new LifecycleViewModel());
