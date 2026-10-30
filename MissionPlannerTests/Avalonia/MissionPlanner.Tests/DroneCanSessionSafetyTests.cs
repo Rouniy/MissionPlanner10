@@ -389,6 +389,29 @@ public class DroneCanSessionSafetyTests {
     Assert.Same(networkInterface, viewModel.SelectedNetworkInterface);
   }
 
+  [AvaloniaFact]
+  public async Task Library_forgets_node_info_when_a_node_reboots_so_its_new_version_is_read_again() {
+    var transport = new FakeSlcanTransport("/dev/test-slcan", 115200);
+    var can = new DroneCAN.DroneCAN();
+    using var viewModel = new ConfigDroneCanViewModel(
+        () => null,
+        serialPortNames: () => ["/dev/test-slcan"],
+        serialPortFactory: (_, _) => transport,
+        canFactory: () => can);
+    viewModel.SelectedBusIndex = 2;
+    viewModel.SelectedSerialPort = "/dev/test-slcan";
+    viewModel.ToggleConnectCommand.Execute(null);
+    await WaitForAsync(() => viewModel.IsConnected && !viewModel.IsBusy);
+
+    can.InvokeMessageReceived(MessageFrame(42), new DroneCAN.DroneCAN.uavcan_protocol_NodeStatus { uptime_sec = 100 }, 0);
+    can.NodeInfo[42] = new DroneCAN.DroneCAN.uavcan_protocol_GetNodeInfo_res();
+    can.InvokeMessageReceived(MessageFrame(42), new DroneCAN.DroneCAN.uavcan_protocol_NodeStatus { uptime_sec = 101 }, 1);
+    Assert.True(can.NodeInfo.ContainsKey(42));
+    can.InvokeMessageReceived(MessageFrame(42), new DroneCAN.DroneCAN.uavcan_protocol_NodeStatus { uptime_sec = 2 }, 2);
+    Assert.False(can.NodeInfo.ContainsKey(42));
+    Assert.Equal(2u, can.NodeList[42].uptime_sec);
+  }
+
   private static async Task WaitForAsync(Func<bool> predicate) {
     DateTime deadline = DateTime.UtcNow.AddSeconds(3);
     while (!predicate() && DateTime.UtcNow < deadline) {

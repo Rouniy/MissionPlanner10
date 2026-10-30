@@ -331,9 +331,10 @@ namespace DroneCAN
 
                             WriteToStreamSLCAN(slcan);
 
-                            // query all nodeinfo (never our own node: PackageMessageSLCAN reports outgoing
-                            // messages locally, so SourceNode is always present in NodeList)
-                            var others = NodeList.Keys.Where(a => a != SourceNode).Select(a => (byte) a).ToArray();
+                            // query nodeinfo only where it is still unknown (never our own node: PackageMessageSLCAN
+                            // reports outgoing messages locally, so SourceNode is always present in NodeList). A node
+                            // that reboots drops out of NodeInfo below, so its new name/version is read again.
+                            var others = NodeList.Keys.Where(a => a != SourceNode && !NodeInfo.ContainsKey(a)).Select(a => (byte) a).ToArray();
                             if (DateTime.Now.Second % 10 == 0 && others.Length > 0)
                             {
                                 slcan = PackageMessageSLCAN(others[nodeinfo % others.Length], 30,
@@ -367,11 +368,18 @@ namespace DroneCAN
             {
                 if (msg.GetType() == typeof(DroneCAN.uavcan_protocol_NodeStatus))
                 {
+                    var status = msg as DroneCAN.uavcan_protocol_NodeStatus;
                     if (!NodeList.ContainsKey(frame.SourceNode))
                     {
-                        NodeAdded?.Invoke(frame.SourceNode, msg as DroneCAN.uavcan_protocol_NodeStatus);
+                        NodeAdded?.Invoke(frame.SourceNode, status);
                     }
-                    NodeList[frame.SourceNode] = msg as DroneCAN.uavcan_protocol_NodeStatus;
+                    else if (NodeList.TryGetValue(frame.SourceNode, out var previous) && previous != null &&
+                             status.uptime_sec < previous.uptime_sec)
+                    {
+                        // uptime went backwards: the node rebooted (firmware update, restart), forget its stale info
+                        NodeInfo.TryRemove(frame.SourceNode, out _);
+                    }
+                    NodeList[frame.SourceNode] = status;
                 }               
                 else if (frame.IsServiceMsg && msg.GetType() == typeof(DroneCAN.uavcan_protocol_GetNodeInfo_res))
                 {
