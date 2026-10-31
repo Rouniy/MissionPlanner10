@@ -240,7 +240,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   private bool _analyticsOptOut;
 
   [ObservableProperty]
-  private int _telemAttitude = 4;
+  private int _telemAttitude = CurrentState.DefaultAttitudeRate;
 
   [ObservableProperty]
   private int _telemPosition = 2;

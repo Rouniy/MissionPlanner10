@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
@@ -402,13 +403,95 @@ public class HudControl : Control {
   private static readonly Pen _whitePen = new(Brushes.White, 1.5);
   private static readonly Pen _thinPen = new(Brushes.White, 1);
 
+  private static readonly Stopwatch _clock = Stopwatch.StartNew();
   private readonly DispatcherTimer _ease;
+  // Displayed (interpolated) values; Render reads these, never the raw properties.
   private double _eRoll, _ePitch, _eYaw, _eAlt, _eAs, _eGs, _eVs;
-  private bool _easeInit;
+  private readonly SampleTween _tRoll = new(), _tPitch = new(), _tYaw = new(angle: true),
+      _tAlt = new(), _tAs = new(), _tGs = new(), _tVs = new();
 
   public HudControl() {
     _ease = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
     _ease.Tick += (_, _) => StepEase();
+  }
+
+  private static long NowMs => _clock.ElapsedMilliseconds;
+
+  /// <summary>The roll the horizon is currently drawn at, after interpolation.</summary>
+  internal double EasedRoll => _eRoll;
+  internal double EasedPitch => _ePitch;
+  internal double EasedYaw => _eYaw;
+
+  /// <summary>
+  /// Moves a displayed value toward each new telemetry sample at a constant speed spread over the
+  /// measured sample interval. Attitude arrives at 4–10 Hz; approaching every packet exponentially
+  /// (most of the distance in the first two frames, then a pause) reads as a jerk per packet, while
+  /// a linear tween that lands exactly when the next sample is due renders as continuous motion.
+  /// Time is passed in as milliseconds so tests can step it deterministically.
+  /// </summary>
+  internal sealed class SampleTween {
+    internal const double MinDurationMs = 40;
+    internal const double MaxDurationMs = 400;
+    private readonly bool _angle;
+    private double _from, _to, _durationMs;
+    private long _startMs = long.MinValue, _lastSampleMs = long.MinValue;
+    private bool _initialised;
+
+    internal SampleTween(bool angle = false) { _angle = angle; }
+
+    internal double Target => _to;
+    internal double DurationMs => _durationMs;
+
+    /// <summary>Jumps straight to <paramref name="value"/> and stops any motion in progress.</summary>
+    internal void Snap(double value) {
+      _from = _to = value;
+      _initialised = true;
+      _startMs = long.MinValue;
+    }
+
+    /// <summary>Registers a new sample received at <paramref name="nowMs"/>.</summary>
+    internal void Set(double target, long nowMs) {
+      if (!_initialised) {
+        Snap(target);
+        _lastSampleMs = nowMs;
+        return;
+      }
+      if (target == _to) {
+        return;
+      }
+      double current = ValueAt(nowMs);
+      if (_lastSampleMs != long.MinValue) {
+        double interval = Math.Clamp(nowMs - _lastSampleMs, MinDurationMs, MaxDurationMs);
+        if (_durationMs <= 0) {
+          _durationMs = interval;
+        } else if (interval <= _durationMs * 2.5) {
+          // Smooth arrival jitter; a much longer gap means the value simply did not change
+          // (vehicle at rest), not a slower stream, so it must not stretch later motion.
+          _durationMs = _durationMs * 0.7 + interval * 0.3;
+        }
+      } else {
+        _durationMs = MinDurationMs;
+      }
+      _lastSampleMs = nowMs;
+      _from = current;
+      _to = target;
+      _startMs = nowMs;
+    }
+
+    internal bool IsMoving(long nowMs) => _startMs != long.MinValue && nowMs - _startMs < _durationMs;
+
+    internal double ValueAt(long nowMs) {
+      if (_startMs == long.MinValue || _durationMs <= 0) {
+        return _to;
+      }
+      double f = Math.Clamp((nowMs - _startMs) / _durationMs, 0, 1);
+      double d = _to - _from;
+      if (_angle) {
+        d -= 360 * Math.Round(d / 360);
+      }
+      double v = _from + d * f;
+      return _angle ? ((v % 360) + 360) % 360 : v;
+    }
   }
 
   protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
@@ -422,48 +505,32 @@ public class HudControl : Control {
   }
 
   private void StepEase() {
-    if (!_easeInit) {
-      _eRoll = Roll;
-      _ePitch = Pitch;
-      _eYaw = Yaw;
-      _eAlt = Alt;
-      _eAs = AirSpeed;
-      _eGs = GroundSpeed;
-      _eVs = VerticalSpeed;
-      _easeInit = true;
-      return;
-    }
-    const double k = 0.4;
-    bool moving = false;
-    moving |= Approach(ref _eRoll, Roll, k);
-    moving |= Approach(ref _ePitch, Pitch, k);
-    moving |= ApproachAngle(ref _eYaw, Yaw, k);
-    moving |= Approach(ref _eAlt, Alt, k);
-    moving |= Approach(ref _eAs, AirSpeed, k);
-    moving |= Approach(ref _eGs, GroundSpeed, k);
-    moving |= Approach(ref _eVs, VerticalSpeed, k);
-    if (moving) {
+    long now = NowMs;
+    bool moving = _tRoll.IsMoving(now) | _tPitch.IsMoving(now) | _tYaw.IsMoving(now) | _tAlt.IsMoving(now)
+        | _tAs.IsMoving(now) | _tGs.IsMoving(now) | _tVs.IsMoving(now);
+    if (RefreshEased(now) || moving) {
       InvalidateVisual();
     }
   }
 
-  private static bool Approach(ref double v, double target, double k) {
-    double d = target - v;
-    if (Math.Abs(d) < 1e-3) {
-      v = target;
-      return false;
-    }
-    v += d * k;
-    return true;
+  /// <summary>Copies the interpolated values for <paramref name="nowMs"/>; true when any changed.</summary>
+  private bool RefreshEased(long nowMs) {
+    bool changed = false;
+    changed |= Assign(ref _eRoll, _tRoll.ValueAt(nowMs));
+    changed |= Assign(ref _ePitch, _tPitch.ValueAt(nowMs));
+    changed |= Assign(ref _eYaw, _tYaw.ValueAt(nowMs));
+    changed |= Assign(ref _eAlt, _tAlt.ValueAt(nowMs));
+    changed |= Assign(ref _eAs, _tAs.ValueAt(nowMs));
+    changed |= Assign(ref _eGs, _tGs.ValueAt(nowMs));
+    changed |= Assign(ref _eVs, _tVs.ValueAt(nowMs));
+    return changed;
   }
 
-  private static bool ApproachAngle(ref double v, double target, double k) {
-    double d = ((target - v + 540) % 360) - 180;
-    if (Math.Abs(d) < 1e-3) {
-      v = target;
+  private static bool Assign(ref double field, double value) {
+    if (field == value) {
       return false;
     }
-    v = (v + d * k + 360) % 360;
+    field = value;
     return true;
   }
 
@@ -532,20 +599,35 @@ public class HudControl : Control {
     base.OnPropertyChanged(change);
     if (change.Property == ModeProperty) {
       _modeChanged = DateTime.Now;
+      return;
+    }
+    SampleTween? tween =
+        change.Property == RollProperty ? _tRoll
+        : change.Property == PitchProperty ? _tPitch
+        : change.Property == YawProperty ? _tYaw
+        : change.Property == AltProperty ? _tAlt
+        : change.Property == AirSpeedProperty ? _tAs
+        : change.Property == GroundSpeedProperty ? _tGs
+        : change.Property == VerticalSpeedProperty ? _tVs
+        : null;
+    if (tween != null) {
+      long now = NowMs;
+      tween.Set(change.GetNewValue<double>(), now);
+      RefreshEased(now);
     }
   }
 
   private IBrush GroundFill() => GroundBrown ? _groundBrownBrush : _groundBrush;
 
   internal void SnapToValues() {
-    _eRoll = Roll;
-    _ePitch = Pitch;
-    _eYaw = Yaw;
-    _eAlt = Alt;
-    _eAs = AirSpeed;
-    _eGs = GroundSpeed;
-    _eVs = VerticalSpeed;
-    _easeInit = true;
+    _tRoll.Snap(Roll);
+    _tPitch.Snap(Pitch);
+    _tYaw.Snap(Yaw);
+    _tAlt.Snap(Alt);
+    _tAs.Snap(AirSpeed);
+    _tGs.Snap(GroundSpeed);
+    _tVs.Snap(VerticalSpeed);
+    RefreshEased(NowMs);
     InvalidateVisual();
   }
 
