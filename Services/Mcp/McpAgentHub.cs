@@ -28,6 +28,7 @@ internal sealed class McpAgentHub : IAsyncDisposable {
   private readonly StringBuilder _log = new();
   private readonly object _logSync = new();
   private CancellationTokenSource _localOperationsStop = new();
+  private readonly object _listeners = new();
   private int _accessGeneration, _disposed;
   private long _traffic;
 
@@ -129,23 +130,30 @@ internal sealed class McpAgentHub : IAsyncDisposable {
 
   /// <summary>Opens the token-protected ephemeral listener used by terminal agents and manual clients.</summary>
   internal async Task<MissionPlannerMcpServer> OpenSessionPortAsync() {
-    ObjectDisposedException.ThrowIf(_stop.IsCancellationRequested, this);
-    if (SessionServer is { } existing) { return existing; }
-    var server = CreateServer(0, true); SessionServer = server;
+    MissionPlannerMcpServer server;
+    lock (_listeners) {
+      ObjectDisposedException.ThrowIf(_stop.IsCancellationRequested, this);
+      if (SessionServer is { Endpoint: not null } ready && !ready.Stopping.IsCancellationRequested) { return ready; }
+      server = SessionServer ??= CreateServer(0, true);
+    }
     try {
       await server.StartAsync(ReadMissionAsync, _stop.Token).ConfigureAwait(false);
-      if (SessionServer != server) { throw new OperationCanceledException(); }
+      if (SessionServer != server || server.Stopping.IsCancellationRequested) { throw new OperationCanceledException(); }
       Log("Session port open at " + server.Endpoint!.AbsoluteUri + Environment.NewLine);
       Changed(); return server;
-    } catch { if (SessionServer == server) { SessionServer = null; } await server.DisposeAsync().ConfigureAwait(false); throw; }
+    } catch { lock (_listeners) { if (SessionServer == server) { SessionServer = null; } } await server.DisposeAsync().ConfigureAwait(false); throw; }
   }
 
   /// <summary>Opens the fixed, tokenless loopback port used by registered desktop applications.</summary>
   internal async Task<MissionPlannerMcpServer> OpenDesktopPortAsync() {
-    ObjectDisposedException.ThrowIf(_stop.IsCancellationRequested, this);
-    if (DesktopServer is { } existing) { return existing; }
-    int generation = _accessGeneration, port = DesktopPort;
-    var server = CreateServer(port, false); DesktopServer = server;
+    MissionPlannerMcpServer server;
+    int generation, port;
+    lock (_listeners) {
+      ObjectDisposedException.ThrowIf(_stop.IsCancellationRequested, this);
+      if (DesktopServer is { Endpoint: not null } ready && !ready.Stopping.IsCancellationRequested) { return ready; }
+      generation = _accessGeneration; port = DesktopPort;
+      server = DesktopServer ??= CreateServer(port, false);
+    }
     try {
       await server.StartAsync(ReadMissionAsync, _stop.Token).ConfigureAwait(false);
       if (DesktopServer != server || generation != _accessGeneration) { throw new OperationCanceledException(); }
@@ -154,14 +162,17 @@ internal sealed class McpAgentHub : IAsyncDisposable {
       Log("Persistent port open at " + server.Endpoint!.AbsoluteUri + Environment.NewLine);
       Changed(); return server;
     } catch {
-      if (DesktopServer == server) { DesktopServer = null; }
+      lock (_listeners) { if (DesktopServer == server) { DesktopServer = null; } }
       await server.DisposeAsync().ConfigureAwait(false); throw;
     }
   }
 
   internal async Task CloseDesktopPortAsync() {
-    _accessGeneration++;
-    var server = DesktopServer; DesktopServer = null;
+    MissionPlannerMcpServer? server;
+    lock (_listeners) {
+      _accessGeneration++;
+      server = DesktopServer; DesktopServer = null;
+    }
     server?.RevokeAccess();
     DesktopState = "Persistent port closed. Registration retained; the desktop app remains open.";
     Changed();
@@ -248,11 +259,14 @@ internal sealed class McpAgentHub : IAsyncDisposable {
 
   /// <summary>Revokes every listener synchronously before awaiting any disposal, including blocked requests.</summary>
   internal async Task StopAllAsync() {
-    _accessGeneration++;
-    var servers = Servers.ToArray();
+    MissionPlannerMcpServer[] servers;
+    lock (_listeners) {
+      _accessGeneration++;
+      servers = Servers.ToArray();
+      SessionServer = DesktopServer = null;
+    }
     foreach (var server in servers) { server.RevokeAccess(); }
     _localOperationsStop.Cancel();
-    SessionServer = DesktopServer = null;
     DesktopState = "All MCP connections closed. Registration retained; external agents remain open.";
     McpTerminalLaunch[] launches;
     lock (_terminalLaunches) { launches = _terminalLaunches.ToArray(); _terminalLaunches.Clear(); }

@@ -128,6 +128,69 @@ public sealed class McpSessionLifecycleTests {
   }
 
   [Fact]
+  public async Task Disconnect_remains_available_when_all_tool_request_slots_are_busy() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    int count = 0;
+    await using var server = new MissionPlannerMcpServer(new(() => []));
+    await server.StartAsync(async ct => {
+      if (Interlocked.Increment(ref count) == 4) { entered.TrySetResult(); }
+      await Task.Delay(Timeout.Infinite, ct);
+      return new { };
+    });
+    using var wire = new Wire(server.Endpoint!, server.IssueLaunchToken());
+    await wire.Initialize("Busy client");
+    Task<string>[] calls = Enumerable.Range(0, 4).Select(_ => wire.Call("read_mission_draft")).ToArray();
+    try {
+      await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+      using var response = await wire.Http.DeleteAsync(server.Endpoint).WaitAsync(TimeSpan.FromSeconds(5));
+      Assert.True(response.IsSuccessStatusCode, $"Disconnect returned {response.StatusCode} while requests were busy.");
+    } finally {
+      server.RevokeAccess();
+      foreach (var call in calls) { try { await call; } catch (HttpRequestException) { } }
+    }
+  }
+
+  [AvaloniaTheory]
+  [InlineData(false)]
+  [InlineData(true)]
+  public async Task Opening_an_existing_starting_listener_waits_for_its_endpoint(bool desktop) {
+    await using var hub = new McpAgentHub(null!, () => null, _ => Task.FromResult<McpAgent[]>([]));
+    await using var server = new MissionPlannerMcpServer(new(() => []), port: desktop ? Port() : 0, requiresToken: !desktop);
+    var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+    var gate = (SemaphoreSlim)typeof(MissionPlannerMcpServer).GetField("_lifecycle", flags)!.GetValue(server)!;
+    await gate.WaitAsync();
+    typeof(McpAgentHub).GetProperty(desktop ? "DesktopServer" : "SessionServer", flags)!.SetValue(hub, server);
+    Task<MissionPlannerMcpServer> opening;
+    try {
+      opening = desktop ? hub.OpenDesktopPortAsync() : hub.OpenSessionPortAsync();
+      Assert.False(opening.IsCompleted, "An opening listener must not be reported as ready.");
+    } finally { gate.Release(); }
+    Assert.Same(server, await opening.WaitAsync(TimeSpan.FromSeconds(5)));
+    Assert.NotNull(server.Endpoint);
+  }
+
+  [Fact]
+  public async Task Revoked_listener_cannot_be_started_again() {
+    await using var server = new MissionPlannerMcpServer(new(() => []));
+    server.RevokeAccess();
+    await Assert.ThrowsAsync<ObjectDisposedException>(() => server.StartAsync(_ => Task.FromResult<object>(new { })));
+    Assert.Null(server.Endpoint);
+  }
+
+  [AvaloniaFact]
+  public async Task Parallel_open_calls_share_one_ready_listener() {
+    await using var hub = new McpAgentHub(null!, () => null, _ => Task.FromResult<McpAgent[]>([]));
+    var servers = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => Task.Run(hub.OpenSessionPortAsync)));
+    Assert.All(servers, server => {
+      Assert.Same(hub.SessionServer, server);
+      Assert.NotNull(server.Endpoint);
+      Assert.False(server.Stopping.IsCancellationRequested);
+    });
+    await hub.StopAllAsync();
+    Assert.All(servers, server => Assert.True(server.Stopping.IsCancellationRequested));
+  }
+
+  [Fact]
   public async Task Stdio_bridge_round_trips_real_HTTP_and_ends_its_session_on_EOF() {
     await using var server = new MissionPlannerMcpServer(new(() => []), port: Port(), requiresToken: false);
     await server.StartAsync(_ => Task.FromResult<object>(new { evidence = "bridge-ok" }));
