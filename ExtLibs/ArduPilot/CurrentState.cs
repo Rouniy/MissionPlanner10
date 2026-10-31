@@ -42,8 +42,6 @@ namespace MissionPlanner
 
         private static PointLatLngAlt _trackerloc = new PointLatLngAlt();
 
-        /// <summary>Attitude/VFR_HUD stream rate requested when the operator has not chosen one.</summary>
-        public const int DefaultAttitudeRate = 10;
         public static int rateattitudebackup;
         public static int ratepositionbackup;
         public static int ratestatusbackup;
@@ -202,9 +200,8 @@ namespace MissionPlanner
 
         static CurrentState()
         {
-            // set default telemrates. 4 Hz attitude (the WinForms default) arrives in bursts with
-            // 250 ms gaps and makes the horizon step; 10 Hz is still under 1 kB/s on a serial link.
-            rateattitudebackup = DefaultAttitudeRate;
+            // set default telemrates
+            rateattitudebackup = 4;
             ratepositionbackup = 2;
             ratestatusbackup = 2;
             ratesensorsbackup = 2;

@@ -808,7 +808,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   private static void ApplyPersistentLinkSettings() {
     var settings = Settings.Instance;
-    CurrentState.rateattitudebackup = Math.Max(0, settings.GetInt32("CMB_rateattitude", CurrentState.DefaultAttitudeRate));
+    CurrentState.rateattitudebackup = Math.Max(0, settings.GetInt32("CMB_rateattitude", 4));
     CurrentState.ratepositionbackup = Math.Max(0, settings.GetInt32("CMB_rateposition", 2));
     CurrentState.ratestatusbackup = Math.Max(0, settings.GetInt32("CMB_ratestatus", 2));
     CurrentState.ratercbackup = Math.Max(0, settings.GetInt32("CMB_raterc", 2));

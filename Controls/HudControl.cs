@@ -1,11 +1,9 @@
 using System;
-using System.Diagnostics;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
-using Avalonia.Threading;
 
 namespace MissionPlanner.Controls;
 
@@ -403,137 +401,6 @@ public class HudControl : Control {
   private static readonly Pen _whitePen = new(Brushes.White, 1.5);
   private static readonly Pen _thinPen = new(Brushes.White, 1);
 
-  private static readonly Stopwatch _clock = Stopwatch.StartNew();
-  private readonly DispatcherTimer _ease;
-  // Displayed (interpolated) values; Render reads these, never the raw properties.
-  private double _eRoll, _ePitch, _eYaw, _eAlt, _eAs, _eGs, _eVs;
-  private readonly SampleTween _tRoll = new(), _tPitch = new(), _tYaw = new(angle: true),
-      _tAlt = new(), _tAs = new(), _tGs = new(), _tVs = new();
-
-  public HudControl() {
-    _ease = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-    _ease.Tick += (_, _) => StepEase();
-  }
-
-  private static long NowMs => _clock.ElapsedMilliseconds;
-
-  /// <summary>The roll the horizon is currently drawn at, after interpolation.</summary>
-  internal double EasedRoll => _eRoll;
-  internal double EasedPitch => _ePitch;
-  internal double EasedYaw => _eYaw;
-
-  /// <summary>
-  /// Moves a displayed value toward each new telemetry sample at a constant speed spread over the
-  /// measured sample interval. Attitude arrives at 4–10 Hz; approaching every packet exponentially
-  /// (most of the distance in the first two frames, then a pause) reads as a jerk per packet, while
-  /// a linear tween that lands exactly when the next sample is due renders as continuous motion.
-  /// Time is passed in as milliseconds so tests can step it deterministically.
-  /// </summary>
-  internal sealed class SampleTween {
-    internal const double MinDurationMs = 40;
-    internal const double MaxDurationMs = 400;
-    private readonly bool _angle;
-    private double _from, _to, _durationMs;
-    private long _startMs = long.MinValue, _lastSampleMs = long.MinValue;
-    private bool _initialised;
-
-    internal SampleTween(bool angle = false) { _angle = angle; }
-
-    internal double Target => _to;
-    internal double DurationMs => _durationMs;
-
-    /// <summary>Jumps straight to <paramref name="value"/> and stops any motion in progress.</summary>
-    internal void Snap(double value) {
-      _from = _to = value;
-      _initialised = true;
-      _startMs = long.MinValue;
-    }
-
-    /// <summary>Registers a new sample received at <paramref name="nowMs"/>.</summary>
-    internal void Set(double target, long nowMs) {
-      if (!_initialised) {
-        Snap(target);
-        _lastSampleMs = nowMs;
-        return;
-      }
-      if (target == _to) {
-        return;
-      }
-      double current = ValueAt(nowMs);
-      if (_lastSampleMs != long.MinValue) {
-        double interval = Math.Clamp(nowMs - _lastSampleMs, MinDurationMs, MaxDurationMs);
-        if (_durationMs <= 0) {
-          _durationMs = interval;
-        } else if (interval <= _durationMs * 2.5) {
-          // Smooth arrival jitter; a much longer gap means the value simply did not change
-          // (vehicle at rest), not a slower stream, so it must not stretch later motion.
-          _durationMs = _durationMs * 0.7 + interval * 0.3;
-        }
-      } else {
-        _durationMs = MinDurationMs;
-      }
-      _lastSampleMs = nowMs;
-      _from = current;
-      _to = target;
-      _startMs = nowMs;
-    }
-
-    internal bool IsMoving(long nowMs) => _startMs != long.MinValue && nowMs - _startMs < _durationMs;
-
-    internal double ValueAt(long nowMs) {
-      if (_startMs == long.MinValue || _durationMs <= 0) {
-        return _to;
-      }
-      double f = Math.Clamp((nowMs - _startMs) / _durationMs, 0, 1);
-      double d = _to - _from;
-      if (_angle) {
-        d -= 360 * Math.Round(d / 360);
-      }
-      double v = _from + d * f;
-      return _angle ? ((v % 360) + 360) % 360 : v;
-    }
-  }
-
-  protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
-    base.OnAttachedToVisualTree(e);
-    _ease.Start();
-  }
-
-  protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
-    base.OnDetachedFromVisualTree(e);
-    _ease.Stop();
-  }
-
-  private void StepEase() {
-    long now = NowMs;
-    bool moving = _tRoll.IsMoving(now) | _tPitch.IsMoving(now) | _tYaw.IsMoving(now) | _tAlt.IsMoving(now)
-        | _tAs.IsMoving(now) | _tGs.IsMoving(now) | _tVs.IsMoving(now);
-    if (RefreshEased(now) || moving) {
-      InvalidateVisual();
-    }
-  }
-
-  /// <summary>Copies the interpolated values for <paramref name="nowMs"/>; true when any changed.</summary>
-  private bool RefreshEased(long nowMs) {
-    bool changed = false;
-    changed |= Assign(ref _eRoll, _tRoll.ValueAt(nowMs));
-    changed |= Assign(ref _ePitch, _tPitch.ValueAt(nowMs));
-    changed |= Assign(ref _eYaw, _tYaw.ValueAt(nowMs));
-    changed |= Assign(ref _eAlt, _tAlt.ValueAt(nowMs));
-    changed |= Assign(ref _eAs, _tAs.ValueAt(nowMs));
-    changed |= Assign(ref _eGs, _tGs.ValueAt(nowMs));
-    changed |= Assign(ref _eVs, _tVs.ValueAt(nowMs));
-    return changed;
-  }
-
-  private static bool Assign(ref double field, double value) {
-    if (field == value) {
-      return false;
-    }
-    field = value;
-    return true;
-  }
-
   static HudControl() {
     AffectsRender<HudControl>(
         RollProperty,
@@ -599,37 +466,10 @@ public class HudControl : Control {
     base.OnPropertyChanged(change);
     if (change.Property == ModeProperty) {
       _modeChanged = DateTime.Now;
-      return;
-    }
-    SampleTween? tween =
-        change.Property == RollProperty ? _tRoll
-        : change.Property == PitchProperty ? _tPitch
-        : change.Property == YawProperty ? _tYaw
-        : change.Property == AltProperty ? _tAlt
-        : change.Property == AirSpeedProperty ? _tAs
-        : change.Property == GroundSpeedProperty ? _tGs
-        : change.Property == VerticalSpeedProperty ? _tVs
-        : null;
-    if (tween != null) {
-      long now = NowMs;
-      tween.Set(change.GetNewValue<double>(), now);
-      RefreshEased(now);
     }
   }
 
   private IBrush GroundFill() => GroundBrown ? _groundBrownBrush : _groundBrush;
-
-  internal void SnapToValues() {
-    _tRoll.Snap(Roll);
-    _tPitch.Snap(Pitch);
-    _tYaw.Snap(Yaw);
-    _tAlt.Snap(Alt);
-    _tAs.Snap(AirSpeed);
-    _tGs.Snap(GroundSpeed);
-    _tVs.Snap(VerticalSpeed);
-    RefreshEased(NowMs);
-    InvalidateVisual();
-  }
 
   public override void Render(DrawingContext context) {
     var b = Bounds;
@@ -668,12 +508,12 @@ public class HudControl : Control {
     double headH = Math.Clamp(h / 14.0, 16, 48);
     var ground = GroundFill();
 
-    double rollRad = (Russian ? 0 : _eRoll) * Math.PI / 180.0;
+    double rollRad = (Russian ? 0 : Roll) * Math.PI / 180.0;
     using (context.PushClip(new Rect(0, headH, w, h - headH)))
     using (context.PushTransform(Matrix.CreateTranslation(cx, cy)))
     using (context.PushTransform(Matrix.CreateRotation(-rollRad))) {
       double big = Math.Max(w, h) * 2;
-      double pitchoffset = _ePitch * perDeg;
+      double pitchoffset = Pitch * perDeg;
       if (videoBackground == null) {
         context.FillRectangle(_skyBrush, new Rect(-big, -big, big * 2, big + pitchoffset));
         context.FillRectangle(ground, new Rect(-big, pitchoffset, big * 2, big * 2 - pitchoffset));
@@ -686,7 +526,7 @@ public class HudControl : Control {
             continue;
           }
 
-          double y = (_ePitch - a) * perDeg;
+          double y = (Pitch - a) * perDeg;
           if (Math.Abs(y) > h * 0.38) {
             continue;
           }
@@ -716,7 +556,7 @@ public class HudControl : Control {
     var reticle = new Pen(new SolidColorBrush(Color.FromArgb(220, 255, 0, 0)),
         Math.Max(2.5, unit * 0.009), lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
     using (context.PushTransform(Russian
-        ? Matrix.CreateRotation(-_eRoll * Math.PI / 180.0, new Point(cx, cy))
+        ? Matrix.CreateRotation(-Roll * Math.PI / 180.0, new Point(cx, cy))
         : Matrix.Identity)) {
       context.DrawLine(reticle, new Point(cx - rgap - wing, cy), new Point(cx - rgap, cy));
       context.DrawLine(reticle, new Point(cx + rgap, cy), new Point(cx + rgap + wing, cy));
@@ -725,7 +565,7 @@ public class HudControl : Control {
     }
 
     if (DisplayHeading) {
-      DrawHeadingTape(context, w, headH, fontsize, _eYaw, NavBearing);
+      DrawHeadingTape(context, w, headH, fontsize, Yaw, NavBearing);
     }
 
     if (DisplayConnection) {
@@ -744,7 +584,7 @@ public class HudControl : Control {
     double tapeW = Math.Max(20, Math.Min(Math.Max(unit * 0.12, 42), w * 0.16));
     var speedRect = new Rect(0, cy - h / 4.0, tapeW, h / 2.0);
     var altRect = new Rect(w - tapeW, cy - h / 4.0, tapeW, h / 2.0);
-    double spd = AirSpeed > 0 ? _eAs : _eGs;
+    double spd = AirSpeed > 0 ? AirSpeed : GroundSpeed;
     if (DisplaySpeed) {
       DrawScrollTape(context, speedRect, spd, TargetSpeed, false, fontsize);
       DrawText(context, $"AS {AirSpeed:0.0}", new Point(2, speedRect.Bottom + 4), fontsize);
@@ -755,8 +595,8 @@ public class HudControl : Control {
           new Point(2, speedRect.Bottom + fontsize * 2 + 12), fontsize, Brushes.White);
     }
     if (DisplayAlt) {
-      DrawScrollTape(context, altRect, _eAlt, TargetAlt, true, fontsize);
-      DrawVsi(context, altRect, _eVs);
+      DrawScrollTape(context, altRect, Alt, TargetAlt, true, fontsize);
+      DrawVsi(context, altRect, VerticalSpeed);
 
       var modeBrush = _modeChanged.AddSeconds(2) > DateTime.Now ? Brushes.Red : _textBrush;
       DrawText(context, Mode, new Point(altRect.Left - 30, altRect.Bottom + 5), fontsize, modeBrush);
@@ -969,7 +809,7 @@ public class HudControl : Control {
 
   private void DrawRollArc(DrawingContext ctx, double cx, double cy, double r, double unit) {
     var c = new Point(cx, cy);
-    using (ctx.PushTransform(Matrix.CreateRotation(-_eRoll * Math.PI / 180.0, c))) {
+    using (ctx.PushTransform(Matrix.CreateRotation(-Roll * Math.PI / 180.0, c))) {
       foreach (int a in new[] { -60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60 }) {
         double rad = (a - 90) * Math.PI / 180.0;
         double len = a == 0 ? unit * 0.028 : unit * 0.016;
@@ -991,7 +831,7 @@ public class HudControl : Control {
       ctx.DrawGeometry(null, _whitePen, geo);
     }
     double ph = unit * 0.026;
-    var pen = new Pen(Brushes.Red, Math.Max(2, unit * (Math.Abs(_eRoll) > 45 ? 0.008 : 0.005)),
+    var pen = new Pen(Brushes.Red, Math.Max(2, unit * (Math.Abs(Roll) > 45 ? 0.008 : 0.005)),
         lineCap: PenLineCap.Round);
     ctx.DrawLine(pen, new Point(cx, cy - r), new Point(cx - ph * 0.7, cy - r + ph));
     ctx.DrawLine(pen, new Point(cx, cy - r), new Point(cx + ph * 0.7, cy - r + ph));

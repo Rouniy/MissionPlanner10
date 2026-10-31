@@ -24,8 +24,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   private MAVLinkInterface _comPort => AppState.comPort;
   private readonly DispatcherTimer _timer;
-  // Attitude is copied to the HUD far more often than the rest of the panel: the HUD interpolates
-  // between samples, so a 100 ms copy interval beating against a 10 Hz stream shows as jerks.
+  // The HUD draws whatever attitude it last received; hand it the newest packet promptly instead
+  // of waiting for the 100 ms panel refresh.
   private readonly DispatcherTimer _attitudeTimer;
   private readonly TlogPlayer _tlog = new();
   private readonly PythonScriptHost _python;
@@ -236,7 +236,6 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   internal static TimeSpan AttitudeInterval(bool slowMachine) => TimeSpan.FromMilliseconds(slowMachine ? 50 : 20);
 
-  /// <summary>Hands the latest attitude to the HUD; cheap enough to run at 50 Hz.</summary>
   private void PumpAttitude() {
     var cs = _comPort.MAV?.cs;
     if (cs == null) {
