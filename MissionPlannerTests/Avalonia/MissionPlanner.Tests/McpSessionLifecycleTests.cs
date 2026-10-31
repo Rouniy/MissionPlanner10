@@ -119,7 +119,9 @@ public sealed class McpSessionLifecycleTests {
       Assert.True(second.Stopping.IsCancellationRequested);
       using var http = new HttpClient();
       try { using var response = await http.GetAsync(secondEndpoint); Assert.False(response.IsSuccessStatusCode); }
-      catch (HttpRequestException) { }
+      // Any connection failure proves the listener is down. On a loaded runner the reset can
+      // surface as a raw SocketException from the connection pool instead of HttpRequestException.
+      catch (Exception e) when (e is HttpRequestException or System.Net.Sockets.SocketException or System.IO.IOException) { }
     } finally {
       release.TrySetResult(); await stop.WaitAsync(TimeSpan.FromSeconds(10));
       try { await pending; } catch (HttpRequestException) { }
