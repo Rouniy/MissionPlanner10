@@ -1,6 +1,6 @@
 # Avalonia in-place migration status
 
-Updated: **2026-10-30**.
+Updated: **2026-10-31**.
 
 ## DroneCAN firmware catalog, MCP node tools — 2026-10-30
 
@@ -44,6 +44,15 @@ Updated: **2026-10-30**.
   vehicle-free pages behind the parameter overlay when an idle listener becomes active.
   Verified on the X7: 4.7.0-dev → stable 4.7.2 flashed in 51 s, 933 parameters preserved;
   a second run reported the identical image. Full Release tests **1900/1900**.
+- HUD horizon (user report, 2026-10-31, "jerky when the autopilot is rotated by hand"): three
+  causes measured on the X7. The default attitude stream was 4 Hz (tlog: 4.0 Hz, gaps
+  255–300 ms); `HudControl` approached every sample exponentially (40 % per 16 ms frame, so
+  a jump then a pause per packet); `FlightDataViewModel` copied roll/pitch/yaw on its 100 ms
+  panel timer, beating against the stream. Now `CurrentState.DefaultAttitudeRate` = 10 Hz
+  (used unless `CMB_rateattitude` is set), the HUD tweens linearly over the measured sample
+  interval (`HudControl.SampleTween`, 40–400 ms, idle gaps ignored, yaw short-way-round) and
+  attitude is copied every 20 ms (50 ms on SlowMachine). Under Xvfb the app's own tlog shows
+  ATTITUDE at 10.0 Hz, median gap 100 ms, p90 139 ms. Full Release tests **1907/1907**.
 - Draft PR #47 (base `fix/dronecan-mavlink-session`): https://github.com/Rouniy/MissionPlanner10/pull/47
 - Next executable step: watch CI on PR #47; once PR #46 merges, retarget this
   PR to `master`. If the user wants the L431 on 4.7.2, select node 125 on MAVLink-CAN2,
