@@ -200,12 +200,15 @@ internal sealed class McpDroneCanAccess : IDisposable {
 
   internal async Task<object> NodeCommand(string targetId, int bus, int nodeId, string command, string reason, CancellationToken ct) {
     if (reason == null || reason.Length is < 5 or > 8000) { throw new ArgumentException("Give a reason of 5..8000 characters."); }
+    // Argument errors come before vehicle-state errors, as in WriteParameters: an agent fixing
+    // its call must not be told about stale telemetry or an armed vehicle first.
+    string action = (command ?? "").Trim().ToLowerInvariant();
+    if (action is not ("save" or "restart" or "erase")) { throw new ArgumentException("command must be save, restart or erase."); }
     var session = GetOrOpen(targetId, bus);
     byte node = session.RequireNode(nodeId);
     _vehicles.Resolve(targetId, true);
     McpVehicleAccess.RequireDisarmed(session.Target);
     if (session.Target.Connection.Link.ReadOnly) { throw new InvalidOperationException("The connection is read only."); }
-    string action = (command ?? "").Trim().ToLowerInvariant();
     bool ok = action switch {
       "save" => await Task.Run(() => session.Can.SaveConfig(node), ct).ConfigureAwait(false),
       "restart" => await Task.Run(() => session.Can.RestartNode(node), ct).ConfigureAwait(false),
