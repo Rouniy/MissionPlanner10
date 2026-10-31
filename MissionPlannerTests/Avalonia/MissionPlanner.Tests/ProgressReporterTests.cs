@@ -35,6 +35,39 @@ public class ProgressReporterTests {
   }
 
   [AvaloniaFact]
+  public void Closing_the_window_during_a_background_capable_stage_keeps_the_work_running() {
+    var reporter = new ProgressReporter("Connecting Mavlink") { ContinueInBackgroundOnClose = true };
+    CancellationToken token = reporter.Token;
+    reporter.Show();
+
+    reporter.Close();
+
+    Assert.False(token.IsCancellationRequested);
+    Assert.False(reporter.CancelRequested);
+    Assert.True(reporter.Detached);
+    Assert.True(reporter.IsClosed);
+    // The owner still drives the dialog object after it is gone; that must stay harmless.
+    reporter.Set(100, "Connected. 900 params.");
+    reporter.SetCancellationText("Close");
+    reporter.Complete();
+    Assert.False(token.IsCancellationRequested);
+  }
+
+  [AvaloniaFact]
+  public void Skip_button_still_cancels_when_closing_would_continue_in_background() {
+    var reporter = new ProgressReporter("Connecting Mavlink") { ContinueInBackgroundOnClose = true };
+    CancellationToken token = reporter.Token;
+    reporter.Show();
+
+    reporter.RequestCancellation();
+    reporter.Close();
+
+    Assert.True(token.IsCancellationRequested);
+    Assert.True(reporter.CancelRequested);
+    Assert.False(reporter.Detached);
+  }
+
+  [AvaloniaFact]
   public void Cancellation_action_can_describe_a_non_destructive_parameter_skip() {
     var reporter = new ProgressReporter("Parameter loading");
 

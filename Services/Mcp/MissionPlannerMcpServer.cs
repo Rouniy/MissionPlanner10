@@ -37,6 +37,7 @@ internal sealed class MissionPlannerMcpServer : IAsyncDisposable {
   internal Uri? Endpoint { get; private set; }
   internal string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
   internal McpVehicleAccess Vehicles { get; }
+  internal McpDroneCanAccess DroneCan { get; }
   internal McpLogCatalog Logs { get; }
   internal CancellationToken Stopping => _stop.Token;
   internal event Action<string>? Activity;
@@ -113,7 +114,7 @@ internal sealed class MissionPlannerMcpServer : IAsyncDisposable {
     if (port is < 0 or > 65535 || (!requiresToken && port < 1024)) {
       throw new ArgumentException("Desktop MCP requires an explicit local port between 1024 and 65535.");
     }
-    Vehicles = vehicles; Logs = logs ?? new(); _ownsLogs = logs == null;
+    Vehicles = vehicles; DroneCan = new McpDroneCanAccess(vehicles); Logs = logs ?? new(); _ownsLogs = logs == null;
     _port = port; RequiresToken = requiresToken;
   }
 
@@ -165,6 +166,7 @@ internal sealed class MissionPlannerMcpServer : IAsyncDisposable {
           }))
           .WithTools(toolInstance)
           .WithTools(new McpVehicleTools(Vehicles))
+          .WithTools(new McpDroneCanTools(DroneCan))
           .WithTools(new McpUiTools(UiHost, SessionFor))
           .WithResources<McpDocumentation>();
       var app = builder.Build();
@@ -232,6 +234,7 @@ internal sealed class MissionPlannerMcpServer : IAsyncDisposable {
         _app = null;
       }
       Endpoint = null;
+      try { DroneCan.Dispose(); } catch { }
       if (_ownsLogs) { await Task.Run(Logs.Dispose).ConfigureAwait(false); }
     } finally { _lifecycle.Release(); }
   }

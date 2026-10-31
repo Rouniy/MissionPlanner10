@@ -58,6 +58,17 @@ public class ProgressReporter : Window {
   public bool CancelRequested => _cts.IsCancellationRequested;
   internal bool KeepConnectionOpenOnCancel { get; set; }
 
+  /// <summary>
+  /// When set, closing the window (title-bar close) only hides the dialog: the work keeps running
+  /// and reports through the owner's own progress display. The cancel button still cancels.
+  /// </summary>
+  internal bool ContinueInBackgroundOnClose { get; set; }
+
+  /// <summary>True once the window was closed without cancelling the work.</summary>
+  internal bool Detached { get; private set; }
+
+  internal bool IsClosed { get; private set; }
+
   public ProgressReporter(string title) {
     _token = _cts.Token;
     Title = title;
@@ -66,7 +77,7 @@ public class ProgressReporter : Window {
     CanResize = false;
     WindowStartupLocation = WindowStartupLocation.CenterOwner;
     Background = new SolidColorBrush(Color.Parse("#262728"));
-    Closed += (_, _) => DisposeCancellation();
+    Closed += (_, _) => { IsClosed = true; DisposeCancellation(); };
     _cancel.Click += (_, _) => RequestCancellation();
     Content = new StackPanel {
       Margin = new Thickness(16),
@@ -106,10 +117,12 @@ public class ProgressReporter : Window {
   /// </summary>
   public void Complete() {
     Interlocked.Exchange(ref _completed, 1);
-    Close();
+    if (!IsClosed) {
+      Close();
+    }
   }
 
-  private void RequestCancellation() {
+  internal void RequestCancellation() {
     try {
       _cts.Cancel();
     } catch (ObjectDisposedException) {
@@ -118,6 +131,11 @@ public class ProgressReporter : Window {
 
   private void DisposeCancellation() {
     if (Volatile.Read(ref _completed) == 0) {
+      if (ContinueInBackgroundOnClose && !_cts.IsCancellationRequested) {
+        // The operation still owns the token; keep it alive and let the caller finish normally.
+        Detached = true;
+        return;
+      }
       RequestCancellation();
     }
     if (Interlocked.Exchange(ref _cancellationDisposed, 1) == 0) {

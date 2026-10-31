@@ -311,7 +311,7 @@ public sealed class McpUiTests {
     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     await using var client = await McpClient.CreateAsync(transport, cancellationToken: timeout.Token);
     var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
-    Assert.Equal(55, tools.Count);
+    Assert.Equal(59, tools.Count);
     var mutation = tools.Single(t => t.Name == "mission_draft_replace");
     Assert.DoesNotContain("server", mutation.JsonSchema.ToString());
     Assert.Contains("expectedRevision", mutation.JsonSchema.ToString());

@@ -24,6 +24,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   private MAVLinkInterface _comPort => AppState.comPort;
   private readonly DispatcherTimer _timer;
+  // The HUD draws whatever attitude it last received; hand it the newest packet promptly instead
+  // of waiting for the 100 ms panel refresh.
+  private readonly DispatcherTimer _attitudeTimer;
   private readonly TlogPlayer _tlog = new();
   private readonly PythonScriptHost _python;
   private FlightPlannerViewModel? _scriptFlightPlanner;
@@ -186,6 +189,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
     _timer.Tick += (_, _) => Pump();
     _timer.Start();
+    _attitudeTimer = new DispatcherTimer { Interval = AttitudeInterval(false) };
+    _attitudeTimer.Tick += (_, _) => PumpAttitude();
+    _attitudeTimer.Start();
 
     _tlog.Packet += OnTlogPacket;
     _tlog.Progress += OnTlogProgress;
@@ -219,12 +225,25 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     MissionPlanner.Warnings.WarningEngine.QuickPanelColoring -= OnQuickPanelColoring;
     Services.DisplayViewService.Changed -= OnDisplayViewChanged;
     _timer.Stop();
+    _attitudeTimer.Stop();
     _python.Dispose();
     _tlog.Close();
     OpenDroneId.Dispose();
     CloseVideoWindow();
     _joystickSetupWindow?.Close();
     _joystickSetupWindow = null;
+  }
+
+  internal static TimeSpan AttitudeInterval(bool slowMachine) => TimeSpan.FromMilliseconds(slowMachine ? 50 : 20);
+
+  private void PumpAttitude() {
+    var cs = _comPort.MAV?.cs;
+    if (cs == null) {
+      return;
+    }
+    Roll = cs.roll;
+    Pitch = cs.pitch;
+    Yaw = cs.yaw;
   }
 
   private void Pump() {
@@ -234,9 +253,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       return;
     }
 
-    Roll = cs.roll;
-    Pitch = cs.pitch;
-    Yaw = cs.yaw;
+    PumpAttitude();
     Alt = cs.alt;
     GroundSpeed = cs.groundspeed;
     AirSpeed = cs.airspeed;
@@ -252,11 +269,13 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     var settings = Settings.Instance;
     ShowDistanceToHome = settings.GetBoolean("CHK_disttohomeflightdata", true);
     HudOverlayEnabled = settings.GetBoolean("CHK_hudshow", true);
-    var desiredInterval = settings.GetBoolean("SlowMachine", false)
-        ? TimeSpan.FromMilliseconds(250)
-        : TimeSpan.FromMilliseconds(100);
+    bool slowMachine = settings.GetBoolean("SlowMachine", false);
+    var desiredInterval = slowMachine ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromMilliseconds(100);
     if (_timer.Interval != desiredInterval) {
       _timer.Interval = desiredInterval;
+    }
+    if (_attitudeTimer.Interval != AttitudeInterval(slowMachine)) {
+      _attitudeTimer.Interval = AttitudeInterval(slowMachine);
     }
     XpdrMaintReq = cs.xpdr_maint_req;
     XpdrGpsUnavailable = cs.xpdr_gps_unavail;

@@ -389,6 +389,100 @@ public class DroneCanSessionSafetyTests {
     Assert.Same(networkInterface, viewModel.SelectedNetworkInterface);
   }
 
+  [AvaloniaFact]
+  public async Task Mavlink_session_labels_the_autopilot_node_even_before_it_answers_node_info() {
+    using var link = new MissionPlanner.MAVLinkInterface { BaseStream = new CommsInjection() };
+    var state = link.MAVlist[1, 1];
+    state.param["CAN_P1_DRIVER"] = new MAVLink.MAVLinkParam("CAN_P1_DRIVER", 1, MAVLink.MAV_PARAM_TYPE.INT8);
+    state.param["CAN_D1_UC_NODE"] = new MAVLink.MAVLinkParam("CAN_D1_UC_NODE", 10, MAVLink.MAV_PARAM_TYPE.INT8);
+    var target = new DroneCanSessionTarget(link, 1, 1);
+    var can = new DroneCAN.DroneCAN();
+    using var viewModel = new ConfigDroneCanViewModel(() => target, canFactory: () => can);
+    viewModel.SelectedBusIndex = 0;
+    viewModel.ToggleConnectCommand.Execute(null);
+    await WaitForAsync(() => viewModel.IsConnected && !viewModel.IsBusy);
+
+    var status = new DroneCAN.DroneCAN.uavcan_protocol_NodeStatus { uptime_sec = 3 };
+    can.InvokeMessageReceived(MessageFrame(10), status, 0);
+    can.InvokeMessageReceived(MessageFrame(125), status, 0);
+    Dispatcher.UIThread.RunJobs();
+
+    var autopilot = Assert.Single(viewModel.Nodes, node => node.Id == 10);
+    Assert.True(autopilot.IsAutopilot);
+    Assert.Equal("?", autopilot.Name);
+    Assert.Equal("autopilot (no node info on this port)", autopilot.DisplayName);
+    var device = Assert.Single(viewModel.Nodes, node => node.Id == 125);
+    Assert.False(device.IsAutopilot);
+    Assert.Equal("?", device.DisplayName);
+
+    var name = System.Text.Encoding.ASCII.GetBytes("org.ardupilot:0");
+    can.InvokeMessageReceived(MessageFrame(10), new DroneCAN.DroneCAN.uavcan_protocol_GetNodeInfo_res {
+      name = name, name_len = (byte)name.Length,
+      software_version = new DroneCAN.DroneCAN.uavcan_protocol_SoftwareVersion { major = 1, minor = 0, vcs_commit = 0x1234abcd },
+    }, 0);
+    Dispatcher.UIThread.RunJobs();
+    Assert.Equal("org.ardupilot:0 (autopilot)", autopilot.DisplayName);
+    Assert.Equal(0x1234abcdu, autopilot.SoftwareVcsCommit);
+
+    viewModel.ToggleConnectCommand.Execute(null);
+    await WaitForAsync(() => !viewModel.IsConnected);
+  }
+
+  [AvaloniaFact]
+  public async Task Firmware_check_needs_a_named_node_and_the_view_offers_both_update_paths() {
+    using var viewModel = new ConfigDroneCanViewModel(() => null);
+    var view = new ConfigDroneCanView { DataContext = viewModel };
+    Assert.NotNull(view.FindControl<Button>("FirmwareCheckBtn"));
+    Assert.NotNull(view.FindControl<Button>("FirmwareUpdateBtn"));
+
+    Assert.False(await viewModel.CheckFirmwareUpdatesAsync());
+    Assert.Contains("Connect and select a node", viewModel.NodeStatus);
+
+    var transport = new FakeSlcanTransport("/dev/test-slcan", 115200);
+    var can = new DroneCAN.DroneCAN();
+    using var connected = new ConfigDroneCanViewModel(
+        () => null, serialPortNames: () => ["/dev/test-slcan"], serialPortFactory: (_, _) => transport, canFactory: () => can);
+    connected.SelectedBusIndex = 2;
+    connected.SelectedSerialPort = "/dev/test-slcan";
+    connected.ToggleConnectCommand.Execute(null);
+    await WaitForAsync(() => connected.IsConnected && !connected.IsBusy);
+    var unnamed = new DroneCanNode { Id = 125 };
+    connected.Nodes.Add(unnamed);
+    connected.SelectedNode = unnamed;
+    Assert.False(await connected.CheckFirmwareUpdatesAsync());
+    Assert.Contains("not reported its name", connected.FirmwareCheckStatus);
+    Assert.Empty(connected.FirmwareOptions);
+    Assert.False(connected.IsBusy);
+    // Installing without a prior check is refused instead of flashing a stale choice.
+    var option = new MissionPlanner.Services.DroneCanFirmwareOption("stable", "4.7.2", "fb77", new Uri("https://example.org/a.bin"), null, "example.org");
+    await connected.InstallFirmwareOptionAsync(option);
+    Assert.Contains("run Check for Updates again", connected.NodeStatus);
+    Assert.False(connected.IsBusy);
+  }
+
+  [AvaloniaFact]
+  public async Task Library_forgets_node_info_when_a_node_reboots_so_its_new_version_is_read_again() {
+    var transport = new FakeSlcanTransport("/dev/test-slcan", 115200);
+    var can = new DroneCAN.DroneCAN();
+    using var viewModel = new ConfigDroneCanViewModel(
+        () => null,
+        serialPortNames: () => ["/dev/test-slcan"],
+        serialPortFactory: (_, _) => transport,
+        canFactory: () => can);
+    viewModel.SelectedBusIndex = 2;
+    viewModel.SelectedSerialPort = "/dev/test-slcan";
+    viewModel.ToggleConnectCommand.Execute(null);
+    await WaitForAsync(() => viewModel.IsConnected && !viewModel.IsBusy);
+
+    can.InvokeMessageReceived(MessageFrame(42), new DroneCAN.DroneCAN.uavcan_protocol_NodeStatus { uptime_sec = 100 }, 0);
+    can.NodeInfo[42] = new DroneCAN.DroneCAN.uavcan_protocol_GetNodeInfo_res();
+    can.InvokeMessageReceived(MessageFrame(42), new DroneCAN.DroneCAN.uavcan_protocol_NodeStatus { uptime_sec = 101 }, 1);
+    Assert.True(can.NodeInfo.ContainsKey(42));
+    can.InvokeMessageReceived(MessageFrame(42), new DroneCAN.DroneCAN.uavcan_protocol_NodeStatus { uptime_sec = 2 }, 2);
+    Assert.False(can.NodeInfo.ContainsKey(42));
+    Assert.Equal(2u, can.NodeList[42].uptime_sec);
+  }
+
   private static async Task WaitForAsync(Func<bool> predicate) {
     DateTime deadline = DateTime.UtcNow.AddSeconds(3);
     while (!predicate() && DateTime.UtcNow < deadline) {
@@ -532,5 +626,24 @@ public class DroneCanSessionSafetyTests {
       // Keep the fake readable/writable so late, already-scheduled upstream worker iterations do
       // not turn a deterministic lifecycle test into an ObjectDisposedException race.
     }
+  }
+}
+
+public class FirmwareDialogTemplateTests {
+  [AvaloniaFact]
+  public void Firmware_option_templates_survive_container_recycling_with_null_items() {
+    var option = new MissionPlanner.Services.AutopilotFirmwareOption("stable", "V4.7.2", "fb773567",
+        new Uri("https://firmware.ardupilot.org/Rover/stable/CUAV-X7/ardurover.apj"), "CUAV-X7", 1010, "Rover", "GROUND_ROVER");
+    var autopilot = new MissionPlanner.Views.AutopilotFirmwareDialog("CUAV-X7", new[] { option }, option);
+    var template = autopilot.OptionList.ItemTemplate!;
+    Assert.NotNull(template.Build(option));
+    Assert.NotNull(template.Build(null));
+
+    using var viewModel = new ConfigDroneCanViewModel(() => null, serialPortNames: () => [], serialPortFactory: (_, _) => null!, canFactory: () => new DroneCAN.DroneCAN());
+    var droneCan = new MissionPlanner.Views.DroneCanFirmwareDialog(viewModel);
+    var nodeTemplate = droneCan.OptionList.ItemTemplate!;
+    Assert.NotNull(nodeTemplate.Build(new MissionPlanner.Services.DroneCanFirmwareOption("stable", "4.7.2", "fb77",
+        new Uri("https://example.org/fw.bin"), null, "example.org")));
+    Assert.NotNull(nodeTemplate.Build(null));
   }
 }

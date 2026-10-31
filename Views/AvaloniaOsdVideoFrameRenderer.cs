@@ -86,7 +86,6 @@ internal sealed class AvaloniaOsdVideoFrameRenderer : IOsdVideoFrameRenderer {
 
     Apply(sample);
     _hud.VideoBackground = background;
-    _hud.SnapToValues();
     var logicalSize = new Size(outputWidth, outputHeight);
     _hud.Measure(logicalSize);
     _hud.Arrange(new Rect(logicalSize));

@@ -1,6 +1,62 @@
 # Avalonia in-place migration status
 
-Updated: **2026-10-30**.
+Updated: **2026-10-31**.
+
+## DroneCAN firmware catalog, MCP node tools — 2026-10-30
+
+- Branch `feat/dronecan-firmware-mcp` is stacked on `fix/dronecan-mavlink-session` at
+  `bb9278a7f` (PR #46, still open against `master`). Commits: `f3d291bbc` (library node-info
+  sweep only asks unknown nodes; a NodeStatus with lower uptime forgets stale NodeInfo),
+  `ea6f88130` ("Check for Updates…" on the DroneCAN page: manifest lookup by node name,
+  stable/beta/dev list with dates and commits, operator picks a build, download to temp,
+  flash through the existing updater; autopilot node labelled on an empty port),
+  `f9f9ca522` (MCP tools `dronecan_nodes`, `dronecan_read_parameters`,
+  `dronecan_write_parameters`, `dronecan_node_command` with disarmed/read-only/sensitive
+  checks, read-back verification and audit), `117890827` (live acceptance covers the lookup,
+  the stable image's app descriptor and the MCP paths).
+- Live acceptance on the CUAV X7 + Matek L431 (node 125, AP_Periph 1.7 `9c6f307f`, hw 4.38):
+  firmware check 4.7 s listing stable 4.7.2, beta 4.7.2 and 4.8.0-dev with dates; stable image
+  212784 bytes with the signed app descriptor; `dronecan_nodes` 1.6 s; 85 parameters read in
+  3.2 s; `NTF_LED_BRIGHT` 3→2→3 written and verified through the agent path (~7 s each, not
+  saved). **The node was not flashed**; the user decides in the new dialog.
+- Flake fixed: `Node_status_from_an_unnamed_node_requests_its_node_info_immediately` doubled
+  its request when the library's ten-second sweep coincided with the test; the sweep now skips
+  nodes whose info is known.
+- Verification: full Release tests **1871/1871**, no skipped; `MissionPlanner.slnx` Release
+  build **0 warnings / 0 errors**; six `build/porting/check-*.sh` audits and `git diff --check`
+  pass. Builds ran with `-m:1`.
+- Not claimed: hosted CI for this branch; flashing a node through the new dialog on hardware
+  (the download and the updater call are the same code path the live test and the existing
+  "Update Firmware…" button use); Windows/macOS GUI checks.
+- Connect dialog (user report, 2026-10-31): closing "Connecting Mavlink" with the title-bar
+  button during parameter loading cancelled the read while the autopilot kept streaming, so the
+  toolbar progress under Connect froze. Closing now only hides the dialog
+  (`ProgressReporter.ContinueInBackgroundOnClose`); "Skip Parameters" still cancels. Checked on
+  the X7 under Xvfb+Metacity: after the close the toolbar kept showing "Got param …" with a
+  growing bar and ended at "Connected. 944 params.".
+- Install Firmware (user report, 2026-10-31): the page never rebooted a connected board into
+  its bootloader (type check against System.IO.Ports.SerialPort), the checksum step was
+  inverted so a different image was reported as "already present", and only one build per
+  vehicle was offered. Now `AutopilotFirmwareCatalog` lists every manifest build for the
+  board id from AUTOPILOT_VERSION (`CurrentState.board_version`, hwdef name from the banner),
+  `AutopilotFirmwareDialog` lets the operator pick, and the upload goes reboot → bootloader
+  scan → checksum → erase/program/verify. The Setup backstage no longer hides
+  vehicle-free pages behind the parameter overlay when an idle listener becomes active.
+  Verified on the X7: 4.7.0-dev → stable 4.7.2 flashed in 51 s, 933 parameters preserved;
+  a second run reported the identical image. Full Release tests **1900/1900**.
+- HUD horizon (user report, 2026-10-31, "turns, pauses, turns" when the autopilot is rotated
+  by hand): the cause was `HudControl`'s own easing, which chased every ATTITUDE sample
+  exponentially (40 % per 16 ms frame, then a pause until the next packet). The user wants the
+  newest value drawn at once and accepts discrete 4 Hz steps, so the easing, its timer and
+  `SnapToValues` are gone and Render draws the bound values; `FlightDataViewModel` copies
+  roll/pitch/yaw every 20 ms (50 ms on SlowMachine) instead of on the 100 ms panel timer. An
+  intermediate commit (`dc4e66cbb`) had raised the default stream to 10 Hz and added a
+  time-based tween; both were reverted on the user's instruction, the stream default is the
+  upstream 4 Hz again. Full Release tests **1904/1904**.
+- Draft PR #47 (base `fix/dronecan-mavlink-session`): https://github.com/Rouniy/MissionPlanner10/pull/47
+- Next executable step: watch CI on PR #47; once PR #46 merges, retarget this
+  PR to `master`. If the user wants the L431 on 4.7.2, select node 125 on MAVLink-CAN2,
+  Check for Updates…, choose stable, Download and flash. Merge only when authorized.
 
 ## DroneCAN over MAVLink CAN, AI agent window — 2026-10-30
 

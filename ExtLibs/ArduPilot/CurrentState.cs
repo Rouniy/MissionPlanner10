@@ -2174,6 +2174,9 @@ namespace MissionPlanner
 
         [GroupText("Software")] public uint capabilities { get; set; }
 
+        /// <summary>AUTOPILOT_VERSION.board_version; ArduPilot reports its APJ board id in the upper 16 bits.</summary>
+        [GroupText("Software")] public uint board_version { get; set; }
+
         [GroupText("Software")] public float speedup { get; set; }
 
         [GroupText("Software")] public byte vtol_state { get; private set; }
@@ -2396,6 +2399,7 @@ namespace MissionPlanner
 
                             this.uid = version.uid;
                             this.uid2 = version.uid2.ToHexString();
+                            this.board_version = version.board_version;
 
                             try
                             {
@@ -4421,6 +4425,7 @@ namespace MissionPlanner
                 version = new Version();
                 voltageflag = (uint)MAVLink.MAV_POWER_STATUS.USB_CONNECTED;
                 capabilities = 0;
+                board_version = 0;
             }
         }
 

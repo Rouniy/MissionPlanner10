@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -12,7 +13,15 @@ public partial class InstallFirmwareView : UserControl {
   public InstallFirmwareView() {
     AvaloniaXamlLoader.Load(this);
     this.FindControl<Button>("CustomFwBtn")!.Click += OnLoadCustomFirmware;
+    DataContextChanged += (_, _) => {
+      if (DataContext is InstallFirmwareViewModel vm) {
+        vm.ChooseFirmwareAsync = ChooseFirmwareAsync;
+      }
+    };
   }
+
+  private Task<MissionPlanner.Services.AutopilotFirmwareOption?> ChooseFirmwareAsync(InstallFirmwareViewModel vm) =>
+      AutopilotFirmwareDialog.ShowAsync(TopLevel.GetTopLevel(this) as Window, vm.BoardLabel, vm.FirmwareOptions.ToList(), vm.SelectedFirmwareOption);
 
   private async void OnLoadCustomFirmware(object? sender, RoutedEventArgs e) {
     var top = TopLevel.GetTopLevel(this);

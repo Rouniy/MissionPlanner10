@@ -88,6 +88,8 @@
     <Compile Include="Grid/GridData.cs" />
     <Compile Include="Services/CubeServiceBulletin.cs" />
     <Compile Include="Services/DataFlashLogAnonymizer.cs" />
+    <Compile Include="Services/AutopilotFirmwareCatalog.cs" />
+    <Compile Include="Services/DroneCanFirmwareCatalog.cs" />
     <Compile Include="Services/LegacyFirmwareUploader.cs" />
     <Compile Include="Services/LocalizationService.cs" />
     <Compile Include="Services/LocalKmlServer.cs" />
@@ -115,6 +117,8 @@
     <PackageReference Include="Tomlyn" />
     <Compile Include="Services/Mcp/*.cs" />
     <Compile Include="Views/AgentToolsWindow.cs" />
+    <Compile Include="Views/AutopilotFirmwareDialog.cs" />
+    <Compile Include="Views/DroneCanFirmwareDialog.cs" />
     <Compile Include="Views/AiRobotEyes.cs" />
   </ItemGroup>
 
