@@ -110,6 +110,36 @@ internal sealed partial class McpVehicleAccess {
     throw new ArgumentException($"Argument {name} is required.");
   }
 
+  internal static MAVLink.MAV_CMD ParseMavlinkCommandId(JsonElement? args) {
+    if (args is { ValueKind: JsonValueKind.Object } element) {
+      foreach (var property in element.EnumerateObject()) {
+        if (!property.Name.Equals("commandId", StringComparison.OrdinalIgnoreCase)) { continue; }
+        var value = property.Value;
+        string text;
+        if (value.ValueKind == JsonValueKind.String) {
+          text = value.GetString()!.Trim();
+          string name = text.StartsWith("MAV_CMD_", StringComparison.OrdinalIgnoreCase) ? text[8..] : text;
+          if (Enum.GetNames<MAVLink.MAV_CMD>().Contains(name, StringComparer.OrdinalIgnoreCase)) {
+            return Enum.Parse<MAVLink.MAV_CMD>(name, true);
+          }
+        } else if (value.ValueKind == JsonValueKind.Number) {
+          text = value.GetRawText();
+        } else {
+          throw new ArgumentException("commandId must be an integer in 0..65535 or a known MAV_CMD name.");
+        }
+        // Parse the original text so a high-precision fraction cannot round into a command ID.
+        if (!ushort.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out ushort id)) {
+          throw new ArgumentException("commandId must be an integer in 0..65535 or a known MAV_CMD name.");
+        }
+        if (!Enum.IsDefined(typeof(MAVLink.MAV_CMD), id)) {
+          throw new ArgumentException("commandId is not a known MAV_CMD.");
+        }
+        return (MAVLink.MAV_CMD)id;
+      }
+    }
+    throw new ArgumentException("Argument commandId is required.");
+  }
+
   internal static readonly string[] Commands = ["set_mode", "arm", "disarm", "takeoff", "guided_goto", "rtl", "land", "loiter", "mission_start",
     "change_speed", "set_servo", "set_relay", "motor_test", "calibrate", "save_parameters", "reboot", "mavlink_command"];
 
@@ -185,13 +215,12 @@ internal sealed partial class McpVehicleAccess {
           case "save_parameters": return link.doCommand(sysid, compid, MAVLink.MAV_CMD.PREFLIGHT_STORAGE, 1, 0, 0, 0, 0, 0, 0);
           case "reboot": RequireDisarmed(target); return link.doCommand(sysid, compid, MAVLink.MAV_CMD.PREFLIGHT_REBOOT_SHUTDOWN, 1, 0, 0, 0, 0, 0, 0);
           case "mavlink_command": {
-            int id = (int)Arg(args, "commandId");
-            if (!Enum.IsDefined(typeof(MAVLink.MAV_CMD), id)) { throw new ArgumentException("commandId is not a known MAV_CMD."); }
+            var mavCommand = ParseMavlinkCommandId(args);
             float[] p = Enumerable.Range(1, 7).Select(i => (float)Arg(args, "p" + i, 0)).ToArray();
-            detail = new { commandId = id, commandName = ((MAVLink.MAV_CMD)id).ToString(), p };
+            detail = new { commandId = (ushort)mavCommand, commandName = mavCommand.ToString(), p };
             return Arg(args, "useCommandInt", 0) != 0
-                ? link.doCommandInt(sysid, compid, (MAVLink.MAV_CMD)id, p[0], p[1], p[2], p[3], (int)Arg(args, "p5", 0), (int)Arg(args, "p6", 0), p[6])
-                : link.doCommand(sysid, compid, (MAVLink.MAV_CMD)id, p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+                ? link.doCommandInt(sysid, compid, mavCommand, p[0], p[1], p[2], p[3], (int)Arg(args, "p5", 0), (int)Arg(args, "p6", 0), p[6])
+                : link.doCommand(sysid, compid, mavCommand, p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
           }
           default: throw new ArgumentException("Unknown command.");
         }

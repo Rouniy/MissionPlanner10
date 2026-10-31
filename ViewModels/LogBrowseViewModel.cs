@@ -276,6 +276,9 @@ public partial class LogBrowseViewModel : ViewModelBase {
             .Concat(fields.Select(f => values.GetValueOrDefault(f, ""))).ToArray());
       }
     } else {
+      // one record per row, the decoder's own display strings: a text column
+      // (PARM.Name, MSG.Message, MODE.Mode) has no numeric series, and the
+      // preview stops after maxRows records instead of decoding the log
       using var log = new DFLogBuffer(CurrentPath);
       foreach (var item in log.GetEnumeratorType(type).Take(maxRows)) {
         rows.Add(new[] { (item.timems / 1000).ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) }
@@ -349,8 +352,9 @@ public partial class LogBrowseViewModel : ViewModelBase {
     if (!types.Contains("GPS", StringComparer.OrdinalIgnoreCase)) {
       return Array.Empty<(double, double, double)>();
     }
-    var lats = DataFlashLog.ReadField(path, "GPS", "Lat");
-    var lngs = DataFlashLog.ReadField(path, "GPS", "Lng");
+    var series = DataFlashLog.ReadFields(path, "GPS", new[] { "Lat", "Lng" });
+    var lats = series[0];
+    var lngs = series[1];
     int n = Math.Min(lats.Count, lngs.Count);
     var timed = new List<(double, double, double)>(n);
     for (int i = 0; i < n; i++) {

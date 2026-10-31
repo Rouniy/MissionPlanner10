@@ -6,8 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
 using SharpKml.Dom;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using static MissionPlanner.Log.LogOutput;
 
 namespace MissionPlanner.Utilities
@@ -19,7 +18,7 @@ namespace MissionPlanner.Utilities
 
         private static MemoryCache cache = new MemoryCache(new MemoryCacheOptions() { });
 
-        public static Image<Rgba32> GenerateImage(DFLogBuffer cb, out double[] freqtout,
+        public static SKBitmap GenerateImage(DFLogBuffer cb, out double[] freqtout,
             out List<(double timeus, double[] value)> allfftdata, string type = "ACC1", string field = "AccX",
             string timeus = "TimeUS", int min = -80, int max = -20)
         {
@@ -44,6 +43,14 @@ namespace MissionPlanner.Utilities
                     int instance = -1;
                     double multiplier = -1;
 
+                    // typed fast path via the native dflog columns
+                    if (TryBatchDataNative(cb, sensorno, sensor, field, out var nativerate, out var nativedata))
+                    {
+                        sample_rate = nativerate;
+                        data = nativedata;
+                    }
+                    else
+                    {
                     data = cb.GetEnumeratorType(new string[] { "ISBH", "ISBD" })
                         .SelectMany(
                             item =>
@@ -100,6 +107,7 @@ namespace MissionPlanner.Utilities
 
                                 return new (double time, double d)[0];
                             }).ToArray();
+                    }
                     cache.Set(cb.GetHashCode() + sensorno + "" + sensor, (sample_rate, data),
                         new MemoryCacheEntryOptions()
                         {
@@ -128,7 +136,7 @@ namespace MissionPlanner.Utilities
                 // batch sampling is non continuous
                 int divisor = 1;
                 count *= divisor;
-                var img = new Image<Rgba32>(count, freqt.Length);
+                var img = new SKBitmap(count, freqt.Length, SKColorType.Rgba8888, SKAlphaType.Unpremul);
                 log.Debug("done and count ");
 
                 foreach (var fftdata in data.Windowed(N, divisor))
@@ -154,7 +162,7 @@ namespace MissionPlanner.Utilities
                     var i = 0;
                     foreach (var y in freqt)
                     {
-                        img[done, (freqt.Length - 1) - i] = GetColor(fftanswerz[i], min, max);
+                        img.SetPixel(done, (freqt.Length - 1) - i, GetColor(fftanswerz[i], min, max));
                         i++;
                     }
 
@@ -197,7 +205,7 @@ namespace MissionPlanner.Utilities
                     divisor = 1;
                 count *= divisor;
                 Console.WriteLine("Image Size " + count + " " + N / 2);
-                var img = new Image<Rgba32>(count, N / 2);
+                var img = new SKBitmap(count, N / 2, SKColorType.Rgba8888, SKAlphaType.Unpremul);
                 log.Debug("done and count ");
 
 
@@ -230,7 +238,7 @@ namespace MissionPlanner.Utilities
                     var i = 0;
                     foreach (var y in Enumerable.Range(0, N/2))
                     {
-                        img[done, ((N / 2) - 1) - i] = GetColor(fftanswerz[i], min, max);
+                        img.SetPixel(done, ((N / 2) - 1) - i, GetColor(fftanswerz[i], min, max));
                         i++;
                     }
 
@@ -246,14 +254,83 @@ namespace MissionPlanner.Utilities
             }
         }
 
+        /// <summary>
+        /// Typed fast path for the ISBH/ISBD batch extraction: numeric and
+        /// array columns merged by line number, replaying the header state
+        /// machine exactly like the legacy enumerator pass. Returns false
+        /// (caller runs the legacy path) when the native path is off or the
+        /// columns cannot be fetched.
+        /// </summary>
+        static bool TryBatchDataNative(DFLogBuffer cb, int sensorno, int sensor, string field,
+            out double sampleRate, out (double time, double d)[] data)
+        {
+            sampleRate = -1;
+            data = null;
+
+            // legacy derives the ISBD array field from the last letter, e.g. AccX -> x
+            var arrayField = field.ToLower().Substring(field.Length - 1);
+
+            if (!cb.TryGetColumnsNative("ISBH",
+                    new[] { "N", "type", "instance", "smp_rate", "mul" },
+                    out var hdrLines, out var hdr))
+                return false;
+
+            if (!cb.TryGetColumnsNative("ISBD", new[] { "N", "TimeUS" }, out var smpLines, out var smp) ||
+                !cb.TryGetArrayColumnNative("ISBD", arrayField, out var arrLines, out var samples))
+                return false;
+
+            // the numeric and array queries are indexed by the same row number
+            // below, so they must describe the same rows
+            if (arrLines.Length != smpLines.Length)
+                return false;
+
+            var list = new List<(double time, double d)>(samples.Length * 32);
+
+            int Ns = -1, type1 = -1, instance = -1;
+            double multiplier = -1;
+
+            int h = 0, s = 0;
+            while (h < hdrLines.Length || s < smpLines.Length)
+            {
+                var takeHeader = s >= smpLines.Length || (h < hdrLines.Length && hdrLines[h] <= smpLines[s]);
+                if (takeHeader)
+                {
+                    Ns = (int)hdr[0][h];
+                    type1 = (int)hdr[1][h];
+                    instance = (int)hdr[2][h];
+                    if (instance == sensorno && type1 == sensor)
+                    {
+                        sampleRate = hdr[3][h];
+                        multiplier = hdr[4][h];
+                    }
+
+                    h++;
+                }
+                else
+                {
+                    if ((int)smp[0][s] == Ns && instance == sensorno && type1 == sensor)
+                    {
+                        var time = smp[1][s];
+                        foreach (var sample in samples[s])
+                            list.Add((time, sample / multiplier));
+                    }
+
+                    s++;
+                }
+            }
+
+            data = list.ToArray();
+            return true;
+        }
+
         static double SCALE = 20 / Math.Log(10);
 
-        static Rgba32 GetRainbowColor(byte i)
+        static SKColor GetRainbowColor(byte i)
         {
             return HSL2RGB(i / 255.0, 0.5, 0.5);
         }
 
-        public static Rgba32 HSL2RGB(double h, double sl, double l)
+        public static SKColor HSL2RGB(double h, double sl, double l)
         {
             double v;
             double r, g, b;
@@ -311,14 +388,10 @@ namespace MissionPlanner.Utilities
                         break;
                 }
             }
-            Rgba32 rgb = new Rgba32(0, 0, 0);
-            rgb.R = Convert.ToByte(r * 255);
-            rgb.G = Convert.ToByte(g * 255);
-            rgb.B = Convert.ToByte(b * 255);
-            return rgb;
+            return new SKColor(Convert.ToByte(r * 255), Convert.ToByte(g * 255), Convert.ToByte(b * 255));
         }
 
-        static Rgba32 GetColor(double actualValue, int min = -80, int max = -20)
+        static SKColor GetColor(double actualValue, int min = -80, int max = -20)
         {
             var scale = actualValue;// SCALE * Math.Log(actualValue + double.Epsilon);
 

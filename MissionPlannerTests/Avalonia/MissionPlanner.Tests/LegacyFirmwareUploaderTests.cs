@@ -133,6 +133,7 @@ public class LegacyFirmwareUploaderTests {
     foreach (var value in bytes) {
       line.Append(value.ToString("X2"));
     }
-    return line.AppendLine().ToString();
+    // A fixed terminator keeps records the same on every platform; the checksum test trims it.
+    return line.Append('\n').ToString();
   }
 }

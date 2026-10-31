@@ -1,6 +1,199 @@
 # Avalonia in-place migration status
 
-Updated: **2026-09-20**.
+Updated: **2026-10-31**.
+
+## DroneCAN firmware catalog, MCP node tools — 2026-10-30
+
+- Branch `feat/dronecan-firmware-mcp` is stacked on `fix/dronecan-mavlink-session` at
+  `bb9278a7f` (PR #46, still open against `master`). Commits: `f3d291bbc` (library node-info
+  sweep only asks unknown nodes; a NodeStatus with lower uptime forgets stale NodeInfo),
+  `ea6f88130` ("Check for Updates…" on the DroneCAN page: manifest lookup by node name,
+  stable/beta/dev list with dates and commits, operator picks a build, download to temp,
+  flash through the existing updater; autopilot node labelled on an empty port),
+  `f9f9ca522` (MCP tools `dronecan_nodes`, `dronecan_read_parameters`,
+  `dronecan_write_parameters`, `dronecan_node_command` with disarmed/read-only/sensitive
+  checks, read-back verification and audit), `117890827` (live acceptance covers the lookup,
+  the stable image's app descriptor and the MCP paths).
+- Live acceptance on the CUAV X7 + Matek L431 (node 125, AP_Periph 1.7 `9c6f307f`, hw 4.38):
+  firmware check 4.7 s listing stable 4.7.2, beta 4.7.2 and 4.8.0-dev with dates; stable image
+  212784 bytes with the signed app descriptor; `dronecan_nodes` 1.6 s; 85 parameters read in
+  3.2 s; `NTF_LED_BRIGHT` 3→2→3 written and verified through the agent path (~7 s each, not
+  saved). **The node was not flashed**; the user decides in the new dialog.
+- Flake fixed: `Node_status_from_an_unnamed_node_requests_its_node_info_immediately` doubled
+  its request when the library's ten-second sweep coincided with the test; the sweep now skips
+  nodes whose info is known.
+- Verification: full Release tests **1871/1871**, no skipped; `MissionPlanner.slnx` Release
+  build **0 warnings / 0 errors**; six `build/porting/check-*.sh` audits and `git diff --check`
+  pass. Builds ran with `-m:1`.
+- Not claimed: hosted CI for this branch; flashing a node through the new dialog on hardware
+  (the download and the updater call are the same code path the live test and the existing
+  "Update Firmware…" button use); Windows/macOS GUI checks.
+- Connect dialog (user report, 2026-10-31): closing "Connecting Mavlink" with the title-bar
+  button during parameter loading cancelled the read while the autopilot kept streaming, so the
+  toolbar progress under Connect froze. Closing now only hides the dialog
+  (`ProgressReporter.ContinueInBackgroundOnClose`); "Skip Parameters" still cancels. Checked on
+  the X7 under Xvfb+Metacity: after the close the toolbar kept showing "Got param …" with a
+  growing bar and ended at "Connected. 944 params.".
+- Install Firmware (user report, 2026-10-31): the page never rebooted a connected board into
+  its bootloader (type check against System.IO.Ports.SerialPort), the checksum step was
+  inverted so a different image was reported as "already present", and only one build per
+  vehicle was offered. Now `AutopilotFirmwareCatalog` lists every manifest build for the
+  board id from AUTOPILOT_VERSION (`CurrentState.board_version`, hwdef name from the banner),
+  `AutopilotFirmwareDialog` lets the operator pick, and the upload goes reboot → bootloader
+  scan → checksum → erase/program/verify. The Setup backstage no longer hides
+  vehicle-free pages behind the parameter overlay when an idle listener becomes active.
+  Verified on the X7: 4.7.0-dev → stable 4.7.2 flashed in 51 s, 933 parameters preserved;
+  a second run reported the identical image. Full Release tests **1900/1900**.
+- HUD horizon (user report, 2026-10-31, "turns, pauses, turns" when the autopilot is rotated
+  by hand): the cause was `HudControl`'s own easing, which chased every ATTITUDE sample
+  exponentially (40 % per 16 ms frame, then a pause until the next packet). The user wants the
+  newest value drawn at once and accepts discrete 4 Hz steps, so the easing, its timer and
+  `SnapToValues` are gone and Render draws the bound values; `FlightDataViewModel` copies
+  roll/pitch/yaw every 20 ms (50 ms on SlowMachine) instead of on the 100 ms panel timer. An
+  intermediate commit (`dc4e66cbb`) had raised the default stream to 10 Hz and added a
+  time-based tween; both were reverted on the user's instruction, the stream default is the
+  upstream 4 Hz again. Full Release tests **1904/1904**.
+- Draft PR #47 (base `fix/dronecan-mavlink-session`): https://github.com/Rouniy/MissionPlanner10/pull/47
+- Next executable step: watch CI on PR #47; once PR #46 merges, retarget this
+  PR to `master`. If the user wants the L431 on 4.7.2, select node 125 on MAVLink-CAN2,
+  Check for Updates…, choose stable, Download and flash. Merge only when authorized.
+
+## DroneCAN over MAVLink CAN, AI agent window — 2026-10-30
+
+- Branch `fix/dronecan-mavlink-session` is based on `origin/master` at
+  `bdf6a5ac5` ("fix: accept MAV_CMD ids in MCP mavlink_command"). Commits: `8c1d5c4a0`
+  (SkiaSharp PNGs, ImageSharp removed), `d897bc770` (no CAN echo, one shared forwarding
+  session), `459d02026` (opt-in live CAN acceptance), `22df27980` (X-Office-style agent
+  rows, case-insensitive desktop discovery), `9f47848f7` (re-adopt the Codex desktop entry).
+- Hardware finding (CUAV X7 running ArduRover 4.7.0-dev `eb9a1b3c`, Matek L431 AP_Periph
+  1.7 as node 125, autopilot node 10): the adapter is wired to **CAN2**. `@SYS/can0_stats.txt`
+  showed zero successful transmissions and only timeouts, `can1_stats.txt` carried all
+  traffic. Listening on MAVLink-CAN1 therefore showed nothing, and Mission Planner gave no
+  hint. The L431's red LED is power and the blinking blue LED is AP_Periph running:
+  the firmware is healthy, **no firmware was flashed**.
+- Software root causes fixed in `ExtLibs/DroneCAN/DroneCAN.cs`, new
+  `ViewModels/MavlinkCanTransport.cs`, `ViewModels/DroneCanBridge.cs` and
+  `ConfigDroneCanViewModel.cs`: every received CAN frame was echoed back to the vehicle
+  (RX equalled TX in the tlog, doubling bus load and self-processing); the DroneCAN page and
+  the Inspector used exclusive subscriptions and separate `MAV_CMD_CAN_FORWARD` loops, so
+  opening one broke the other; node names took up to 10 s per node because GetNodeInfo was
+  only sent by the periodic sweep; the library's own node 127 appeared as a device. The page
+  now says after 6 s when only the autopilot is visible and names the other bus; one
+  transport per link refuses a second bus with a clear message.
+- Live acceptance through Mission Planner's own code path (`DroneCanLiveHardwareTests`, env
+  `MP_LIVE_CAN_PORT/BUS/NODE`): on CAN2 nodes 10 and 125 were named in 0.7 s and all 85
+  parameters of node 125 arrived in 2.1–3.2 s; on CAN1 the "only the autopilot itself" hint
+  appears. Node 10 can stay unnamed on the empty CAN1 bus (edge case, not pursued).
+- Restore had failed on NuGet audit NU1902/NU1903 for `SixLabors.ImageSharp` 2.1.12
+  (2.1.13 and 3.1.12 are flagged too; 4.x needs a licence). Spectrogram and propagation
+  PNGs are rendered with the already referenced SkiaSharp; ImageSharp is gone.
+- AI window (`Views/AgentToolsWindow.cs`): one row per installed agent as in X-Office's
+  assistant panel (name, kind, location, Launch, Register/Unregister), Find agents,
+  sessions, persistent port; task text and activity moved under Advanced. Discovery
+  finds `com.anthropic.Claude.desktop` on Linux (case-insensitive file match). Verified
+  under Xvfb: Codex CLI, Claude Code, ChatGPT Desktop and Claude Desktop discovered.
+  Codex rewrites `~/.codex/config.toml` without comments, which turned the managed MCP
+  block into a bare table that Mission Planner refused forever; such a table (only the
+  keys Mission Planner writes plus a loopback `/mcp` url) is re-adopted now.
+- Verification: full Release tests **1849/1849**, no skipped; `MissionPlanner.slnx`
+  Release build **0 warnings / 0 errors**; six `build/porting/check-*.sh` audits and
+  `git diff --check` pass. Builds ran with `-m:1` because the machine was loaded.
+- Not claimed: hosted CI, packages, CodeQL for this branch; Windows/macOS GUI checks;
+  launching a real agent from the new rows (the launch code is unchanged).
+- Branch pushed; draft PR #46 targets `master`:
+  https://github.com/Rouniy/MissionPlanner10/pull/46 (docs commit `b34aef85b`).
+- Next executable step: watch CI on PR #46, then have the user select **MAVLink-CAN2** on
+  the DroneCAN page with the L431 attached; merge only when explicitly authorized.
+  PR #41 (`fix/mcp-session-lifecycle`) stays open; its toolbar change was re-applied here.
+
+## MCP MAV_CMD parsing — 2026-10-04
+
+- Branch `fix/mcp-mavlink-command` is based on `origin/master` at
+  `6da955d27cfd275e0d1632e4fb59f0516d38e1b2`. Implementation commit:
+  `eee8dfd2a68f552dd56ab369a1b0b17e7889c804`; precision follow-up:
+  `055146104df7ccab7bb3af4d210e05b651440d30`. PR #45 targets `master`:
+  https://github.com/Rouniy/MissionPlanner10/pull/45.
+- `ParseMavlinkCommandId` validates integer IDs in 0..65535 before passing a `ushort`
+  to `Enum.IsDefined`. It also accepts case-insensitive MAV_CMD names with or without
+  `MAV_CMD_`; `vehicle_command` advertises this format. Unknown, fractional,
+  out-of-range and malformed values produce an `ArgumentException` mentioning commandId.
+- Independent review found that decimal conversion could round very precise fractional
+  IDs into valid commands. The follow-up parses the original numeric text directly with
+  `ushort.TryParse`, preserving integral decimal/exponent forms while rejecting fractions
+  and underflow. The added regressions produced **12 failures** before the fix and pass
+  afterward.
+- .NET SDK **10.0.112**: normal test-project restore/build succeeded, including the native
+  DataFlash library and the application executable. **48/48** parser tests passed
+  (including 115/CONDITION_YAW, 201/DO_SET_ROI and every defined enum value).
+  Full suite with `DFLOG_REQUIRE_NATIVE=1`: **1835/1835**, zero skipped. Two existing
+  nullable warnings in `ParameterMetadataIndexTests.cs`. Checks used isolated XDG
+  directories; `git diff --check` passed.
+- Live qualification used the worktree build under Xvfb, an isolated HOME, and stock
+  **ArduCopter V4.0.3 (ffd08628)** over TCP. MCP set GUIDED, armed and took off to 10 m.
+  This rerun used the rebuilt precision fix after normal GPS/EKF initialization.
+  Numeric commandId **115** with `p1=90,p2=30,p3=1,p4=0` was acknowledged and yaw changed
+  **352.7° -> 89.9°**. `MAV_CMD_CONDITION_YAW` with `p1=180` reached **178.9°**.
+  MCP then landed; final telemetry showed **disarmed**, altitude 0.037 m. The test
+  session, application, SITL and Xvfb were stopped. DO_SET_ROI has parser coverage;
+  its vehicle effect was not live-tested. No hardware qualification or hermes-sim changes.
+- Hosted CI/package and CodeQL checks passed at `d91c5ea11b4cb694738d0189d47b1010dad45f06`,
+  before the precision follow-up. Checks for the follow-up remain pending.
+- The primary checkout remains on `master` at `6da955d27`, with its six original modified
+  files unchanged. Five unstaged checkout line-ending differences remain in the worktree:
+  `Drivers/inf2cat.bat`, `Drivers/uninstall_drivers.bat`, `ExtLibs/Mavlink/regenerate.bat`,
+  `ExtLibs/Mavlink/updatexmls.bat`, `graphs/updatexmls.bat`. They have no differences under
+  `git diff --ignore-space-at-eol` and were excluded from the commits.
+- Remaining implementation/live-test blockers: **none**. Next executable step:
+  `gh pr checks 45 --repo Rouniy/MissionPlanner10`; review the PR and its hosted checks.
+
+## Release 1.3.83.5 — native DataFlash parser — 2026-09-29
+
+- PR #34 merged on `origin/master` as `c644eb4964e8a89dfa1a81e1c371173044782472`.
+  The single-purpose `build: bump local build number` commit
+  `2c1c1f5fa9cf1345e4c7a3d6e8d99f82e53edc5a` changed only
+  `build/local-build-number.txt` from `4` to `5` and was pushed to `origin/master`.
+  Annotated tag `v1.3.83.5-2c1c1f5f` resolves to that exact commit.
+- CI/package run `36603198987` passed all four platform jobs; its Linux job ran the full
+  application suite with `DFLOG_REQUIRE_NATIVE=1`: **1787/1787 passed, zero skipped**.
+  CodeQL run `36603199091` passed. Tagged release run `36604494331` passed version
+  validation, Linux, Windows, both macOS builds and the publishing job.
+- The non-prerelease GitHub Release is
+  `https://github.com/Rouniy/MissionPlanner10/releases/tag/v1.3.83.5-2c1c1f5f`.
+  It has 19 assets: eight human packages (Linux TAR/DEB, Windows ZIP/MSI, and macOS
+  ZIP/DMG for both architectures), two additional Linux/Windows updater ZIPs, four
+  manifests, four signatures and `SHA256SUMS` (18 entries). No local application
+  build or GUI, simulator or hardware qualification was run during this release operation.
+- The primary checkout was left on local
+  `master` at `f65fc96e8` with its uncommitted `Porting/STATUS.md` addition and five
+  `.bat` line-ending differences preserved; it was not used to build or tag the release.
+  This release record is a post-tag documentation commit, so it does not change released
+  binaries. Remaining release blocker: none. Next executable step: reconcile those local
+  changes before updating that checkout, then qualify the published package on its target
+  platform.
+
+## Mavlink Mirror windows keep their own mirror — 2026-09-28
+
+- Branch `fix/mavlink-mirror-windows` is based on `origin/master` at `c15c19482` (#40). Mirror
+  windows wrote the legacy `MirrorStream`/`MirrorStreamWrite` properties, which address
+  `Mirrors[0]`, so a second window's Start replaced the first window's live stream. For TCP Host
+  the stream was attached before the 14550 bind, so a busy port then removed that shared entry
+  while the first window still looked active. Toggling write-back in any window, even a stopped
+  one, changed the first mirror or added an empty entry.
+- Each window now binds/opens first and then adds its own entry through
+  `MAVLinkInterface.AddMirror`, changes write-back only on that entry, and Stop removes only it.
+  `AddMirror`/`RemoveMirror` replace the list under a lock because the read loop enumerates
+  `Mirrors` without one.
+- The three new `SerialPassThroughViewModelTests` cases failed against `c15c19482` and pass after
+  the fix; a temporary variant also showed a stopped window's write-back toggle turning off the
+  running mirror's write-back before the fix. Mirror, listener and MCP tests: **115/115**. Full
+  application suite: **1702/1702**, zero skipped, .NET SDK 10.0.112, XDG paths redirected to a
+  temporary directory. Native-surface validation: **1623 rows, 0 blockers**.
+- Live check (2026-09-28, this build under Xvfb, stock ArduCopter 4.0.3 SITL over TCP, driven through
+  MCP): one Mavlink Mirror window on TCP Host - 14550 forwarded heartbeats and position to a
+  pymavlink client, write-back was switched on in the running window, and disconnect/reconnect
+  worked with the mirror running. Two mirror windows at once were not run live.
+- The CRLF-normalisation differences in five `.bat` files that appear on checkout are excluded.
+- Next executable step: review and merge the PR, then rebuild the local application.
 
 ## MCP / X-Office comparison and lifecycle fixes — 2026-09-20
 
@@ -68,8 +261,7 @@ Updated: **2026-09-20**.
   **1699/1699**, zero skipped, with .NET SDK 10.0.112 and normal package restore.
 - Verification ran in a detached temporary worktree with the exact patched C# source bytes,
   not over the running application's binaries. Full-suite application paths were redirected
-  to temporary XDG directories. TRX reports are under
-  `/tmp/missionplanner-pr40-review-KSDK7gJp/results-{before,after,full,full-fixed}/`.
+  to temporary XDG directories. TRX reports were retained outside the repository.
   Native-surface validation passes: **1623 rows, 0 blockers**. No GUI/simulator/vehicle
   session was launched; these are offline lifecycle and application tests, not flight evidence.
 - Pre-existing edits in the five driver/MAVLink `.bat` files and the separate uncommitted
@@ -188,9 +380,9 @@ Updated: **2026-09-20**.
   session's real Claude Code launch on the same layout (`gui/07-claude.png` of the earlier
   scratchpad) reported the server and its tools without analysing logs.
 - Hazard found and repaired: the previous acceptance ran the real Claude Code with
-  `XDG_DATA_HOME` pointing into a `/tmp` scratchpad; Claude's native installer re-installed
-  itself there and re-pointed `~/.local/bin/claude` at that temporary copy. The symlink was
-  restored to `~/.local/share/claude/versions/2.1.274`. For future acceptance use fake CLIs
+  `XDG_DATA_HOME` pointing into a temporary scratchpad; Claude's native installer re-installed
+  itself there and re-pointed the local launcher at that temporary copy. The symlink was
+  restored to the installed version 2.1.274. For future acceptance use fake CLIs
   on PATH, or keep `XDG_DATA_HOME` real / set `DISABLE_AUTOUPDATER=1` when a real Claude must
   run. Leftover Xvfb processes of the crashed session (old Mission Planner, terminal broker,
   interactive claude) were terminated.
@@ -316,7 +508,7 @@ Updated: **2026-09-20**.
 - Linux Xvfb GUI acceptance found three installed agents and launched a fake CLI through
   the actual terminal button. It initialized MCP, read the UI mission and appeared as
   an Allowed session. Opening the second port then Close all connections closed both
-  sockets. Screenshots retained outside the repository in `/tmp/mp-mcp-gui-check/`.
+  sockets. Screenshots were retained outside the repository.
   No real model, Claude delegation, aircraft operation or user client-config edit occurred.
 - Platform packages and CI are being produced for this branch. Actual provider login,
   model sessions and installed Windows/macOS client activation remain manual acceptance.
@@ -528,9 +720,9 @@ Updated: **2026-09-20**.
 ## Retained standalone Linux launcher — 2026-09-16
 
 - Corrected the launch handoff: `bin/Release/net10.0/MissionPlanner` is framework-dependent
-  and ordinary desktop launch cannot find the SDK installed only in `/tmp/mp-dotnet`.
+  and ordinary desktop launch cannot find an SDK installed only in a temporary directory.
   Published and **retained** the self-contained application at
-  `/home/alex/src/MissionPlanner10/out/linux-x64/MissionPlanner`. Launch this executable;
+  `out/linux-x64/MissionPlanner`. Launch this executable;
   keep the entire `out/linux-x64` directory together. No `DOTNET_ROOT` or system .NET
   installation is required. This supersedes the earlier temporary publish cleanup.
 - Git checkpoint: `port/avalonia-in-place` HEAD
@@ -541,8 +733,8 @@ Updated: **2026-09-20**.
   10.0.12 and MCP payloads. A child process with all `DOTNET_ROOT*` variables removed
   loaded `libhostfxr.so` and `libcoreclr.so` from the published directory and reached
   Avalonia X11 initialization. The smoke deliberately used no display and stopped at
-  `XOpenDisplay`; it verifies runtime resolution, not graphical acceptance. Logs:
-  `/tmp/mp-mcp-launch-publish.log` and `/tmp/mp-launch-smoke-g9qxc_pt/`.
+  `XOpenDisplay`; it verifies runtime resolution, not graphical acceptance. Logs were
+  retained outside the repository.
   Restored the normal solution package graph afterwards. No source changes or test-suite
   rerun; the 1608-pass product checkpoint below still applies.
 - Next executable step: run `./MissionPlanner` from `out/linux-x64` in the user's graphical
@@ -581,8 +773,8 @@ Updated: **2026-09-20**.
   No push or master merge occurred. Only the pre-existing unstaged `graphs/updatexmls.bat`
   line-ending change remains outside these commits. The reference source repository was
   not modified. The earlier PR #34 decision remains: defer its incomplete feature stack.
-- Local verification used SDK **10.0.401**, installed outside the repository at
-  `/tmp/mp-dotnet` because the initial PATH had no SDK:
+- Local verification used SDK **10.0.401**, installed outside the repository because
+  the initial PATH had no SDK:
   - `dotnet restore MissionPlanner.slnx`: pass.
   - `dotnet build MissionPlanner.slnx -c Release --no-restore`: **0 warnings, 0 errors**.
   - `dotnet test MissionPlannerTests/Avalonia/MissionPlanner.Tests/MissionPlanner.Tests.csproj
@@ -597,16 +789,15 @@ Updated: **2026-09-20**.
     the inherited self-replacement entry for `Program.cs`; the normal CI gate passes.
   - Self-contained publishes pass for **linux-x64, win-x64, osx-x64 and osx-arm64**,
     using `dotnet publish MissionPlanner.csproj -c Release -r <RID> --self-contained true
-    -m:1 -p:DebugType=none -p:BaseOutputPath=/tmp/mp-mcp-build/ -o /tmp/mp-mcp-publish-<RID>`.
+    -m:1 -p:DebugType=none -p:BaseOutputPath=<build-output>/ -o <publish-output>`.
     Verified apphost/main assembly, all MCP assemblies and ASP.NET Core/Kestrel runtime
     payloads, plus macOS SimpleBLE/VLC libraries/plugins. These are cross-publish/payload
     checks, not native installer/runtime acceptance.
-- Packaging initially exhausted the separate `/home` filesystem while copying Windows VLC
+- Packaging initially exhausted the home filesystem while copying Windows VLC
   files into test output. Removed only this task's temporary/generated outputs, restored
-  the normal solution graph and moved cross-RID build outputs to `/tmp`; final checks above
+  the normal solution graph and moved cross-RID build outputs to temporary storage; final checks above
   supersede that failed attempt. Publish payloads were verified and removed afterwards to
-  conserve disk. Logs remain in `/tmp/mp-mcp-verified-tests.log`,
-  `/tmp/mp-mcp-release-build.log`, `/tmp/mp-mcp-publish-summary.log` and per-RID publish logs.
+  conserve disk. Test, build and per-RID publish logs were retained outside the repository.
 - Remaining acceptance: no paid/model-backed external-agent run, SITL session, physical
   vehicle write or flight was performed. Native Windows/macOS execution, installer checks,
   Linux GUI smoke (no Xvfb here) and new CI/CodeQL runs remain unverified in this environment.
@@ -614,7 +805,7 @@ Updated: **2026-09-20**.
   freshness guarantees; legacy plugins do not share a universal transaction service.
   Those limits are explicit in the operating instructions. Flight stability is not certified.
 - Next executable step: in a graphical session run
-  `/tmp/mp-dotnet/dotnet run --project MissionPlanner.csproj -c Release`, open **AI**, attach a
+  `dotnet run --project MissionPlanner.csproj -c Release`, open **AI**, attach a
   representative flight log and launch an authenticated local Codex. Use the built-in
   **SIMULATION** workflow from [SITL-TESTING.md](../SITL-TESTING.md) to exercise discovery,
   refresh/download, proposal review, stale-value rejection and revocation before physical
@@ -686,8 +877,7 @@ Updated: **2026-09-20**.
   restores the original Mission Planner defaults for the general Jump action: the target prompt
   starts at waypoint **1**, and the resulting `DO_JUMP` row receives `P1=target`, `P2=5` instead
   of the incorrect `P1=0`, `P2=-1`. The existing explicit Jump Start action is unchanged.
-- The reference is the local current Mission Planner clone at
-  `/home/alex/SRC/MP/Oroginal/MissionPlanner`, specifically the Jump handlers in
+- The reference is the current upstream Mission Planner clone, specifically the Jump handlers in
   `GCSViews/FlightPlanner.cs`. The fix keeps the existing Avalonia dialog and undo boundary and
   only centralizes the two original defaults in `FlightPlannerViewModel`.
 - The new focused regression passes **1/1** and the complete `PlannerPortParityTests` group passes
@@ -770,7 +960,7 @@ Updated: **2026-09-20**.
   708/708 pinned port paths, and clean WinForms/project/binary/key audits).
 - The code and initial handoff commits were pushed to the newly published
   `origin/port/avalonia-in-place` branch. The first `make linux-deb` attempt encountered the known
-  logical/physical checkout alias (`/home/alex/src` versus `/home/alex/SRC`) in stale Release
+  logical/physical checkout alias in stale Release
   intermediates; a standard solution clean followed by the physical-path package script resolved
   it without source changes. The resulting package is
   `out/packages/missionplanner10_1.3.83.2-6264c722_amd64.deb`: 60,143,970 bytes, Debian version
@@ -1095,6 +1285,310 @@ Updated: **2026-09-20**.
   Next executable steps are physical simultaneous-input acceptance on UDP 14550/14551 and, before
   any later release, an intentional `make bump-local-build` from **2 to 3**.
 
+## Native dataflash log core: combined delivery on PR #34 (all four phases on feature/dflog-native-log-core)
+
+- Why one PR: the 2026-09-16 completeness audit above deferred #34 as a phase-1-only change
+  with no application consumer and asked for the complete feature, reviewed against the
+  then-current master, with managed/native parity, native-required tests and package
+  validation for all four RIDs. The stacked branches were propagated 1 -> 2 -> 3 -> 4 on master
+  through #38 (`f1180f672`) and merged onto the PR's head branch, so #34 now carries the whole
+  feature. The four phase sections below stay as the detailed record of each part.
+- Merge notes: two content conflicts, both where #37's TLOG dispatch met phase 3's native
+  DataFlash paths (`Services/DataFlashLog.cs`, `ViewModels/LogBrowseViewModel.cs`), resolved by
+  keeping the TLOG early return ahead of the DataFlash path in both. `DataFlashLog.ReadFields`
+  (phase 3, public) gained the same TLOG guard: a tlog must never reach `DFLogBuffer`, which is
+  the bug #37 fixed. Everything else merged automatically.
+- The audit's criteria, by name:
+  - Managed/native parity: `DflogNativeTests` (index and column parity, 23 cases),
+    `DflogNativeConsumerTests` (the converted consumers, 16 cases) and the new
+    `DflogNativeMcpParityTests` (4 cases) for the consumer master gained in #36/#37: every
+    DataFlash MCP tool - log schema, flight overview, record pages (two pages, since
+    pagination rides on the line numbers the index assigns), field series plain and instanced,
+    the PARM snapshot, the VIBE report and the ISBH/ISBD spectrum - runs through
+    `McpLogCatalog.Read` (the server's cached-reader path) on all four corpus logs, managed
+    scan then native scan, and the JSON must be byte-identical. Exact equality is the right bar
+    there: those tools read rows through the enumerator and the native scan replaces only the
+    index, so any difference is a defect. Every output is real (1.2-1.3k PARM entries per
+    log, VIBE sensors, batches on rover and copter-isbd), not a rejection both scanners repeat.
+  - Native-required tests: `DFLOG_REQUIRE_NATIVE=1` on the Linux test step turns every parity
+    skip into a failure, and the ABI-drift test fails a built-but-unloadable library.
+  - Package validation for all four RIDs: the linux-x64 `.deb` payload, the win-x64 ZIP/MSI
+    required files, and the Mach-O architecture assert for both macOS RIDs, in the CI and
+    release workflows and in both local package scripts.
+- Verified on the combined tree (Windows host, Rust toolchain present): `cargo fmt --check`,
+  `cargo clippy --workspace --all-targets` and `cargo test` (24+2) clean; Release solution
+  build 0 errors, 3 warnings (the pre-existing `PInvoke005` lines in
+  `ExtLibs/WinUSBNet/NativeMethods.txt`, AnyCPU on a Windows host, none from this work);
+  dflog and MCP test groups 111/111 with `DFLOG_REQUIRE_NATIVE=1`; full suite 1677/1689, the
+  12 being the 11 known environment-dependent failures plus `PluginRuntimeTests`, which
+  passes on rerun (13/13); all six migration/artifact gates pass on the branch content -
+  five in this checkout, and `check-port-source-resolution` (708/708) in a fresh worktree,
+  because this checkout's stale CRLF copies of LF blobs trip its byte-identity checks;
+  `git diff --check` clean apart from upstream's `MavlinkParse.cs` lines, byte-identical to
+  master. Not exercised here: `lipo` - the first CI run on the pushed branch is the proof for
+  the two macOS legs.
+- 2026-09-16 review of the combined diff (eight angles, every finding verified against the
+  code, one empirically). Fixed here: the log browser's rows view had been rebuilt in phase 3 by
+  zipping per-field numeric series from `ReadFields`, which emptied the grid and the CSV export
+  for any type with a text column (PARM/MSG/MODE showed 0 rows on the corpus against 1373 PARM
+  rows on master), formatted every cell as `0.###` (GPS.Lat -35.3632621 became -35.363), and
+  decoded the whole log for a 5000-row preview; it is the row-oriented enumerator again (one
+  record per row, the decoder's display strings, `Take(maxRows)`), pinned by
+  `Rows_view_keeps_text_columns_and_decoder_strings` with and without the library. The
+  per-instance `SaveCache` decision read the process-wide `LastScanNative` mirror, which a
+  concurrent construction (LogIndexService's parallel opens, the MCP catalog's worker) can
+  rewrite; it now reads a method-local. The FFI column offsets were 32-bit products (overflow
+  past ~45M rows of a 7-field query); they are 64-bit. The column fast path is gated on `binary`
+  like the scan, so a text .log no longer gets an extra native scan and a WARN per field. The
+  timed track reads GPS Lat/Lng through one `ReadFields` open instead of two `ReadField` opens.
+  Deferred, recorded here: every column-querying buffer still reads and scans the file natively
+  twice, once for the index and once for the column reader (since the 2026-09-28 review fixes
+  below, both reads go through the buffer's stream and the second is verified against the
+  first; keeping the construction reader for short-lived column consumers would remove it);
+  the column reader holds a private copy of the file for the buffer's lifetime (a
+  positioned-read block reader would bound it; see the 2026-09-28 review bullets below);
+  the ISBH/ISBD merge is written in
+  both FFT and spectrogram, mirroring master's duplicated enumeration loops. `ReadField` is now
+  `ReadFields` with one field: the private per-field core that duplicated the native block is
+  gone, and the managed fallback enumerates the log once for every requested field instead of
+  once per field, pinned against a direct decoder walk by
+  `Read_fields_fallback_matches_the_enumeration_path`. After the fixes:
+  dflog/MCP/log-browser/expression groups 139/139 with `DFLOG_REQUIRE_NATIVE=1`; full suite
+  1679/1691, the same 11 environment-dependent failures plus the flaky `PluginRuntimeTests` case.
+- 2026-09-28 review by obazna (changes requested, three threads). Two were one root cause: the
+  native side opened the log by path and memory-mapped it, independently of the managed
+  `basestream`. Fixed in two commits:
+  - The mapping: on Linux and macOS a log truncated while mapped raised SIGBUS, which no panic
+    barrier catches, so the app died before any fallback. dflog-core now reads logs into
+    memory, sampling the length at open into one exact, fallible allocation; memmap2 is gone
+    (crates 0.7.2).
+  - The path reopen: the index scan and the lazy column reader each reopened the path, so a
+    path replaced after the stream was opened gave the index or the columns another file's
+    records (the reviewer's reproduction: 20,885 plane.bin records for a 31,867-record
+    copter.bin stream). Both now read the buffer's own `basestream` into a caller-filled
+    native image (`dflog_image_new`, `dflog_open_image`, `dflog_file_index`; ABI 6, crates
+    0.8.0; `dflog_scan_file` and `dflog_index_free` removed) over the length sampled when the
+    index was built, and the column reader is kept only if its index matches the buffer's
+    record for record. A shrunk file or a moved record boundary refuses native columns.
+  - Trade-off against the mapping, measured on a 1 GB log (copter.bin concatenated, 26.3 M
+    records; Windows, Release, index cache off, medians of 10; mapped / stream read / managed
+    only): open 2,754 / 2,952 / 3,704 ms, first column query 565 / 731 / 1,434 ms, later
+    queries 54 / 54 / 1,337 ms. The open's temporary copy of the file is freed before the
+    managed index peaks, so memory at open does not grow. The cost is the column reader: once
+    a buffer has queried columns it holds a private copy of the file until disposed (held
+    after the first query, medians of 6 after forced collections: 1,869 / 2,836 / 1,402 MB),
+    where the mapped pages were file-backed and reclaimable. A positioned-read block reader
+    would bound that, but `Record` borrows payload slices from the whole image, so it is
+    follow-up work. The image allocation fails cleanly; the index vectors the scan builds
+    (about 9 bytes per record) still abort if memory runs out, which the FFI docs state.
+  - rust/ is now dflog's home: the userepo/MissionPlanner fork it began as a copy of is set
+    aside, so the vendoring notes in rust/README.md, rust/testdata/README.md and the dflog
+    notice are gone.
+  - Tests: 6 FFI tests (image round trip, zero length, unopened free, truncated images,
+    refused lengths, ABI 6); `DflogNativeTests` +6 (replaced path for the index and for the
+    columns, truncation after and before the column reader opened, moved boundaries, a short or
+    failing stream into `FromStream`; the two replaced-path ones return early on Windows,
+    which refuses to rename over an open file); `DflogBufferCacheTests` +1 (native columns
+    verified against a fresh and a cache-loaded managed index). Verified on Windows: `cargo fmt
+    --check` and `cargo clippy --workspace --all-targets` clean, Rust 26+2+6, full suite
+    1786/1786 with `DFLOG_REQUIRE_NATIVE=1`; the dflog tests, the Linux-only ones included,
+    also pass on Linux (WSL, 61/61).
+  - The third thread: ConfigFFT's native IMU collection filled the shared state type by
+    type, so when IMU succeeded natively and IMU2 then failed, the enumeration fallback added
+    IMU's samples a second time, doubling them and skewing the sample-rate estimate. The
+    native samples are now staged and copied in only once every present IMU type succeeded.
+    `DflogNativeConsumerTests` +1 (a synthetic log whose IMU2 declares GyrZ as `n` text, which
+    the native decoder refuses and the managed path parses: native-enabled and managed results
+    must be identical); on the old code its frequency table comes out doubled. Full suite
+    1787/1787 with `DFLOG_REQUIRE_NATIVE=1`.
+- Remaining blocker: none. Next executable step: push the combined branch to PR #34, rewrite
+  its title and description as the complete feature mapped to the three criteria above, and
+  read the four RID legs of the run, macOS architecture asserts included.
+
+## Native dataflash log core, phase 4: CI and packaging wiring (part 4 of the combined delivery above)
+
+- ci.yml: the Linux test step sets `DFLOG_REQUIRE_NATIVE=1` (the runner has a Rust toolchain,
+  so a missing or unloadable native library now fails the parity tests loudly instead of letting
+  every one of them skip); the Debian payload check asserts
+  `usr/lib/missionplanner10/libdflog_ffi.so`; the Windows ZIP/MSI required-files list gains
+  `dflog_ffi.dll`; the macOS job installs both Apple rustup targets (the arm64 runner
+  cross-compiles osx-x64) and asserts that `libdflog_ffi.dylib` in the publish output is a
+  Mach-O for the RID's CPU (`lipo -archs` = `x86_64` / `arm64`), not merely present.
+- release.yml: the package matrix installs the Apple rustup targets for the osx rows and runs
+  the same architecture assert right after the macOS publish. Linux and Windows release
+  payloads are covered by the same `package.sh` scripts as CI.
+- build/linux/package.sh and build/windows/package.sh assert the native library in the publish
+  payload next to their existing required-file checks, so every packaging path - CI, release,
+  and local - fails loudly rather than shipping a silently managed-parser-only app. A local
+  developer without a Rust toolchain still builds and runs the app normally; only packaging
+  demands the library.
+- Verified: both workflows parse (yaml), both package scripts pass `bash -n`, a local
+  `build/windows/package.sh zip` run exercises the new assert against a real publish, and the
+  full dflog test set passes locally with `DFLOG_REQUIRE_NATIVE=1` set (the failure direction
+  was fault-injected in phase 2).
+- 2026-09-16, folded into the combined branch: the macOS checks were upgraded from a size test
+  to the architecture assert above. PR #34's first live run (34002587483) had established the
+  osx-x64 dylib's architecture only by construction - the library can reach the publish output
+  only through the `--target x86_64-apple-darwin` path - and nothing in CI inspected the Mach-O
+  header. Now it does, in both workflows, per RID.
+- Remaining blocker: none. Next executable step: land the combined branch on PR #34 (the
+  maintainer's 2026-09-16 completeness audit deferred the phase-1-only PR and asked for the
+  full feature: managed/native parity, native-required tests, package validation for all
+  four RIDs), with the measured numbers from the phase-3 checkpoint in the description.
+
+## Native dataflash log core, phase 3: converted consumers (part 3 of the combined delivery above)
+
+- `DataFlashLog.ReadField` takes the native columnar path (value column plus the same time field
+  `DFItem.timems` resolves - TimeMS, then TimeUS, then T - with the managed enumeration loop as
+  in-place fallback); this feeds LogBrowse curves and the timed track. New `ReadFields` decodes
+  one type's fields in a single pass (the timed track's GPS Lat/Lng). The rows view was converted
+  onto it too and reverted in the combined-delivery review above - a text table cannot be built
+  from numeric series. Seconds are computed with the same two-step division as the managed path
+  - a single multiplication by the combined reciprocal differs by 1 ULP and the parity tests
+  catch it.
+- `DataFlashExpressionEvaluator.Evaluate` (the preset/expression graphing path) gained a
+  columnwise evaluation: per referenced type one native decode (fields + time field + instance
+  column when referenced), then the exact latest-value merge the enumeration performs, replayed
+  in global record order via native linenos - the order-sensitive lowpass/delta functions see the
+  same sequence. Any fetch failure falls back to the unchanged enumeration path.
+- `ConfigFFTViewModel` collects ISBH/ISBD batch samples (header/data state machine merged by line
+  number) and IMU/IMU2/IMU3 series natively; `Spectrogram` gained the equivalent ISBH/ISBD fast
+  path (ported from the upstream fork). Deliberately not converted: `OfflineMagFitService` and
+  `LogIndexService` (their `CancellationReadStream` wrapper hides the file path by design),
+  `ReadTrack`/KML export (wall-clock `item.time` semantics, cold path), `ReadOverlay`/messages/
+  parameters (string-valued).
+- Value semantics note, also in the code comments: the managed paths parse display strings
+  (floats rounded to 7 significant digits); the native paths carry raw decoded values. Parity
+  tests bound the difference (timestamps tick-exact; values within display rounding; FFT dB
+  magnitudes within 0.01 dB - rounding amplified through bin cancellation and the log scale).
+- 'M' (flight mode) fields are excluded from every native path (`DFLogBuffer.GetFieldFormatChar`
+  gate in the field reads and the evaluator): the managed decoder renders them as
+  resolver-dependent text, natively they are plain numbers, and a graph must show the same thing
+  with and without the library. Making both paths numeric (which would make MODE graphable) is a
+  deliberate behavior change to raise separately. The FFT/spectrogram batch paths also verify
+  that the numeric and array queries describe the same row count before indexing one by the
+  other, falling back to the enumeration loop otherwise.
+- Tests: `DflogNativeConsumerTests` (16 cases) - field reads, multi-field reads, five expression
+  shapes (single type, interleaved types, instanced reference, lowpass, delta), ISBH and IMU FFT,
+  spectrogram, the mode-field gate (engagement counter must not move), and an always-on
+  fallback-equality test for the multi-field read - each parity case run managed-vs-native with
+  the engagement counter (`DFLogBuffer.NativeColumnHits`) proving the fast path took effect.
+  Parity cases skip on hosts without the library; with the library removed, the full
+  dflog/dataflash/expression set still passes (fallback verified), as does a full-suite run with
+  `DFLOG_NATIVE=0`. Full suite 1568/1580; the failures are the known environment-dependent
+  set, unchanged from master.
+- Measured (medians of 3, warm file cache) over three logs: the 247.7 MiB concatenated SITL
+  corpus (6.37M records; 39k ATT / 196k IMU rows) and two real flight logs from Andrew
+  Tridgell's public archive (uav.tridgell.net/tmp): 00000145.BIN (139.8 MiB, 2024, 169k ATT
+  rows) and 4.0.9Stable_AltitudeRunaway.BIN (259.4 MiB, 2021, 906k IMU rows). Native vs
+  managed: open 1.5-2.4x (0.48 s -> 0.20 s on the 259 MiB log); ReadField (one curve, open +
+  decode) 1.4-2.0x; rows view (7 IMU fields) 7.6 s -> 0.67 s, 3.2 s -> 0.32 s, and 10.4 s ->
+  0.52 s (20x, the dense-IMU real log) - one pass and one open instead of seven, measured on the
+  `ReadFields`-based rows view that the combined-delivery review later reverted, so this number
+  no longer describes the shipped rows view (a bounded row enumerator); decode alone on
+  an open buffer 3-10x; expression evaluation 1.4-1.9x. Row counts cross-checked managed vs
+  native before timing on every log. Observation for a later change: every consumer re-opens the
+  DFLogBuffer per call, so the open dominates single-curve numbers - a shared buffer per loaded
+  log would compound these wins. Logs over 300 MiB currently cannot A/B at all: the managed
+  path's unguarded BinaryFormatter SaveCache (the phase-2 latent-bug note) throws on .NET 10.
+- Remaining blocker: none for this phase. Next executable step: phase 4 - rustup targets in
+  ci.yml/release.yml, `DFLOG_REQUIRE_NATIVE=1` in CI, and packaging assertions for the shipped
+  library.
+
+## Native dataflash log core, phase 2: P/Invoke bindings and DFLogBuffer fast paths (part 2 of the combined delivery above)
+
+- `ExtLibs/Utilities/DFLogNative.cs` (ported from the upstream fork, ABI v5): internal P/Invoke
+  surface over `dflog_ffi` - availability probe (`Available`, gated on the ABI version), whole-log
+  index scan (`TryScan`), and a `ColumnReader` for typed column queries, instance filtering,
+  int16[32] array columns and the GPS time base. Every entry point returns false instead of
+  throwing; the standard .NET native probing finds the library next to the apphost (no resolver
+  needed - unlike GDAL/VLC the library is bundled, not system-provided).
+- `DFLogBuffer` gained the native fast paths: `setlinecount` uses the native index scan for
+  path-backed binary logs (managed scanner unchanged as fallback), `TryGetColumnsNative` /
+  `TryGetArrayColumnNative` (with per-instance filtering and `GetInstanceFieldName`), and
+  `DFLog.GetTimeFromMs` for columnwise time axes. `UseNativeScan` precedence: explicit set >
+  `DFLOG_NATIVE` env > `dflog_native` setting > on by default; `DFLogNative.Available` gates the
+  actual calls, so hosts without the library keep exactly today's behavior. The native path also
+  side-steps the index cache (originally the `BinaryFormatter` cache with its latent .NET 10
+  throw; master has since replaced it via PR #25 and hardened it in `a4f24e82c` - see the merge
+  checkpoint below for how the two compose).
+- Consumers deliberately NOT converted yet (phase 3): `LogBrowseViewModel`, `ConfigFFTViewModel`,
+  `SpectrogramWindow`, `OfflineMagFitService` (the last needs its `CancellationReadStream` wrapper
+  reworked to expose a path before the native path can engage).
+- Tests: `DflogNativeTests` (23 cases) - native-vs-managed index parity over the four vendored
+  corpus logs AND over derived malformed variants (truncation, mid-record truncation, corrupt FMT
+  length byte, garbage prefix flipping the binary sniff - all line-for-line string equality),
+  typed-column/instance/array/time-base parity against the managed enumerator, truncated-tail
+  behavior, and clean failure for unknown fields/types. All return early on hosts without the
+  native library (NativeGdalMapTests pattern; verified both modes), with two guards against
+  silent degradation: a built-but-unloadable library (ABI drift) fails a dedicated test, and
+  `DFLOG_REQUIRE_NATIVE=1` turns the skip into a failure for hosts that must have the native
+  path (set it in CI once phase 4 installs the toolchain). Both failure modes verified by fault
+  injection (corrupted library file; library removed with the variable set). The corpus is copied from
+  `rust/testdata` at build time - no new committed binaries. Full suite 1554/1565 locally; the
+  failures are the known environment-dependent set plus one known-flaky UDP listener test,
+  unchanged from master. Project/binary audit gates pass.
+- 2026-08-31 merge checkpoint: merged `feature/dflog-native-log-core` (carrying master through
+  `1cbe17b87`, which includes the PR #25 index-cache replacement and its `a4f24e82c` hardening)
+  into this branch. One conflict, in `setlinecount`, resolved to compose both change sets: a
+  native-capable open skips the hardened cache in both directions (never loads, never saves - a
+  fresh native index is cheap, and the cache stays a managed-fallback optimization), the managed
+  fallback keeps the working cache, and the save/load calls use the new `CacheSourceIdentity`
+  signatures. `DflogBufferCacheTests.CacheScope` now pins `UseNativeScan = false` (assembly-wide
+  test parallelization is disabled, so the static seams are safe) and a new
+  `Native_capable_open_skips_the_cache_in_both_directions` test pins the composition with the
+  native library confirmed present. Full suite 1594/1605; the 11 failures are the known
+  environment-dependent set, unchanged from master.
+- Remaining blocker: none for this phase. Next executable step: phase 3 - convert
+  `LogBrowseViewModel` columnar reads, then the FFT/spectrogram ISBD path, re-measuring against a
+  large real log; phase 4 wires rustup targets into ci.yml/release.yml for the four RIDs.
+
+## Native dataflash log core, phase 1: vendored Rust workspace and build plumbing (part 1 of the combined delivery above)
+
+- Vendored the dflog parser core from the upstream fork (userepo/MissionPlanner
+  `rust/dflog-core` branch, crates 0.7.1) into the top-level `rust/` directory: `dflog-core`
+  (parser/index/columnar access, bug-for-bug compatible with `DFLogBuffer`/`BinaryLog`) and
+  `dflog-ffi` (`dflog_ffi` cdylib, C ABI v5, panic-safe boundary), plus the SITL corpus in
+  `rust/testdata` that the golden characterization tests pin exact values against. The CLI,
+  Python bindings and fuzz targets stay upstream; parser changes land there first and are
+  re-vendored. `cargo test` (24+2), `cargo fmt --check` and `cargo clippy --workspace
+  --all-targets` are clean in this tree.
+- `MissionPlanner.csproj` builds the cdylib from source when `cargo` is on the PATH
+  (`BuildDflogNative` before `PrepareForBuild`, mirroring `FetchMacSimpleBle`): RID-mapped
+  `--target` triples for win-x64/linux-x64/osx-x64/osx-arm64, host-native build when no RID is
+  set, output under `obj/dflog/` so neither MSBuild nor manual cargo runs (`rust/target/` now
+  gitignored) can dirty the build-identity check. Without cargo the build prints one notice and
+  produces today's app unchanged - the managed parser remains the runtime fallback. The built
+  library is injected as `Content` before `AssignTargetPaths`, so it flows into output, publish,
+  and every package payload; verified end to end with a `win-x64` self-contained publish carrying
+  `dflog_ffi.dll` (191 KB, `strip = true` release profile for the lintian gate).
+- No binaries are checked in and no new project files exist: `check-project-artifacts.sh`,
+  `check-binary-artifacts.sh` and `check-native-surface.sh` all pass unchanged. Third-party
+  notice added as `LICENSES/dflog-NOTICE.txt` (memmap2 and the Rust standard library,
+  Apache-2.0; version-free filename since the vendored source re-syncs from upstream). Full C# suite: 1532/1544 locally, the failures being the known
+  environment-dependent set, unchanged from master.
+- 2026-09-05, first live CI run (PR #34): the `package-macos (osx-x64)` leg failed. The macOS
+  runners are Apple Silicon, so their preinstalled Rust carries only `aarch64-apple-darwin`, and
+  `BuildDflogNative` probed for cargo's presence but not for its ability to build the requested
+  target - so a cross-build to `x86_64-apple-darwin` reached cargo and died on `can't find crate
+  for core` (MSB3073), failing the application build. The other three legs passed because each
+  one's triple is its runner's native target. Two fixes: the macOS job now installs both Apple
+  targets (the step phase 4 already carried, pulled forward byte-identically so the stack merge
+  stays a no-op), and the skip condition is now target-aware, since a toolchain that cannot build
+  for the requested RID is the same situation as no toolchain at all - the documented graceful
+  degradation had a hole that also hit any Apple Silicon developer publishing `osx-x64` locally.
+  The target probe reads `rustup target list --installed` from `rust/` so the toolchain file picks
+  the same toolchain cargo will use; it matches by substring and treats an unreadable list as
+  "attempt the build", so an unexpected reading fails loudly through cargo instead of silently
+  skipping the native library. All three paths verified locally: an uninstalled target
+  (`osx-x64` on this Windows host) prints the notice and exits 0, an installed target
+  (`win-x64`) still builds the cdylib, and a host-native build with no RID is unchanged.
+- Remaining blocker: none for this phase. Next executable step: phase 2 - port `DfLogNative`
+  P/Invoke bindings into `ExtLibs/Utilities` on the `NativeGdalApi` availability pattern, add the
+  `DFLogBuffer` native fast paths, and cover them with synthesized-log parity tests that skip
+  when the native library is absent. The remaining CI wiring for the four RIDs (the
+  `DFLOG_REQUIRE_NATIVE` test gate and the packaging payload assertions) is phase 4.
+
 ## NV4 parameter-catalog synchronization and Debian handoff
 
 - The Hermes source checkpoint is clean GTU `master == origin/master`
@@ -1119,7 +1613,7 @@ Updated: **2026-09-20**.
   check could not be repeated because the pinned `MissionPlanner-Avalonia` worktree is no longer
   present locally, while its committed digest check passes.
 - The first earlier `make linux-deb` attempt encountered the known local logical/physical checkout
-  alias (`/home/alex/src` versus `/home/alex/SRC`) in stale MSBuild intermediates. A standard Release
+  alias in stale MSBuild intermediates. A standard Release
   clean followed by the physical-path package script resolved it without source changes. The final
   clean-tree package is
   `out/packages/missionplanner10_1.3.83.1-69886aea_amd64.deb`: 60,129,156 bytes, Debian version
@@ -1762,8 +2256,8 @@ Updated: **2026-09-20**.
 
 ## GTU synchronization checkpoint
 
-- NV modem behavior was most recently compared with clean
-  `/home/alex/src/AgroSky/GTU` `master == origin/master` at `3eebb35d6d35be5b5fb4c1a753017baff107b082`.
+- NV modem behavior was most recently compared with a clean GTU checkout,
+  `master == origin/master` at `3eebb35d6d35be5b5fb4c1a753017baff107b082`.
   Earlier checkpoints remain represented: `77af510a` keeps key targeting independent of
   `DIVERSITY` and supplies **Revert selected**; `f196ea689` supplies unlocked-channel RSSI
   semantics; and changes through `d74f4308` supply acquisition presets, frame validation, typed

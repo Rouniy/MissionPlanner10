@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,7 +18,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DroneCAN;
 using MissionPlanner;
+using MissionPlanner.ArduPilot;
 using MissionPlanner.Comms;
+using MissionPlanner.Services;
 using MissionPlanner.Utilities;
 
 namespace MissionPlanner.ViewModels.GCSViews.ConfigurationView;
@@ -35,10 +39,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private readonly Func<DroneCAN.DroneCAN> _canFactory;
   private readonly bool _subscribedToAppState;
   private DroneCAN.DroneCAN? _can;
-  private CommsInjection? _port;
+  private MavlinkCanTransport? _transport;
+  private readonly ConcurrentDictionary<byte, DateTime> _nodeInfoRequests = new();
   private ICommsSerial? _directPort;
   private IDroneCanMulticastSession? _multicastSession;
-  private MAVLinkInterface? _subscribedLink;
   private DroneCanSessionTarget? _observedTarget;
   private DroneCanSessionTarget? _sessionTarget;
   private CancellationTokenSource? _operationCancellation;
@@ -48,7 +52,9 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private long _targetRevision;
   private long _nodeRevision;
   private byte _busInUse;
-  private int _subId = -1;
+  private int? _autopilotNodeId;
+  private (byte Id, string Name)? _firmwareOptionsFor;
+  private static readonly HttpClient _firmwareHttp = CreateFirmwareHttp();
   private bool _disposed;
 
   public ConfigDroneCanViewModel()
@@ -87,6 +93,9 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   public ObservableCollection<DroneCanNode> Nodes { get; } = new();
 
   public ObservableCollection<DroneCanParam> NodeParams { get; } = new();
+
+  /// <summary>Firmware builds found for the selected node by <see cref="CheckFirmwareUpdatesAsync"/>.</summary>
+  public ObservableCollection<DroneCanFirmwareOption> FirmwareOptions { get; } = new();
 
   private readonly List<DroneCanParam> _allNodeParams = new();
 
@@ -137,6 +146,12 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   [ObservableProperty]
   private string _nodeStatus = "Select a node, then Get Parameters / Restart / Update Firmware.";
+
+  [ObservableProperty]
+  private DroneCanFirmwareOption? _selectedFirmwareOption;
+
+  [ObservableProperty]
+  private string _firmwareCheckStatus = "";
 
   [ObservableProperty]
   private bool _isBusy;
@@ -591,9 +606,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     _targetInvalidated = false;
     long revision = Interlocked.Increment(ref _targetRevision);
     IsConnected = true;
-    StartMavlinkCAN(target, bus, revision);
-    Status = $"Starting MAVLink CAN{bus} for "
-        + $"{target.SystemId}:{target.ComponentId} on the selected modem…";
+    if (StartMavlinkCAN(target, bus, revision)) {
+      Status = $"Starting MAVLink CAN{bus} for "
+          + $"{target.SystemId}:{target.ComponentId} on the selected modem…";
+    }
   }
 
   [RelayCommand]
@@ -1132,6 +1148,143 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       return;
     }
 
+    try {
+      await FlashFirmwareAsync(operation, firmwarePath);
+    } finally {
+      CompleteOperation(operation);
+    }
+  }
+
+  private static HttpClient CreateFirmwareHttp() {
+    var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+    try {
+      client.DefaultRequestHeaders.UserAgent.ParseAdd("MissionPlanner10");
+    } catch {
+    }
+    return client;
+  }
+
+  /// <summary>
+  /// Looks up AP_Periph builds for the selected node in the ArduPilot manifest (and the CubePilot
+  /// server for its boards) and fills <see cref="FirmwareOptions"/>. Returns true when at least one
+  /// build is available; <see cref="FirmwareCheckStatus"/> explains the outcome either way.
+  /// </summary>
+  public async Task<bool> CheckFirmwareUpdatesAsync() {
+    DroneCanOperation? operation = TryBeginNodeOperation();
+    if (operation == null) {
+      return false;
+    }
+
+    DroneCanNode? node = SelectedNode;
+    FirmwareOptions.Clear();
+    SelectedFirmwareOption = null;
+    _firmwareOptionsFor = null;
+    if (node == null || node.Name == "?" || node.Name.Length == 0) {
+      FirmwareCheckStatus = NodeStatus =
+          "The node has not reported its name yet; wait for node info before checking firmware.";
+      CompleteOperation(operation);
+      return false;
+    }
+
+    string name = node.Name;
+    uint vcs = node.SoftwareVcsCommit;
+    string running = $"{node.SoftwareVersion.Split('.').Take(2).Aggregate((a, b) => a + "." + b)}"
+        + (vcs != 0 ? $" ({vcs:X8})" : "");
+    NodeStatus = $"Checking firmware for node {node.Id} {name}…";
+    try {
+      var options = await Task.Run(() => {
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        APFirmware.GetList();
+        var found = DroneCanFirmwareCatalog.Match(APFirmware.Manifest?.Firmware, name, vcs);
+        if (!double.TryParse(node.HardwareVersion, NumberStyles.Float, CultureInfo.InvariantCulture,
+                out double hardware)) {
+          hardware = 0;
+        }
+        foreach (bool beta in new[] { false, true }) {
+          string vendor = operation.Can.LookForUpdate(name, hardware, beta);
+          if (!string.IsNullOrEmpty(vendor) && Uri.TryCreate(vendor, UriKind.Absolute, out var url)) {
+            found.Add(new DroneCanFirmwareOption(beta ? "beta" : "stable", "vendor build", "", url, null, url.Host));
+          }
+        }
+        return found;
+      }, operation.Cancellation.Token);
+      await DroneCanFirmwareCatalog.FillPublishedDatesAsync(_firmwareHttp, options, operation.Cancellation.Token);
+      if (!IsOperationCurrent(operation)) {
+        return false;
+      }
+      foreach (var option in options) {
+        FirmwareOptions.Add(option);
+      }
+      SelectedFirmwareOption = options.FirstOrDefault(option => !option.Installed) ?? options.FirstOrDefault();
+      _firmwareOptionsFor = (node.Id, name);
+      string platform = DroneCanFirmwareCatalog.PlatformOf(name) ?? name;
+      FirmwareCheckStatus = options.Count == 0
+          ? $"No firmware for {platform} in the ArduPilot manifest. Node {node.Id} runs {running}; "
+            + "use Update Firmware… with a file from the vendor."
+          : $"Node {node.Id} {name} (hardware {node.HardwareVersion}) runs {running}. "
+            + $"{options.Count} build(s) available for {platform}"
+            + (options.Any(option => option.Installed) ? "; one matches the running commit." : ".");
+      NodeStatus = FirmwareCheckStatus;
+      return options.Count != 0;
+    } catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested) {
+      return false;
+    } catch (Exception ex) {
+      if (IsOperationCurrent(operation)) {
+        FirmwareCheckStatus = NodeStatus = "Firmware check failed: " + ex.Message;
+      }
+      return false;
+    } finally {
+      CompleteOperation(operation);
+    }
+  }
+
+  /// <summary>Downloads the chosen build and sends it to the node the options were built for.</summary>
+  public async Task InstallFirmwareOptionAsync(DroneCanFirmwareOption option) {
+    DroneCanOperation? operation = TryBeginNodeOperation();
+    if (operation == null) {
+      return;
+    }
+
+    DroneCanNode? node = SelectedNode;
+    if (_firmwareOptionsFor is not { } built || node == null || built.Id != node.Id || built.Name != node.Name
+        || !FirmwareOptions.Contains(option)) {
+      NodeStatus = "The firmware list belongs to another node; run Check for Updates again.";
+      CompleteOperation(operation);
+      return;
+    }
+
+    string directory = Path.Combine(Path.GetTempPath(), "missionplanner-dronecan-firmware");
+    string? image = null;
+    try {
+      NodeStatus = $"Downloading {option.Channel} {option.Version} from {option.Source}…";
+      var progress = new Progress<double>(percent => {
+        if (IsOperationCurrent(operation)) {
+          NodeStatus = $"Downloading {option.Channel} {option.Version}: {percent:0}%";
+        }
+      });
+      image = await DroneCanFirmwareCatalog.DownloadAsync(
+          _firmwareHttp, option, directory, progress, operation.Cancellation.Token);
+      if (!IsOperationCurrent(operation)) {
+        return;
+      }
+      await FlashFirmwareAsync(operation, image);
+    } catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested) {
+    } catch (Exception ex) {
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = "Firmware download failed: " + ex.Message;
+      }
+    } finally {
+      if (image != null) {
+        try {
+          File.Delete(image);
+        } catch {
+        }
+      }
+      CompleteOperation(operation);
+    }
+  }
+
+  private async Task FlashFirmwareAsync(DroneCanOperation operation, string firmwarePath) {
     DroneCAN.DroneCAN.FileSendProgressArgs progress = (n, f, p) => {
       if (IsOperationCurrent(operation)) {
         Dispatcher.UIThread.Post(() => {
@@ -1191,99 +1344,90 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
         } catch {
         }
       }
-      CompleteOperation(operation);
     }
   }
 
-  private void StartMavlinkCAN(
+  private bool StartMavlinkCAN(
       DroneCanSessionTarget target, byte bus, long revision) {
     _busInUse = bus;
     _mavlinkCanRun = true;
-    MAVLinkInterface link = target.Link;
-
-    _ = Task.Run(async () => {
-      await Task.Delay(1000).ConfigureAwait(false);
-      while (IsSessionCurrent(target, revision)) {
-        try {
-          link.doCommand(target.SystemId, target.ComponentId,
-              MAVLink.MAV_CMD.CAN_FORWARD, bus, 0, 0, 0, 0, 0, 0, false);
-        } catch {
-        }
-
-        if (IsSessionCurrent(target, revision)) {
-          await Task.Delay(1000).ConfigureAwait(false);
-        }
-      }
-    });
-
-    _port = new CommsInjection();
     _can = CreateCanProtocol();
-
+    _autopilotNodeId = AutopilotNodeId(target, bus);
     var can = _can;
-    var port = _port;
 
-    can.FrameReceived += (frame, payload) => {
-      if (!IsCanSessionCurrent(can, target, revision)) {
-        return;
-      }
-      try {
-        if (payload.packet_data.Length > 8) {
-          link.sendPacket(new MAVLink.mavlink_canfd_frame_t(
-                  BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
-                  target.SystemId, target.ComponentId, (byte)(bus - 1),
-                  (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length), payload.packet_data),
-              target.SystemId, target.ComponentId);
-        } else {
-          link.sendPacket(new MAVLink.mavlink_can_frame_t(
-                  BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
-                  target.SystemId, target.ComponentId, (byte)(bus - 1),
-                  (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length), payload.packet_data),
-              target.SystemId, target.ComponentId);
-        }
-      } catch {
-      }
-    };
-
-    port.WriteCallback += (_, bytes) => {
-      if (!IsCanSessionCurrent(can, target, revision)) {
-        return;
-      }
-      var lines = Encoding.ASCII.GetString(bytes.ToArray())
-          .Split(new[] { '\r' }, StringSplitOptions.RemoveEmptyEntries);
-      foreach (var line in lines) {
-        can.ReadMessageSLCAN(line);
-      }
-    };
-
-    _subscribedLink = link;
-    _subId = link.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.CAN_FRAME, m => {
-      if (!IsCanSessionCurrent(can, target, revision)) {
-        return false;
-      }
-      if (m.msgid == (uint)MAVLink.MAVLINK_MSG_ID.CAN_FRAME) {
-        var pkt = (MAVLink.mavlink_can_frame_t)m.data;
-        var cf = new DroneCAN.CANFrame(BitConverter.GetBytes(pkt.id));
-        var payld = new DroneCAN.CANPayload(pkt.data);
-        var ans = string.Format("{0}{1}{2}{3}\r", 'T', cf.ToHex(), pkt.len.ToString("X"),
-            payld.ToHex(DroneCAN.DroneCAN.dlcToDataLength(pkt.len)));
-        port.AppendBuffer(Encoding.ASCII.GetBytes(ans));
-      } else if (m.msgid == (uint)MAVLink.MAVLINK_MSG_ID.CANFD_FRAME) {
-        var pkt = (MAVLink.mavlink_canfd_frame_t)m.data;
-        var cf = new DroneCAN.CANFrame(BitConverter.GetBytes(pkt.id));
-        var payld = new DroneCAN.CANPayload(pkt.data);
-        var ans = string.Format("{0}{1}{2}{3}\r", 'B', cf.ToHex(), pkt.len.ToString("X"),
-            payld.ToHex(DroneCAN.DroneCAN.dlcToDataLength(pkt.len)));
-        port.AppendBuffer(Encoding.ASCII.GetBytes(ans));
-      }
-
-      return true;
-    }, target.SystemId, target.ComponentId, true);
-
+    // One tunnel per link: the transport renews MAV_CMD_CAN_FORWARD, converts frames both ways and
+    // never echoes received frames back to the vehicle.
+    MavlinkCanTransport? transport = MavlinkCanTransport.Open(
+        target.Link, target.SystemId, target.ComponentId, bus,
+        () => IsCanSessionCurrent(can, target, revision), out string? conflict);
+    if (transport == null) {
+      _can = null;
+      Disconnect(conflict ?? "The MAVLink CAN tunnel is busy.");
+      return false;
+    }
+    _transport = transport;
+    ScheduleBusHint(can, target, revision, bus);
     StartCanProtocol(
-        can, port, target, revision,
+        can, transport.Port, target, revision,
         $"Listening for nodes on MAVLink CAN{bus} from "
             + $"{target.SystemId}:{target.ComponentId} on the selected modem…",
         openTransport: false);
+    return true;
+  }
+
+  /// <summary>
+  /// The autopilot forwards only the selected physical port. After a few seconds, tell the operator
+  /// when nothing but the autopilot's own node answered, which is what a device wired to the other
+  /// connector looks like.
+  /// </summary>
+  private void ScheduleBusHint(
+      DroneCAN.DroneCAN can, DroneCanSessionTarget target, long revision, byte bus) {
+    _ = Task.Run(async () => {
+      await Task.Delay(TimeSpan.FromSeconds(6)).ConfigureAwait(false);
+      PostForSession(can, target, revision, () => {
+        byte other = (byte)(bus == 1 ? 2 : 1);
+        int? autopilotNode = AutopilotNodeId(target, bus);
+        if (Nodes.Count == 0) {
+          Status = $"No DroneCAN traffic on MAVLink CAN{bus} yet. Check CAN_P{bus}_DRIVER and the "
+              + $"wiring, or try MAVLink-CAN{other}: the autopilot forwards only the selected port.";
+        } else if (autopilotNode != null && Nodes.All(node => node.Id == autopilotNode)) {
+          Status = $"Only the autopilot itself (node {autopilotNode}) is visible on MAVLink CAN{bus}. "
+              + $"A device wired to the other CAN connector appears only under MAVLink-CAN{other}.";
+        }
+      });
+    });
+  }
+
+  internal static int? AutopilotNodeId(DroneCanSessionTarget target, byte bus) {
+    try {
+      var param = target.Link.MAVlist[target.SystemId, target.ComponentId].param;
+      int driver = param.ContainsKey($"CAN_P{bus}_DRIVER") ? (int)param[$"CAN_P{bus}_DRIVER"].Value : 1;
+      string name = $"CAN_D{driver}_UC_NODE";
+      return param.ContainsKey(name) ? (int)param[name].Value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Asks a node that is still shown as "?" for its name and versions as soon as it announces itself,
+  /// like the native page does, instead of waiting for the stack's one-node-per-ten-seconds sweep.
+  /// </summary>
+  private void RequestNodeInfoIfUnknown(DroneCAN.DroneCAN can, byte node) {
+    if (node == can.SourceNode || can.NodeInfo.ContainsKey(node)) {
+      return;
+    }
+    DateTime now = DateTime.UtcNow;
+    DateTime last = _nodeInfoRequests.GetOrAdd(node, DateTime.MinValue);
+    if (now - last < TimeSpan.FromSeconds(2)) {
+      return;
+    }
+    _nodeInfoRequests[node] = now;
+    try {
+      can.WriteToStreamSLCAN(can.PackageMessageSLCAN(
+          node, 30, can.TransferID++, new DroneCAN.DroneCAN.uavcan_protocol_GetNodeInfo_req()));
+    } catch {
+    }
   }
 
   private void StartCanProtocol(
@@ -1294,6 +1438,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       string connectedStatus,
       bool openTransport) {
     can.NodeAdded += (id, msg) => {
+      // The stack reports its own outgoing NodeStatus as well; this application is not a bus node to configure.
+      if (id == can.SourceNode) {
+        return;
+      }
       PostForSession(can, target, revision, () => {
         if (Nodes.Any(n => n.Id == id)) {
           return;
@@ -1302,6 +1450,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
         Nodes.Add(new DroneCanNode {
           Id = id,
           Name = "?",
+          IsAutopilot = id == _autopilotNodeId,
           Health = HealthString(msg.health),
           Mode = ModeString(msg.mode),
           Uptime = TimeSpan.FromSeconds(msg.uptime_sec),
@@ -1311,6 +1460,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     can.MessageReceived += (frame, msg, transferID) => {
       if (msg is DroneCAN.DroneCAN.uavcan_protocol_NodeStatus ns) {
+        if (frame.SourceNode == can.SourceNode) {
+          return;
+        }
+        RequestNodeInfoIfUnknown(can, frame.SourceNode);
         PostForSession(can, target, revision, () => {
           UpsertNodeStatus(frame.SourceNode, ns);
         });
@@ -1321,6 +1474,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
             item.SoftwareVersion = gnires.software_version.major + "." + gnires.software_version.minor +
                                    "." + gnires.software_version.vcs_commit.ToString("X");
             item.SoftwareCrc = gnires.software_version.image_crc.ToString("X");
+            item.SoftwareVcsCommit = gnires.software_version.vcs_commit;
             item.HardwareVersion = gnires.hardware_version.major + "." + gnires.hardware_version.minor;
             item.HardwareUid = string.Join(" ",
                 gnires.hardware_version.unique_id.Select(b => b.ToString("X2")));
@@ -1397,6 +1551,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private DroneCAN.DroneCAN CreateCanProtocol() {
     DroneCAN.DroneCAN can = _canFactory();
     can.SourceNode = 127;
+    _autopilotNodeId = null;
     return can;
   }
 
@@ -1407,6 +1562,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       Nodes.Add(new DroneCanNode {
         Id = id,
         Name = "?",
+        IsAutopilot = id == _autopilotNodeId,
         Health = HealthString(status.health),
         Mode = ModeString(status.mode),
         Uptime = TimeSpan.FromSeconds(status.uptime_sec),
@@ -1470,25 +1626,21 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     CancelCurrentOperation();
 
     DroneCAN.DroneCAN? can = _can;
-    CommsInjection? port = _port;
+    MavlinkCanTransport? transport = _transport;
     ICommsSerial? directPort = _directPort;
     IDroneCanMulticastSession? multicastSession = _multicastSession;
-    MAVLinkInterface? subscribedLink = _subscribedLink;
-    int subscription = _subId;
     _can = null;
-    _port = null;
+    _transport = null;
     _directPort = null;
     _multicastSession = null;
-    _subscribedLink = null;
-    _subId = -1;
     _sessionTarget = null;
     _sessionRequiresVehicleTarget = false;
+    _nodeInfoRequests.Clear();
 
-    if (subscription != -1 && subscribedLink != null) {
-      try {
-        subscribedLink.UnSubscribeToPacketType(subscription);
-      } catch {
-      }
+    // Unsubscribes from CAN_FRAME and releases the forwarding lease before the stack stops.
+    try {
+      transport?.Dispose();
+    } catch {
     }
 
     // Stop UDP receive/send before stopping DroneCAN. This prevents its final virtual SLCAN close
@@ -1500,11 +1652,6 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     try {
       can?.Stop(ExitSlcanOnLeave);
-    } catch {
-    }
-
-    try {
-      port?.Close();
     } catch {
     }
 
@@ -1772,6 +1919,22 @@ public partial class DroneCanNode : ObservableObject {
 
   [ObservableProperty]
   private string _vendorSpecificCode = "";
+
+  /// <summary>Raw vcs_commit from GetNodeInfo, compared with manifest git hashes.</summary>
+  public uint SoftwareVcsCommit { get; set; }
+
+  /// <summary>True when this id is the autopilot's own DroneCAN node (CAN_Dx_UC_NODE) on the tunnelled bus.</summary>
+  [ObservableProperty]
+  private bool _isAutopilot;
+
+  /// <summary>Grid text: the autopilot is named even before (or without) a GetNodeInfo answer.</summary>
+  public string DisplayName => IsAutopilot
+      ? (Name == "?" ? "autopilot (no node info on this port)" : Name + " (autopilot)")
+      : Name;
+
+  partial void OnNameChanged(string value) => OnPropertyChanged(nameof(DisplayName));
+
+  partial void OnIsAutopilotChanged(bool value) => OnPropertyChanged(nameof(DisplayName));
 }
 
 public partial class DroneCanLog : ObservableObject {

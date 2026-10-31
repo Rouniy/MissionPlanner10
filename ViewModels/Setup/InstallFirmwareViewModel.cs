@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Ports;
+using System.Threading;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -13,6 +13,7 @@ using CommunityToolkit.Mvvm.Input;
 using MissionPlanner;
 using MissionPlanner.ArduPilot;
 using MissionPlanner.Services;
+using MissionPlanner.Utilities;
 using px4uploader;
 
 namespace MissionPlanner.ViewModels.Setup;
@@ -123,6 +124,49 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
     }
   }
 
+  /// <summary>Set by the view: shows the option list and returns the operator's choice, or null.</summary>
+  internal Func<InstallFirmwareViewModel, Task<AutopilotFirmwareOption?>>? ChooseFirmwareAsync { get; set; }
+
+  /// <summary>Builds found for the detected board and the chosen vehicle type.</summary>
+  public ObservableCollection<AutopilotFirmwareOption> FirmwareOptions { get; } = new();
+
+  [ObservableProperty]
+  private AutopilotFirmwareOption? _selectedFirmwareOption;
+
+  /// <summary>Header for the choice dialog: board, id and the firmware it runs now.</summary>
+  [ObservableProperty]
+  private string _boardLabel = "";
+
+  internal sealed record DetectedBoard(int BoardId, string? Name, string? Running, uint Commit, bool Connected) {
+    internal string Describe() {
+      string board = Name != null ? $"{Name} (board id {BoardId})" : $"board id {BoardId}";
+      return Connected
+          ? $"{board} runs {(string.IsNullOrWhiteSpace(Running) ? "an unknown firmware" : Running.Trim())}."
+          : $"{board} is waiting in its bootloader.";
+    }
+  }
+
+  /// <summary>Spelled out when the chosen vehicle type differs from the firmware the board runs.</summary>
+  internal static string VehicleChangeWarning(string? runningVersionString, string? vehicleType) {
+    string? running = AutopilotFirmwareCatalog.RunningFirmwareName(runningVersionString);
+    if (running == null || string.IsNullOrWhiteSpace(vehicleType)
+        || AutopilotFirmwareCatalog.RunningVehicleMatches(runningVersionString, vehicleType)) {
+      return "";
+    }
+    return $" The board runs {running}; installing {vehicleType} changes the vehicle type and resets its parameters to {vehicleType} defaults.";
+  }
+
+  private static readonly HttpClient _firmwareHttp = CreateFirmwareHttp();
+
+  private static HttpClient CreateFirmwareHttp() {
+    var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+    try {
+      client.DefaultRequestHeaders.UserAgent.ParseAdd("MissionPlanner10");
+    } catch {
+    }
+    return client;
+  }
+
   [RelayCommand(CanExecute = nameof(CanFlash))]
   private async Task FlashTile(FirmwareTile? tile) {
     if (tile == null) {
@@ -132,29 +176,63 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
     Busy = true;
     Progress = 0;
     Log = "";
+    FirmwareOptions.Clear();
+    SelectedFirmwareOption = null;
     var reltype = _releaseType;
-    string? tempFile = null;
     try {
-      var boardId = await Task.Run(DetectBoardId);
-      if (boardId == null) {
-        SetStatus("Could not detect a board. Plug the board in over USB and try again.");
+      DetectedBoard? board = await Task.Run(DetectBoard);
+      if (board == null) {
+        SetStatus("Could not identify the board. Connect to the autopilot with CONNECT, or plug the board in over USB and try again.");
         return;
       }
+      AppendLog(board.Describe());
 
-      AppendLog($"Detected board id {boardId}.");
-
-      var info = await Task.Run(() => SelectFirmware(tile.MavType, reltype, boardId.Value));
-      if (info?.Url == null) {
-        SetStatus($"No {reltype} {tile.DisplayName} firmware found for this board (id {boardId}).");
+      SetStatus("Fetching firmware manifest…");
+      var options = await Task.Run(() => {
+        APFirmware.GetList();
+        return AutopilotFirmwareCatalog.Match(APFirmware.Manifest?.Firmware, tile.MavType, board.BoardId, board.Name, board.Running);
+      });
+      if (options.Count == 0) {
+        SetStatus($"No {tile.DisplayName} firmware in the ArduPilot manifest for {board.Name ?? "this board"} (board id {board.BoardId}).");
         return;
       }
+      await AutopilotFirmwareCatalog.FillPublishedDatesAsync(_firmwareHttp, options, CancellationToken.None);
+      foreach (var option in options) {
+        FirmwareOptions.Add(option);
+      }
+      SelectedFirmwareOption = reltype == APFirmware.RELEASE_TYPES.BETA
+          ? options.FirstOrDefault(o => o.PreferredPlatform && o.Channel == "beta") ?? AutopilotFirmwareCatalog.Recommended(options)
+          : AutopilotFirmwareCatalog.Recommended(options);
+      BoardLabel = $"{board.Describe()} {options.Count} {tile.DisplayName} build(s) available"
+          + (options.Any(o => o.Installed) ? "; one is the firmware running now." : ".")
+          + VehicleChangeWarning(board.Running, options[0].VehicleType);
+      Status = BoardLabel;
 
-      tempFile = await DownloadFirmware(info.Url);
-      AppendLog($"Saved firmware to {tempFile}");
-      await Task.Run(() => UploadToBoard(tempFile));
+      AutopilotFirmwareOption? chosen = ChooseFirmwareAsync != null ? await ChooseFirmwareAsync(this) : SelectedFirmwareOption;
+      if (chosen == null) {
+        SetStatus("Firmware selection cancelled.");
+        return;
+      }
+      await InstallFirmwareOptionCoreAsync(chosen, board);
     } catch (Exception ex) {
       SetStatus("Flash failed: " + ex.Message);
       AppendLog(ex.ToString());
+    } finally {
+      Busy = false;
+    }
+  }
+
+  private bool CanFlash(FirmwareTile? tile) => !Busy;
+
+  private async Task InstallFirmwareOptionCoreAsync(AutopilotFirmwareOption option, DetectedBoard board) {
+    string? tempFile = null;
+    try {
+      SetStatus($"Downloading {option.VehicleType} {option.Version} ({option.Channel}) for {option.Platform}…");
+      var progress = new Progress<double>(SetProgress);
+      tempFile = await AutopilotFirmwareCatalog.DownloadAsync(_firmwareHttp, option,
+          Path.Combine(Path.GetTempPath(), "missionplanner-autopilot-firmware"), progress, CancellationToken.None);
+      AppendLog($"Downloaded {option.Url} to {tempFile}");
+      await Task.Run(() => UploadToBoard(tempFile, board.BoardId));
     } finally {
       if (tempFile != null && File.Exists(tempFile)) {
         try {
@@ -162,11 +240,8 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
         } catch {
         }
       }
-      Busy = false;
     }
   }
-
-  private bool CanFlash(FirmwareTile? tile) => !Busy;
 
   internal async Task FlashCustomFirmwareAsync(
       string path, LegacyFirmwareTarget target, string? portName = null) {
@@ -194,7 +269,7 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
       string path, LegacyFirmwareTarget target, string? portName) {
     switch (target) {
       case LegacyFirmwareTarget.Px4Bootloader:
-        UploadToBoard(path);
+        UploadToBoard(path, null);
         break;
       case LegacyFirmwareTarget.Stm32Dfu:
       case LegacyFirmwareTarget.Stm32DfuBinary:
@@ -231,11 +306,22 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
   [RelayCommand(CanExecute = nameof(NotBusy))]
   private async Task ForceBootloader() {
     Busy = true;
+    Log = "";
     try {
       await Task.Run(() => {
-        SetStatus("Rebooting board into the bootloader…");
-        AttemptRebootToBootloader();
-        SetStatus("Board should now be in the bootloader. Pick a firmware to flash.");
+        if (!EnterBootloader()) {
+          return;
+        }
+        var up = FindBootloader(null, TimeSpan.FromSeconds(20));
+        if (up == null) {
+          SetStatus("The board did not show up as a bootloader. Unplug it, plug it back in and try again.");
+          return;
+        }
+        try {
+          SetStatus($"Bootloader on {up.port.PortName}: board id {up.board_type}, bootloader rev {up.bl_rev}. Pick a firmware to flash.");
+        } finally {
+          up.close();
+        }
       });
     } finally {
       Busy = false;
@@ -264,67 +350,156 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
 
   private bool CanBootloaderUpdate() => !Busy && _comPort.BaseStream?.IsOpen == true;
 
-  private APFirmware.FirmwareInfo? SelectFirmware(string mavType, APFirmware.RELEASE_TYPES reltype, int boardId) {
-    if (APFirmware.Manifest?.Firmware == null) {
-      return null;
+  private bool LinkIsOpen => _comPort.BaseStream?.IsOpen == true;
+
+  /// <summary>
+  /// Identifies the board without rebooting it when a vehicle is connected: ArduPilot reports the
+  /// APJ board id in AUTOPILOT_VERSION and its hwdef name in the startup banner. Without a link,
+  /// a board already sitting in its bootloader is identified over the bootloader protocol.
+  /// </summary>
+  private DetectedBoard? DetectBoard() {
+    if (LinkIsOpen) {
+      SetStatus("Reading the board identity from the vehicle…");
+      var mav = _comPort.MAV;
+      int? boardId = AutopilotFirmwareCatalog.BoardIdFromBoardVersion(mav.cs.board_version);
+      if (boardId == null) {
+        try {
+          _comPort.getVersion();
+        } catch (Exception ex) {
+          AppendLog("AUTOPILOT_VERSION request failed: " + ex.Message);
+        }
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (boardId == null && DateTime.UtcNow < deadline) {
+          Thread.Sleep(100);
+          boardId = AutopilotFirmwareCatalog.BoardIdFromBoardVersion(mav.cs.board_version);
+        }
+      }
+      if (boardId != null) {
+        return new DetectedBoard(boardId.Value, AutopilotFirmwareCatalog.BoardNameFromSerialString(mav.SerialString),
+            mav.VersionString, AutopilotFirmwareCatalog.RunningCommit(mav.VersionString), true);
+      }
+      AppendLog("The vehicle did not report its board id; looking for a bootloader instead.");
     }
 
-    return APFirmware.Manifest.Firmware
-      .Where(a => a.MavType == mavType)
-      .Where(a => a.MavFirmwareVersionType == reltype.ToString())
-      .Where(a => a.Format == "apj")
-      .Where(a => a.BoardId == boardId || (boardId == 33 && a.BoardId == 9))
-      .OrderByDescending(a => a.MavFirmwareVersion)
-      .FirstOrDefault();
+    SetStatus("Looking for a board in bootloader mode…");
+    var up = FindBootloader(null, TimeSpan.FromSeconds(LinkIsOpen ? 2 : 6));
+    if (up == null) {
+      return null;
+    }
+    try {
+      return new DetectedBoard(up.board_type, null, null, 0, false);
+    } finally {
+      up.close();
+    }
   }
 
-  private int? DetectBoardId() {
-    AttemptRebootToBootloader();
+  /// <summary>
+  /// Asks the running firmware to restart into its bootloader: over the open MAVLink link when
+  /// connected, else over the last used serial port. Returns false when neither was possible.
+  /// </summary>
+  private bool EnterBootloader() {
+    if (LinkIsOpen) {
+      SetStatus("Rebooting the vehicle into its bootloader…");
+      bool accepted;
+      try {
+        accepted = _comPort.doReboot(true, true);
+      } catch (Exception ex) {
+        AppendLog("Reboot command failed: " + ex.Message);
+        accepted = false;
+      }
+      AppendLog(accepted ? "Reboot to bootloader acknowledged." : "The vehicle did not acknowledge the reboot command; trying anyway.");
+      // The USB device re-enumerates as "<board>-BL"; the link cannot survive that.
+      try {
+        AppState.Connections.Primary.MarkClosed();
+        _comPort.Close();
+      } catch (Exception ex) {
+        AppendLog("Closing the MAVLink link: " + ex.Message);
+      }
+      AppState.RaiseConnectionChanged();
+      return true;
+    }
 
-    var deadline = DateTime.Now.AddSeconds(20);
-    SetStatus("Scanning comports for the bootloader…");
+    string port = Settings.Instance.ComPort ?? "";
+    if (port.Length == 0 || port == "AUTO" || port == "TCP" || port == "UDP" || port.StartsWith("UDP", StringComparison.OrdinalIgnoreCase)
+        || port.StartsWith("TCP", StringComparison.OrdinalIgnoreCase) || port.StartsWith("WS", StringComparison.OrdinalIgnoreCase)) {
+      SetStatus("Not connected. Connect to the autopilot with CONNECT first, or plug the board in while it is in bootloader mode.");
+      return false;
+    }
+    SetStatus($"Looking for a heartbeat on {port}…");
+    try {
+      int baud = int.TryParse(Settings.Instance.BaudRate, out int b) && b > 0 ? b : 115200;
+      using var link = new MAVLinkInterface { BaseStream = new MissionPlanner.Comms.SerialPort(port, baud) };
+      link.BaseStream.Open();
+      link.giveComport = true;
+      bool accepted = link.doReboot(true, false);
+      AppendLog(accepted ? $"{port}: reboot to bootloader sent." : $"{port}: no vehicle answered.");
+      try {
+        link.BaseStream.Close();
+      } catch {
+      }
+      if (!accepted) {
+        SetStatus($"No vehicle answered on {port}. Connect with CONNECT first, or plug the board in while it is in bootloader mode.");
+      }
+      return accepted;
+    } catch (Exception ex) {
+      AppendLog($"{port}: {ex.Message}");
+      SetStatus($"Could not use {port}: {ex.Message}");
+      return false;
+    }
+  }
 
-    while (DateTime.Now < deadline) {
-      foreach (var port in SerialPort.GetPortNames()) {
-        if (ProbeStillRunning(port)) {
+  /// <summary>
+  /// Polls the serial ports until a bootloader answers; with an expected board id, bootloaders
+  /// of other boards are closed again. The returned uploader stays open for the caller.
+  /// </summary>
+  private Uploader? FindBootloader(int? expectedBoardId, TimeSpan timeout) {
+    var deadline = DateTime.UtcNow + timeout;
+    var reported = new HashSet<string>(StringComparer.Ordinal);
+    while (DateTime.UtcNow < deadline) {
+      foreach (string port in AutopilotFirmwareCatalog.OrderPortsForBootloaderScan(MissionPlanner.Comms.SerialPort.GetPortNames())) {
+        if (LinkIsOpen && _comPort.BaseStream is MissionPlanner.Comms.SerialPort live
+            && AutopilotFirmwareCatalog.ResolveDevice(live.PortName) == AutopilotFirmwareCatalog.ResolveDevice(port)) {
           continue;
         }
         Uploader up;
         try {
           up = new Uploader(port, 115200);
-        } catch {
+        } catch (Exception ex) {
+          if (reported.Add(port + "|open")) {
+            AppendLog($"{port}: {ex.Message}");
+          }
           continue;
         }
-
         try {
           up.identify();
-          AppendLog($"{port}: board_type={up.board_type} bl_rev={up.bl_rev}");
-          var id = up.board_type;
-          up.close();
-          return id;
-        } catch {
+          AppendLog($"{port}: bootloader rev {up.bl_rev}, board id {up.board_type}, flash {up.fw_maxsize} bytes");
+          if (expectedBoardId != null && !AutopilotFirmwareCatalog.BoardMatches(up.board_type, expectedBoardId.Value)) {
+            AppendLog($"{port}: board id {up.board_type} does not match the firmware's {expectedBoardId}; skipped.");
+            up.close();
+            continue;
+          }
+          return up;
+        } catch (Exception ex) {
+          if (reported.Add(port + "|identify")) {
+            AppendLog($"{port}: not a bootloader ({ex.Message})");
+          }
           try {
             up.close();
           } catch {
           }
         }
       }
-      System.Threading.Thread.Sleep(100);
+      Thread.Sleep(250);
     }
-
     return null;
   }
 
-  private async Task<string> DownloadFirmware(Uri url) {
-    SetStatus("Downloading firmware…");
-    var dest = Path.Combine(Path.GetTempPath(), "ap_install_" + Guid.NewGuid().ToString("N") + ".apj");
-    using var client = new HttpClient();
-    var bytes = await client.GetByteArrayAsync(url);
-    await File.WriteAllBytesAsync(dest, bytes);
-    return dest;
-  }
-
-  private void UploadToBoard(string filename) {
+  /// <summary>
+  /// Flashes an .apj: reboots a connected vehicle into its bootloader, waits for the bootloader
+  /// of the right board, skips the write when the board already holds the same image, else
+  /// erases, programs, verifies and restarts the board.
+  /// </summary>
+  private void UploadToBoard(string filename, int? detectedBoardId) {
     SetStatus("Reading firmware file…");
     px4uploader.Firmware fw;
     try {
@@ -333,189 +508,54 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
       SetStatus("Invalid firmware file: " + ex.Message);
       return;
     }
+    AppendLog($"Firmware image: board id {fw.board_id}, {fw.image_size} bytes"
+        + (string.IsNullOrEmpty(fw.ardupilot_git_hash) ? "" : $", git {fw.ardupilot_git_hash}"));
+    if (detectedBoardId != null && !AutopilotFirmwareCatalog.BoardMatches(fw.board_id, detectedBoardId.Value)) {
+      SetStatus($"This image is for board id {fw.board_id}, but the connected board is {detectedBoardId}. Nothing was written.");
+      return;
+    }
 
-    AppendLog($"Loaded firmware board_id={fw.board_id} rev={fw.board_revision}");
+    bool wasConnected = LinkIsOpen;
+    if (wasConnected && !EnterBootloader()) {
+      return;
+    }
 
-    AttemptRebootToBootloader();
+    SetStatus("Waiting for the bootloader…");
+    Uploader? found = FindBootloader(fw.board_id, TimeSpan.FromSeconds(wasConnected ? 40 : 20));
+    if (found == null) {
+      SetStatus(wasConnected
+          ? "The board did not come back as a bootloader. Unplug it, plug it back in and press the vehicle again within a few seconds."
+          : "No bootloader found. Connect to the autopilot with CONNECT first, or plug the board in and try again.");
+      return;
+    }
 
-    var deadline = DateTime.Now.AddSeconds(30);
-    SetStatus("Scanning comports for bootloader…");
-
-    while (DateTime.Now < deadline) {
-      var ports = SerialPort.GetPortNames();
-      Uploader? found = null;
-
-      foreach (var port in ports) {
-        if (ProbeStillRunning(port)) {
-          AppendLog($"{port}: reboot probe still holds this port - skipping for now");
-          continue;
-        }
-        Uploader up;
-        try {
-          up = new Uploader(port, 115200);
-        } catch (Exception ex) {
-          AppendLog($"{port}: {ex.Message}");
-          continue;
-        }
-
-        try {
-          up.identify();
-          AppendLog($"{port}: board_type={up.board_type} bl_rev={up.bl_rev} fw_maxsize={up.fw_maxsize}");
-
-          if (up.board_type != fw.board_id && !(up.board_type == 33 && fw.board_id == 9)) {
-            AppendLog($"{port}: board mismatch (detected {up.board_type}, fw {fw.board_id}) - skipping");
-            up.close();
-            continue;
-          }
-
-          found = up;
-          break;
-        } catch (Exception ex) {
-          AppendLog($"{port}: not a bootloader ({ex.Message})");
-          try {
-            up.close();
-          } catch {
-          }
-        }
-      }
-
-      if (found == null) {
-        System.Threading.Thread.Sleep(250);
-        continue;
-      }
-
-      SetStatus("Connecting…");
-      System.Threading.Thread.Sleep(500);
-
-      found.ProgressEvent += OnUploaderProgress;
-      found.LogEvent += OnUploaderLog;
-      found.ConfirmEvent += _ => true;
-
+    found.ProgressEvent += OnUploaderProgress;
+    found.LogEvent += OnUploaderLog;
+    // Same image on the board: report it instead of re-flashing.
+    found.ConfirmEvent += _ => false;
+    try {
+      SetStatus("Comparing with the firmware on the board…");
       try {
         found.currentChecksum(fw);
-        AppendLog("Firmware already on the board. No upload required.");
-        SetStatus("No upload required — firmware already present.");
-        try {
-          found.__reboot();
-        } catch {
-        }
+      } catch (Exception ex) when (ex.Message.Contains("Same Firmware", StringComparison.OrdinalIgnoreCase)) {
+        AppendLog("The board already holds exactly this image.");
+        SetStatus("The board already runs this exact firmware. Nothing was written; the board is restarting.");
+        found.__reboot();
         return;
-      } catch (IOException) {
-        SetStatus("Lost communication with the board.");
+      }
+
+      SetStatus("Uploading firmware…");
+      SetProgress(0);
+      found.upload(fw);
+      SetProgress(100);
+      SetStatus("Upload complete. The board is restarting; press CONNECT to reconnect.");
+    } catch (Exception ex) {
+      SetStatus("Upload failed: " + ex.Message);
+      AppendLog(ex.ToString());
+    } finally {
+      try {
         found.close();
-        return;
-      } catch (TimeoutException) {
-        SetStatus("Communication timeout with the board.");
-        found.close();
-        return;
       } catch {
-
-      }
-
-      try {
-        SetStatus("Uploading firmware…");
-        SetProgress(0);
-        found.upload(fw);
-        SetProgress(100);
-        SetStatus("Upload complete.");
-      } catch (Exception ex) {
-        SetStatus("ERROR: " + ex.Message);
-        AppendLog(ex.ToString());
-      } finally {
-        found.close();
-      }
-
-      return;
-    }
-
-    SetStatus("ERROR: No response from board.");
-  }
-
-  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<bool>>
-      _probeTasks = new();
-
-  private bool ProbeStillRunning(string port) =>
-      _probeTasks.TryGetValue(port, out var t) && !t.IsCompleted;
-
-  private void AttemptRebootToBootloader() {
-    var ports = SerialPort.GetPortNames();
-    var tasks = new List<Task<bool>>();
-
-    foreach (var port in ports) {
-      var task = Task.Run(() => {
-        try {
-          using var up = new Uploader(port, 115200);
-          up.identify();
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      _probeTasks[port] = task;
-      tasks.Add(task);
-    }
-
-    // Wait for every probe to finish (bounded). Any probe that outlives the wait stays
-    // registered in _probeTasks, and the bootloader scan skips its port until it completes.
-    try {
-      if (!Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(15))) {
-        AppendLog("Some serial probes are still busy; their ports are skipped until released.");
-      }
-    } catch {
-    }
-    if (tasks.Any(t => t.IsCompletedSuccessfully && t.Result)) {
-      return;
-    }
-
-    if (_comPort.BaseStream is SerialPort mavSerial) {
-      try {
-        // Do not reopen the MAVLink port while its probe still holds it.
-        if (_probeTasks.TryGetValue(mavSerial.PortName, out var probe) && !probe.IsCompleted) {
-          try {
-            if (!probe.Wait(TimeSpan.FromSeconds(10))) {
-              AppendLog($"{mavSerial.PortName}: reboot probe is still using the MAVLink port; " +
-                        "heartbeat reopen deferred.");
-              SetStatus("Waiting for the serial port to become available…");
-              return;
-            }
-          } catch {
-            return;
-          }
-        }
-        SetStatus("Looking for heartbeat…");
-        var heartbeatTask = Task.Run(() => {
-          try {
-            _comPort.BaseStream.Open();
-            _comPort.giveComport = true;
-            if (_comPort.getHeartBeat().Length == 0) {
-              throw new Exception("No heartbeat found");
-            }
-            _comPort.doReboot(true, false);
-            _comPort.Close();
-            return true;
-          } catch (Exception ex) {
-            AppendLog(ex.Message);
-            try {
-              _comPort.BaseStream.Close();
-            } catch {
-            }
-            return false;
-          } finally {
-            _comPort.giveComport = false;
-          }
-        });
-        // A timed-out heartbeat attempt remains registered, so the following bootloader scan
-        // cannot open the same port until the task has actually released it.
-        _probeTasks[mavSerial.PortName] = heartbeatTask;
-        if (heartbeatTask.Wait(TimeSpan.FromSeconds(5)) &&
-            heartbeatTask.GetAwaiter().GetResult()) {
-          SetStatus("Rebooting to bootloader…");
-        } else {
-          SetStatus("Please unplug the board and plug it back in.");
-        }
-      } catch (Exception ex) {
-        AppendLog(ex.Message);
-        SetStatus("Please unplug the board and plug it back in.");
       }
     }
   }

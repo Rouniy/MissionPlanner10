@@ -331,10 +331,13 @@ namespace DroneCAN
 
                             WriteToStreamSLCAN(slcan);
 
-                            // query all nodeinfo
-                            if (DateTime.Now.Second % 10 == 0 &&  NodeList.Count > 0)
+                            // query nodeinfo only where it is still unknown (never our own node: PackageMessageSLCAN
+                            // reports outgoing messages locally, so SourceNode is always present in NodeList). A node
+                            // that reboots drops out of NodeInfo below, so its new name/version is read again.
+                            var others = NodeList.Keys.Where(a => a != SourceNode && !NodeInfo.ContainsKey(a)).Select(a => (byte) a).ToArray();
+                            if (DateTime.Now.Second % 10 == 0 && others.Length > 0)
                             {
-                                slcan = PackageMessageSLCAN((byte) NodeList.Keys.ToArray()[nodeinfo % NodeList.Count], 30,
+                                slcan = PackageMessageSLCAN(others[nodeinfo % others.Length], 30,
                                     transferID++,
                                     new uavcan_protocol_GetNodeInfo_req());
 
@@ -365,11 +368,18 @@ namespace DroneCAN
             {
                 if (msg.GetType() == typeof(DroneCAN.uavcan_protocol_NodeStatus))
                 {
+                    var status = msg as DroneCAN.uavcan_protocol_NodeStatus;
                     if (!NodeList.ContainsKey(frame.SourceNode))
                     {
-                        NodeAdded?.Invoke(frame.SourceNode, msg as DroneCAN.uavcan_protocol_NodeStatus);
+                        NodeAdded?.Invoke(frame.SourceNode, status);
                     }
-                    NodeList[frame.SourceNode] = msg as DroneCAN.uavcan_protocol_NodeStatus;
+                    else if (NodeList.TryGetValue(frame.SourceNode, out var previous) && previous != null &&
+                             status.uptime_sec < previous.uptime_sec)
+                    {
+                        // uptime went backwards: the node rebooted (firmware update, restart), forget its stale info
+                        NodeInfo.TryRemove(frame.SourceNode, out _);
+                    }
+                    NodeList[frame.SourceNode] = status;
                 }               
                 else if (frame.IsServiceMsg && msg.GetType() == typeof(DroneCAN.uavcan_protocol_GetNodeInfo_res))
                 {
@@ -1701,7 +1711,7 @@ velocity_covariance: [1.8525, 0.0000, 0.0000, 0.0000, 1.8525, 0.0000, 0.0000, 0.
             }
         }
 
-        byte hextoint(char number)
+        static byte hextoint(char number)
         {
             if (number >= '0' && number <= '9') return (byte) (number - '0');
             else if (number >= 'a' && number <= 'f') return (byte) (number - 'a' + 0x0a);
@@ -1784,16 +1794,54 @@ velocity_covariance: [1.8525, 0.0000, 0.0000, 0.0000, 1.8525, 0.0000, 0.0000, 0.
         /// <param name="line">A Single CAN frame</param>
         public void ReadMessageSLCAN(string line)
         {
+            if (!ParseSLCAN(line, out var frame, out var packet_id, out var payload, out var restart))
+            {
+                if (restart > 0)
+                {
+                    Console.WriteLine("Bad SLCAN " + line);
+                    ReadMessageSLCAN(line.Substring(restart));
+                }
+                return;
+            }
+
+            //Console.WriteLine("RX " + line.Replace("\r", "\r\n"));
+
+            FrameReceived?.Invoke(frame, payload);
+
+            ProcessFrame(frame, packet_id, payload);
+        }
+
+        /// <summary>
+        /// Decode one SLCAN line into a frame and payload without processing or forwarding it.
+        /// Lets a transport see what this stack writes (for example to wrap it in MAVLink CAN_FRAME)
+        /// without feeding the frame back through <see cref="ReadMessageSLCAN"/>, which would both
+        /// re-process our own transmissions and forward every received frame a second time.
+        /// </summary>
+        public static bool TryParseSLCAN(string line, out CANFrame frame, out CANPayload payload)
+        {
+            return ParseSLCAN(line, out frame, out _, out payload, out _);
+        }
+
+        private static bool ParseSLCAN(string line, out CANFrame frame, out uint packet_id, out CANPayload payload, out int restart)
+        {
+            frame = null;
+            packet_id = 0;
+            payload = null;
+            restart = 0;
+
             int size_len = 1;
             int id_len;
-            var line_len = line.Length;
             bool fdcan = false;
 
-            if (line_len <= 4)
-                return;
+            if (line == null || line.Length <= 4)
+                return false;
 
             if (line[0] == '\a')
                 line = line.Replace("\a", "");
+
+            var line_len = line.Length;
+            if (line_len <= 4)
+                return false;
 
             if (line[0] == 'T') // 29 bit data frame
             {
@@ -1824,57 +1872,52 @@ velocity_covariance: [1.8525, 0.0000, 0.0000, 0.0000, 1.8525, 0.0000, 0.0000, 0.
             else if (line[0] == 'N')
             {
                 Console.WriteLine(line);
-                return;
-            }
-            else if (line[0] == 'Z')
-            {
-                return;
+                return false;
             }
             else
             {
-                return;
+                return false;
             }
 
-            if(line.Length < 1 + id_len + size_len)
-                return;
+            if (line.Length < 1 + id_len + size_len)
+                return false;
 
             //T12ABCDEF2AA55 : extended can_id 0x12ABCDEF, can_dlc 2, data 0xAA 0x55
-            var msgdata = line.Substring(1, id_len);// new string(line.Skip(1).Take(id_len).ToArray());
-            if (msgdata.Contains("T")) // bad packet
+            var msgdata = line.Substring(1, id_len);
+            if (msgdata.Contains("T")) // bad packet: two frames ran together, retry from the second one
             {
-                Console.WriteLine("Bad SLCAN " + line);
-                var idx= line.IndexOf("T", 1);
-                ReadMessageSLCAN(line.Substring(idx ));
-                return;
+                restart = line.IndexOf("T", 1);
+                return false;
             }
-            var packet_id = Convert.ToUInt32(msgdata, 16); // id
-            var packet_len = Convert.ToByte(line[1 + id_len]+"", 16); // dlc
-            packet_len = dlcToDataLength((byte)packet_len);
-            var with_timestamp = line_len > (1 + size_len + id_len + packet_len * 2);
+
+            uint id;
+            try
+            {
+                id = Convert.ToUInt32(msgdata, 16); // id
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+
+            var packet_len = Convert.ToByte(line[1 + id_len] + "", 16); // dlc
+            packet_len = dlcToDataLength((byte) packet_len);
 
             if (packet_len == 0)
-                return;
-
-            var frame = new CANFrame(BitConverter.GetBytes(packet_id), true, fdcan);
+                return false;
 
             var packet_data = line.Skip(1 + size_len + id_len).Take(packet_len * 2).NowNextBy2().Select(a =>
             {
                 return (byte) ((hextoint(a.Item1) << 4) + hextoint(a.Item2));
             }).ToArray();
 
-            if (packet_data == null || packet_data.Count() == 0)
-                return;
+            if (packet_data == null || packet_data.Length == 0)
+                return false;
 
-            //Console.WriteLine(ASCIIEncoding.ASCII.GetString( packet_data));
-            //Console.WriteLine("RX " + line.Replace("\r", "\r\n"));
-
-            //Console.WriteLine("RX " + line[0] + " " + msgdata + " " + line.Substring(2 + id_len,packet_len*2));
-
-            var payload = new CANPayload(packet_data);
-
-            FrameReceived?.Invoke(frame, payload);
-
-            ProcessFrame(frame, packet_id, payload);
+            packet_id = id;
+            frame = new CANFrame(BitConverter.GetBytes(id), true, fdcan);
+            payload = new CANPayload(packet_data);
+            return true;
         }
 
         public void ProcessFrame(CANFrame frame, uint packet_id, CANPayload payload)

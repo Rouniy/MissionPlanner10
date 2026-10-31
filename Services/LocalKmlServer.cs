@@ -33,7 +33,9 @@ internal sealed class LocalKmlServer : IDisposable {
   internal const int DefaultPort = 56781;
   private const int MaxHeaderBytes = 8192;
   private const int MaxResponseBytes = 8 * 1024 * 1024;
+  private const int MaxDrainBytes = 64 * 1024;
   private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
+  private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(1);
   private readonly object _lifecycle = new();
   private readonly Func<IReadOnlyList<LocalKmlVehicle>> _vehicleSource;
   private readonly int _preferredPort;
@@ -131,6 +133,8 @@ internal sealed class LocalKmlServer : IDisposable {
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
     } catch (IOException) {
     } catch (SocketException) {
+    } catch (ObjectDisposedException) {
+      // Dispose() closed the socket under a drain in progress.
     } finally {
       _activeClients.TryRemove(id, out _);
       client.Dispose();
@@ -152,6 +156,7 @@ internal sealed class LocalKmlServer : IDisposable {
       await WriteResponseAsync(stream, 431, "Request Header Fields Too Large", "text/plain",
           Encoding.UTF8.GetBytes("Request header is too large."), headOnly: false,
           requestStop.Token).ConfigureAwait(false);
+      await DrainRejectedRequestAsync(client.Client, requestStop.Token).ConfigureAwait(false);
       return;
     }
 
@@ -161,6 +166,7 @@ internal sealed class LocalKmlServer : IDisposable {
       await WriteResponseAsync(stream, 405, "Method Not Allowed", "text/plain",
           Encoding.UTF8.GetBytes("Only GET and HEAD are supported."), headOnly: false,
           requestStop.Token, "Allow: GET, HEAD\r\n").ConfigureAwait(false);
+      await DrainRejectedRequestAsync(client.Client, requestStop.Token).ConfigureAwait(false);
       return;
     }
     if (!Uri.TryCreate("http://127.0.0.1" + request[1], UriKind.Absolute, out Uri? target)) {
@@ -239,6 +245,29 @@ internal sealed class LocalKmlServer : IDisposable {
       }
     }
     return null;
+  }
+
+  // A request rejected before all of it was read leaves input in the receive buffer. Closing
+  // such a socket makes Windows send a reset, which can discard the response before the client
+  // reads it, so finish sending first and then read the leftover input for a bounded time.
+  private static async Task DrainRejectedRequestAsync(Socket socket, CancellationToken token) {
+    socket.Shutdown(SocketShutdown.Send);
+    using var drainStop = CancellationTokenSource.CreateLinkedTokenSource(token);
+    drainStop.CancelAfter(DrainTimeout);
+    byte[] buffer = new byte[4096];
+    int drained = 0;
+    try {
+      while (drained < MaxDrainBytes) {
+        int read = await socket.ReceiveAsync(buffer, SocketFlags.None, drainStop.Token)
+            .ConfigureAwait(false);
+        if (read == 0) {
+          return;
+        }
+        drained += read;
+      }
+    } catch (OperationCanceledException) {
+      // The client is still sending or keeps the connection open; close it anyway.
+    }
   }
 
   private static Task WriteNotFoundAsync(

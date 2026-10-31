@@ -98,6 +98,15 @@ public sealed class ElevationSourceTests {
         Assert.Equal(210, altitude.alt, 6);
       } finally {
         lock (GeoTiff.index) {
+          foreach (GeoTiff.geotiffdata item in GeoTiff.index.Where(item =>
+                       string.Equals(item.FileName, path, StringComparison.Ordinal))) {
+            // The first altitude query leaves the file open for later scanline reads; Windows
+            // refuses to delete the directory until that handle is closed.
+            lock (item) {
+              item.Tiff?.Dispose();
+              item.Tiff = null;
+            }
+          }
           GeoTiff.index.RemoveAll(item =>
               string.Equals(item.FileName, path, StringComparison.Ordinal));
         }

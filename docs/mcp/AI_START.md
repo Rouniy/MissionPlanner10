@@ -18,6 +18,14 @@ tools; the AI window is excluded from inspection.
    sends set_mode, arm/disarm, takeoff, guided_goto, rtl/land/loiter, mission_start,
    change_speed, servo/relay, motor_test, calibrate, save_parameters, reboot or any MAV_CMD.
    `propose_parameter_changes` still exists for batches the operator wants to review first.
+   DroneCAN peripherals (GPS, compass, airspeed, PWM nodes such as Matek L431 AP_Periph) hang
+   off the autopilot's CAN ports: `dronecan_nodes` (bus 1 or 2) lists them with ids, names and
+   uids and says when only the autopilot itself is visible (the device is on the other port);
+   `dronecan_read_parameters` and `dronecan_write_parameters` configure one node (verified,
+   saved to the node's flash, audited, disarmed only); `dronecan_node_command` saves, restarts or
+   erases. Node parameters are the node's own (CAN_NODE, OUTx_FUNCTION, GPS_TYPE…), separate from
+   the vehicle's CAN_Dx_* parameters read with `read_parameters`. Firmware for nodes is flashed
+   by the operator from the DroneCAN page (Check for Updates), not through MCP.
 3. Missions: `mission_draft_get`, `mission_command_schema`, `mission_draft_validate`,
    `mission_draft_replace` (one native Undo group), `mission_elevation_profile` and
    `terrain_elevation` for terrain-safe altitudes, then `mission_upload`; confirm with

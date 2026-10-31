@@ -39,7 +39,159 @@ namespace MissionPlanner.Utilities
 
         bool binary = false;
 
+        static bool? useNativeScan;
+
+        /// <summary>
+        /// Use the Rust log core (rust/crates/dflog-ffi) for binary logs when
+        /// the native library is present; the managed path remains the
+        /// fallback. Precedence: explicit set (tests, config UI) > the
+        /// DFLOG_NATIVE environment variable ("1"/"0") > the "dflog_native"
+        /// setting > ON by default (platforms without the library fall back
+        /// automatically via DFLogNative.Available).
+        /// </summary>
+        public static bool UseNativeScan
+        {
+            get
+            {
+                if (useNativeScan == null)
+                    useNativeScan = DefaultUseNativeScan();
+                return useNativeScan.Value;
+            }
+            set { useNativeScan = value; }
+        }
+
+        static bool DefaultUseNativeScan()
+        {
+            var env = Environment.GetEnvironmentVariable("DFLOG_NATIVE");
+            if (env == "1")
+                return true;
+            if (env == "0")
+                return false;
+
+            try
+            {
+                return Settings.Instance.GetBoolean("dflog_native", true);
+            }
+            catch
+            {
+                // no settings store (headless/embedded use); still safe -
+                // Available gates the actual native calls
+                return true;
+            }
+        }
+
+        /// <summary>Whether the last setlinecount used the native scanner.</summary>
+        internal static bool LastScanNative;
+
+        /// <summary>Successful native column queries, so tests can prove a
+        /// converted consumer actually took the fast path.</summary>
+        internal static long NativeColumnHits;
+
+        DFLogNative.ColumnReader nativeColumns;
+        bool nativeColumnsTried;
+
+        /// <summary>basestream's length when the index was built: the native
+        /// readers read exactly this much, whatever a writer did since</summary>
+        long _scanLength;
+
         object locker = new object();
+
+        /// <summary>
+        /// Typed fast path via the native dflog library: decode all
+        /// records of <paramref name="type"/> straight from the file into one
+        /// double column per field, bypassing the per-row string conversion.
+        /// Row order matches GetEnumeratorType(type); linenos are the same
+        /// line numbers DFItem.lineno reports. Returns false when the native
+        /// library is unavailable or the type/field cannot be decoded
+        /// numerically - callers must fall back to the enumerator path.
+        /// Note: values are the raw decoded values; the legacy string path
+        /// rounds floats to 7 significant digits, this path does not.
+        /// </summary>
+        public bool TryGetColumnsNative(string type, string[] fields, out long[] linenos, out double[][] columns)
+        {
+            return TryGetColumnsNative(type, fields, null, out linenos, out columns);
+        }
+
+        /// <summary>
+        /// <see cref="TryGetColumnsNative(string,string[],out long[],out double[][])"/>
+        /// limited to rows of one <paramref name="instance"/> value (the field
+        /// carrying the '#' unit id - the same column GetInstanceFieldName
+        /// reports). Returns false when the type has no instance field.
+        /// </summary>
+        public bool TryGetColumnsNative(string type, string[] fields, long? instance, out long[] linenos,
+            out double[][] columns)
+        {
+            linenos = null;
+            columns = null;
+
+            if (!binary || !UseNativeScan || string.IsNullOrEmpty(_filename))
+                return false;
+
+            lock (locker)
+            {
+                var reader = NativeColumnReader();
+                var ok = reader != null &&
+                         reader.TryGetColumns(type, fields, instance, out linenos, out columns);
+                if (ok)
+                    System.Threading.Interlocked.Increment(ref NativeColumnHits);
+                return ok;
+            }
+        }
+
+        /// <summary>
+        /// Typed fast path for `a` (int16[32]) array fields (ISBD batch
+        /// samples and friends): decode every record of
+        /// <paramref name="type"/> into one short[32] per row. Values are the
+        /// raw int16 samples exactly as BinaryLog.UnionArray carries them;
+        /// linenos are the same line numbers DFItem.lineno reports. Returns
+        /// false when the native library is unavailable or the field is not
+        /// an `a` array - callers must fall back to the enumerator path.
+        /// </summary>
+        public bool TryGetArrayColumnNative(string type, string field, out long[] linenos, out short[][] rows)
+        {
+            linenos = null;
+            rows = null;
+
+            if (!binary || !UseNativeScan || string.IsNullOrEmpty(_filename))
+                return false;
+
+            lock (locker)
+            {
+                var reader = NativeColumnReader();
+                var ok = reader != null &&
+                         reader.TryGetArrayColumn(type, field, out linenos, out rows);
+                if (ok)
+                    System.Threading.Interlocked.Increment(ref NativeColumnHits);
+                return ok;
+            }
+        }
+
+        /// <summary>
+        /// The native column reader, opened on first use from basestream -
+        /// not the path, which may name a different file by now - over the
+        /// length the index was built from, and kept only if its index
+        /// matches this buffer's record for record, so its line numbers mean
+        /// this buffer's rows. Null when native columns are unavailable; not
+        /// retried after a refusal. Once open it holds a private copy of the
+        /// log until the buffer is disposed. Call under locker.
+        /// </summary>
+        DFLogNative.ColumnReader NativeColumnReader()
+        {
+            if (!nativeColumnsTried)
+            {
+                nativeColumnsTried = true;
+                var reader = DFLogNative.ColumnReader.FromStream(basestream, _scanLength);
+                if (reader != null && !reader.IndexMatches(linestartoffset))
+                {
+                    reader.Dispose();
+                    reader = null;
+                }
+
+                nativeColumns = reader;
+            }
+
+            return nativeColumns;
+        }
 
         long indexcachelineno = -1;
         String currentindexcache = null;
@@ -95,9 +247,23 @@ namespace MissionPlanner.Utilities
 
         void setlinecount()
         {
+            // native-capable opens skip the index cache in both directions: a
+            // fresh native index is cheap, and never saving from the native
+            // path keeps the cache a pure managed-fallback optimization
+            var nativeCapable = binary && UseNativeScan &&
+                                !string.IsNullOrEmpty(_filename) && DFLogNative.Available;
+            LastScanNative = false;
+            // the static above is a test-observable mirror; another buffer
+            // constructed concurrently rewrites it, so this instance's own
+            // outcome decides whether it saves a cache
+            var scannedNative = false;
+            // sampled before the cache decision: a cache-loaded index needs
+            // it too, for the native column reader's length
+            _scanLength = basestream.Length;
+
             CacheSourceIdentity sourceIdentity;
             var hasSourceIdentity = TryGetSourceIdentity(out sourceIdentity);
-            var loadedFromCache = hasSourceIdentity && LoadCache(sourceIdentity);
+            var loadedFromCache = !nativeCapable && hasSourceIdentity && LoadCache(sourceIdentity);
             LastLoadFromCache = loadedFromCache;
             if (!loadedFromCache)
             {
@@ -106,24 +272,62 @@ namespace MissionPlanner.Utilities
                 var lineCount = 0L;
                 if (binary)
                 {
-                    long length = basestream.Length;
-                    while (basestream.Position < length)
+                    long length = _scanLength;
+
+                    long[] nativeOffsets = null;
+                    byte[] nativeTypes = null;
+                    if (nativeCapable)
                     {
-                        var ans = binlog.ReadMessageTypeOffset(basestream, length);
+                        // index basestream itself, so the index describes the
+                        // file the managed reads below see, not whatever the
+                        // path resolves to now; the image is freed on dispose,
+                        // before the lists below grow
+                        using (var reader = DFLogNative.ColumnReader.FromStream(basestream, length))
+                        {
+                            if (reader == null || !reader.TryGetIndex(out nativeOffsets, out nativeTypes))
+                                nativeOffsets = null;
+                        }
+                    }
 
-                        if (ans.MsgType == 0 && ans.Offset == 0)
-                            continue;
+                    if (nativeOffsets != null)
+                    {
+                        // the record count is known upfront - size the index once
+                        // instead of letting the list double its way there
+                        linestartoffset.Capacity = linestartoffset.Count + nativeOffsets.Length;
 
-                        byte type = ans.Item1;
-                        messageindex[type].Add(ans.Item2);
-                        messageindexline[type].Add(lineCount);
+                        for (int i = 0; i < nativeOffsets.Length; i++)
+                        {
+                            byte ntype = nativeTypes[i];
+                            messageindex[ntype].Add(nativeOffsets[i]);
+                            messageindexline[ntype].Add(lineCount);
 
-                        linestartoffset.Add(ans.Item2);
-                        lineCount++;
+                            linestartoffset.Add(nativeOffsets[i]);
+                            lineCount++;
+                        }
 
-                        if (lineCount % 1000000 == 0)
-                            Console.WriteLine("reading lines " + lineCount + " " +
-                                              ((basestream.Position / (double)length) * 100.0));
+                        LastScanNative = true;
+                        scannedNative = true;
+                    }
+                    else
+                    {
+                        while (basestream.Position < length)
+                        {
+                            var ans = binlog.ReadMessageTypeOffset(basestream, length);
+
+                            if (ans.MsgType == 0 && ans.Offset == 0)
+                                continue;
+
+                            byte type = ans.Item1;
+                            messageindex[type].Add(ans.Item2);
+                            messageindexline[type].Add(lineCount);
+
+                            linestartoffset.Add(ans.Item2);
+                            lineCount++;
+
+                            if (lineCount % 1000000 == 0)
+                                Console.WriteLine("reading lines " + lineCount + " " +
+                                                  ((basestream.Position / (double)length) * 100.0));
+                        }
                     }
 
                     _count = lineCount;
@@ -204,7 +408,7 @@ namespace MissionPlanner.Utilities
                     }
                 }
 
-                if (hasSourceIdentity)
+                if (!scannedNative && hasSourceIdentity)
                     SaveCache(sourceIdentity);
             }
 
@@ -865,6 +1069,8 @@ namespace MissionPlanner.Utilities
             basestream.Dispose();
             _count = 0;
             linestartoffset.Clear();
+            nativeColumns?.Dispose();
+            nativeColumns = null;
         }
 
         public int Count
@@ -992,6 +1198,8 @@ namespace MissionPlanner.Utilities
             linestartoffset.Clear();
             linestartoffset = null;
             messageindex = null;
+            nativeColumns?.Dispose();
+            nativeColumns = null;
             GC.Collect();
         }
 
@@ -1024,6 +1232,53 @@ namespace MissionPlanner.Utilities
                 return new Tuple<string, double>("", 1);
 
             return new Tuple<string, double>(answer.First().Item3, answer.First().Item4);
+        }
+
+        /// <summary>
+        /// Label name of the instance column for <paramref name="type"/>
+        /// (e.g. "I" for IMU), or null when the type has no instance column.
+        /// </summary>
+        public string GetInstanceFieldName(string type)
+        {
+            if (!dflog.logformat.ContainsKey(type))
+                return null;
+
+            var typeid = dflog.logformat[type].Id;
+            if (!InstanceType.ContainsKey(typeid) || !FMT.ContainsKey(typeid))
+                return null;
+
+            var labels = FMT[typeid].columns.Split(',');
+            var index = InstanceType[typeid].index;
+            if (index < 0 || index >= labels.Length)
+                return null;
+
+            return labels[index].Trim();
+        }
+
+        /// <summary>
+        /// The FMT format character for <paramref name="field"/> of
+        /// <paramref name="type"/> (e.g. 'f' for a float, 'M' for a flight
+        /// mode the managed decoder renders as text), or null when the type
+        /// or field is unknown.
+        /// </summary>
+        public char? GetFieldFormatChar(string type, string field)
+        {
+            if (!dflog.logformat.ContainsKey(type))
+                return null;
+
+            var typeid = dflog.logformat[type].Id;
+            if (!FMT.ContainsKey(typeid))
+                return null;
+
+            var labels = FMT[typeid].columns.Split(',');
+            var format = FMT[typeid].format;
+            for (int i = 0; i < labels.Length && i < format.Length; i++)
+            {
+                if (labels[i].Trim() == field)
+                    return format[i];
+            }
+
+            return null;
         }
 
         public int getInstanceIndex(string type)

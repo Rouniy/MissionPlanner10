@@ -14,14 +14,22 @@ using MissionPlanner.Services;
 namespace MissionPlanner.ViewModels;
 
 public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private readonly MAVLinkInterface _comPort;
+  private readonly int _tcpHostPort;
   private readonly DispatcherTimer _poll;
 
   private TcpSerialHostListener? _tcpHost;
   private CountingCommsSerial? _stream;
+  private MAVLinkInterface.Mirror? _mirror;
   private volatile bool _writeBackEnabled;
 
-  public SerialPassThroughViewModel() {
+  public SerialPassThroughViewModel() : this(AppState.comPort, 14550) {
+  }
+
+  // Tests pass their own link and a free TCP port; the listed entry still reads "TCP Host - 14550".
+  internal SerialPassThroughViewModel(MAVLinkInterface comPort, int tcpHostPort) {
+    _comPort = comPort;
+    _tcpHostPort = tcpHostPort;
     RefreshPorts();
     SelectedBaud = 115200;
 
@@ -64,12 +72,9 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
 
   partial void OnAllowWriteBackChanged(bool value) {
     _writeBackEnabled = value;
-    _comPort.MirrorStreamWrite = value;
-    if (_stream != null) {
-
-      foreach (var m in _comPort.Mirrors.Where(m => ReferenceEquals(m.MirrorStream, _stream))) {
-        m.MirrorStreamWrite = value;
-      }
+    // Only this window's own entry: Mirrors[0] may belong to another mirror window.
+    if (_mirror != null) {
+      _mirror.MirrorStreamWrite = value;
     }
   }
 
@@ -104,15 +109,11 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
         case "TCP Host - 14550": {
             var tcp = new TcpSerial();
             _stream = new CountingCommsSerial(tcp);
-            _comPort.MirrorStream = _stream;
-            _comPort.MirrorStreamWrite = AllowWriteBack;
-            _writeBackEnabled = AllowWriteBack;
-            foreach (var mirror in _comPort.Mirrors.Where(
-                mirror => ReferenceEquals(mirror.MirrorStream, _stream))) {
-              mirror.PollInput = false;
-            }
+            // Bind first: a failed bind must leave every mirror entry untouched.
             _tcpHost = new TcpSerialHostListener(
-                IPAddress.Any, 14550, tcp, OnTcpClientConnected, OnTcpDataReceived);
+                IPAddress.Any, _tcpHostPort, tcp, OnTcpClientConnected, OnTcpDataReceived);
+            // The listener's receive loop owns client input, so the read loop must not poll it.
+            Attach(_stream, pollInput: false);
             ConnectButtonText = "Stop";
             Status = "Listening on TCP 14550 — waiting for a client…";
             return;
@@ -132,9 +133,7 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
       inner.BaudRate = SelectedBaud;
       _stream = new CountingCommsSerial(inner);
       _stream.Open();
-
-      _comPort.MirrorStream = _stream;
-      _comPort.MirrorStreamWrite = AllowWriteBack;
+      Attach(_stream, pollInput: true);
 
       ConnectButtonText = "Stop";
       Status = $"Mirroring on {SelectedPort}.";
@@ -142,6 +141,14 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
       Stop();
       Status = "Error connecting: " + ex.Message;
     }
+  }
+
+  private void Attach(CountingCommsSerial stream, bool pollInput) {
+    _writeBackEnabled = AllowWriteBack;
+    _mirror = new MAVLinkInterface.Mirror {
+        MirrorStream = stream, MirrorStreamWrite = AllowWriteBack, PollInput = pollInput,
+    };
+    _comPort.AddMirror(_mirror);
   }
 
   private void OnTcpClientConnected(TcpSerialHostListener host, string remote) =>
@@ -169,12 +176,13 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
     } catch {
     }
 
+    MAVLinkInterface.Mirror? mirror = Interlocked.Exchange(ref _mirror, null);
     CountingCommsSerial? stream = Interlocked.Exchange(ref _stream, null);
     try {
-      if (stream != null) {
-        _comPort.Mirrors.RemoveAll(m => ReferenceEquals(m.MirrorStream, stream));
-        stream.Dispose();
+      if (mirror != null) {
+        _comPort.RemoveMirror(mirror);
       }
+      stream?.Dispose();
     } catch {
     }
     ConnectButtonText = "Start";

@@ -477,6 +477,17 @@ namespace MissionPlanner.Utilities
 
         long msoffset = 0;
 
+        /// <summary>
+        /// The same board-ms to wall-clock conversion DFItem.time performs
+        /// (gps start time plus the offset-corrected milliseconds), for
+        /// columnwise consumers that never materialize a DFItem. Unlike
+        /// DFItem.time this does not update the parser's lasttime state.
+        /// </summary>
+        public DateTime GetTimeFromMs(double timems)
+        {
+            return gpsstarttime.AddTicks((Int64)((timems - msoffset) * 10000));
+        }
+
         public DFLog(DFLogBuffer dfLogBuffer)
         {
             _dfLogBuffer = dfLogBuffer;

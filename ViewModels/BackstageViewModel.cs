@@ -103,7 +103,7 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
       bool connected = AppState.IsConnected;
       ShowParamLoading = ShouldShowParameterLoading(
           connected, ParamLoading.ParametersReady,
-          SelectedPage?.AllowsPartialParameters == true);
+          PageBypassesParameterOverlay(SelectedPage));
       if (connected && wasLoading && !ShowParamLoading
           && CurrentContent is IActivationAware activation) {
         activation.Activate();
@@ -178,8 +178,17 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
     }
     ShowParamLoading = ShouldShowParameterLoading(
         AppState.IsConnected, ParamLoading.ParametersReady,
-        newValue?.AllowsPartialParameters == true);
+        PageBypassesParameterOverlay(newValue));
   }
+
+  /// <summary>
+  /// Pages that work without a vehicle (firmware install, radios, modems) must stay visible while
+  /// a link is open but has no parameters: during a firmware upload the primary link closes and
+  /// an idle secondary listener becomes the active connection, which would otherwise replace the
+  /// upload progress with the parameter-loading overlay.
+  /// </summary>
+  internal static bool PageBypassesParameterOverlay(BackstagePage? page) =>
+      page != null && (page.AllowsPartialParameters || !page.RequiresConnection);
 
   internal static bool ShouldShowParameterLoading(
       bool connected, bool parametersReady, bool allowsPartialParameters) =>

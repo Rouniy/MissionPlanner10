@@ -1,0 +1,7 @@
+# Test code keeps `unwrap`/`expect`/`panic`: the parity and golden tests
+# assert against corpus data, where panicking IS the failure mechanism.
+# (Harmless at today's lint levels; keeps tests sanctioned if the
+# panic-hygiene lints are ever denied for production code.)
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

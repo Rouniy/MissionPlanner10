@@ -1,3 +1,4 @@
+using System.Globalization;
 using MissionPlanner.Utilities;
 
 namespace MissionPlanner.Tests;
@@ -38,11 +39,14 @@ public class DflogBufferCacheTests {
   }
 
   /// <summary>
-  /// Lowers the cache threshold so kilobyte fixtures exercise the cache, and
-  /// removes the per-user cache file on the way out.
+  /// Lowers the cache threshold so kilobyte fixtures exercise the cache, pins
+  /// the managed scan path (native-capable opens deliberately skip the index
+  /// cache in both directions), and removes the per-user cache file on the
+  /// way out.
   /// </summary>
   private sealed class CacheScope : IDisposable {
     private readonly long _oldThreshold;
+    private readonly bool _oldUseNativeScan;
 
     public DirectoryInfo Dir { get; }
     public string LogPath { get; }
@@ -50,7 +54,9 @@ public class DflogBufferCacheTests {
 
     public CacheScope() {
       _oldThreshold = DFLogBuffer.CacheThresholdBytes;
+      _oldUseNativeScan = DFLogBuffer.UseNativeScan;
       DFLogBuffer.CacheThresholdBytes = 1;
+      DFLogBuffer.UseNativeScan = false;
       Dir = Directory.CreateTempSubdirectory("DflogBufferCacheTests");
       LogPath = Path.Combine(Dir.FullName, "test.bin");
     }
@@ -67,6 +73,7 @@ public class DflogBufferCacheTests {
 
     public void Dispose() {
       DFLogBuffer.CacheThresholdBytes = _oldThreshold;
+      DFLogBuffer.UseNativeScan = _oldUseNativeScan;
       try {
         Dir.Delete(true);
       } catch (IOException) {
@@ -129,6 +136,41 @@ public class DflogBufferCacheTests {
     using var cached = new DFLogBuffer(scope.LogPath);
     Assert.True(cached.LastLoadFromCache);
     Assert.Equal(scanned, Lines(cached));
+  }
+
+  /// <summary>
+  /// The contract between the cache and the native scanner: a native-capable
+  /// open neither loads nor saves the index cache - a fresh native index is
+  /// cheap, and the cache stays a managed-fallback optimization.
+  /// </summary>
+  [Fact]
+  public void Native_capable_open_skips_the_cache_in_both_directions() {
+    using var scope = new CacheScope();
+    File.WriteAllBytes(scope.LogPath, BuildLog(50));
+
+    // seed a cache from the pinned managed path
+    using (var buffer = new DFLogBuffer(scope.LogPath)) {
+      scope.TrackCache(buffer);
+    }
+    string cache = scope.RequireCache();
+
+    DFLogBuffer.UseNativeScan = true;
+    if (!DFLogNative.Available) {
+      // no native library on this host - the skip path is unreachable
+      return;
+    }
+
+    using (var buffer = new DFLogBuffer(scope.LogPath)) {
+      Assert.True(DFLogBuffer.LastScanNative, "native scan did not engage");
+      Assert.False(buffer.LastLoadFromCache,
+          "a native-capable open loaded the index cache");
+    }
+
+    File.Delete(cache);
+    using (new DFLogBuffer(scope.LogPath)) {
+    }
+    Assert.False(File.Exists(cache),
+        "a native-capable open saved an index cache");
   }
 
   [Fact]
@@ -264,6 +306,54 @@ public class DflogBufferCacheTests {
       Assert.False(buffer.LastLoadFromCache);
       Assert.Equal(scanned, Lines(buffer));
       Assert.Equal(50, buffer.GetEnumeratorType("TST").Count());
+    }
+  }
+
+  /// <summary>
+  /// A managed index - freshly scanned or loaded from the cache - still gets
+  /// native columns, but only once the column reader's own index is verified
+  /// against it, so the native line numbers are this buffer's rows.
+  /// </summary>
+  [Fact]
+  public void Managed_index_serves_verified_native_columns_fresh_and_cached() {
+    if (NativeMissing) {
+      return;
+    }
+
+    using var scope = new CacheScope();
+    File.WriteAllBytes(scope.LogPath, BuildLog(50));
+
+    foreach (bool expectCache in new[] { false, true }) {
+      // a native-capable open skips the cache in both directions
+      DFLogBuffer.UseNativeScan = false;
+      using var buffer = new DFLogBuffer(scope.LogPath);
+      scope.TrackCache(buffer);
+      Assert.Equal(expectCache, buffer.LastLoadFromCache);
+
+      DFLogBuffer.UseNativeScan = true;
+      long hitsBefore = DFLogBuffer.NativeColumnHits;
+      Assert.True(buffer.TryGetColumnsNative("TST", new[] { "V" }, out long[] linenos,
+          out double[][] columns));
+      Assert.True(DFLogBuffer.NativeColumnHits > hitsBefore, "the native column path did not engage");
+
+      var managed = buffer.GetEnumeratorType(new[] { "TST" }).ToList();
+      Assert.Equal(managed.Select(item => (long)item.lineno), linenos);
+      Assert.Equal(managed.Select(item => double.Parse(item["V"], CultureInfo.InvariantCulture)),
+          columns[0]);
+    }
+  }
+
+  private static bool NativeMissing {
+    get {
+      if (DFLogNative.Available) {
+        return false;
+      }
+
+      // Hosts that build the native library set DFLOG_REQUIRE_NATIVE=1 so a
+      // broken native build fails loudly instead of quietly skipping.
+      Assert.True(Environment.GetEnvironmentVariable("DFLOG_REQUIRE_NATIVE") != "1",
+          "DFLOG_REQUIRE_NATIVE=1 but the dflog native library is unavailable");
+      return true;
     }
   }
 }

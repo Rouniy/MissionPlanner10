@@ -123,7 +123,7 @@ public class HudFrameRecordingTests {
       using (var writer = new MjpegAviWriter(path, 24, 16, 25)) {
         writer.WriteJpeg(jpeg);
         writer.Checkpoint();
-        byte[] partial = File.ReadAllBytes(path);
+        byte[] partial = ReadWhileWriterIsOpen(path);
         Assert.Equal((uint)(partial.Length - 8), ReadUInt32(partial, 4));
         Assert.Equal(1u, MainHeaderFrames(partial));
         Assert.Equal(-1, FindFourCc(partial, "idx1"));
@@ -135,6 +135,16 @@ public class HudFrameRecordingTests {
     } finally {
       Directory.Delete(root, recursive: true);
     }
+  }
+
+  // File.ReadAllBytes only shares the file with readers, which Windows refuses while the writer
+  // still holds it open for writing.
+  private static byte[] ReadWhileWriterIsOpen(string path) {
+    using var stream = new FileStream(
+        path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+    using var copy = new MemoryStream();
+    stream.CopyTo(copy);
+    return copy.ToArray();
   }
 
   private static void AssertAvi(string path, int width, int height, int frames) {

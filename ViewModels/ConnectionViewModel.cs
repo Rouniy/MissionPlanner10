@@ -1287,6 +1287,9 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
               stream, Settings.Instance.GetBoolean("Params_BG", false));
           if (!backgroundParamLoad) {
             dlg.SetCancellationText("Skip Parameters");
+            // Closing the window is not a skip: the read goes on and the toolbar status/progress
+            // under the Connect button keep reporting it. Only the button cancels.
+            dlg.ContinueInBackgroundOnClose = true;
             var operation = AppState.ParameterLoads.Start(
                 _comPort.MAV.sysid, _comPort.MAV.compid, dlg.Token, OnProgress);
             try {
@@ -1383,7 +1386,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
         dlg.Set(100, Status);
         dlg.SetCancellationText("Close");
-        if (!dlg.CancelRequested) {
+        if (!dlg.CancelRequested && !dlg.Detached) {
           await Task.Delay(1200);
           // Closing a progress window normally means Cancel. This is the successful completion
           // path, so do not fire the callback registered on the dialog token.

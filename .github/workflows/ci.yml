@@ -38,6 +38,11 @@ jobs:
         run: dotnet build MissionPlanner.slnx -c Release -m:1 --nologo
 
       - name: Run complete test suite
+        env:
+          # the runner has a Rust toolchain, so the dflog native library must
+          # have been built - fail the parity tests loudly instead of letting
+          # them skip if it is missing or unloadable
+          DFLOG_REQUIRE_NATIVE: '1'
         run: >-
           dotnet test MissionPlannerTests/Avalonia/MissionPlanner.Tests/MissionPlanner.Tests.csproj
           -c Release -m:1 --no-build --nologo
@@ -59,6 +64,7 @@ jobs:
           dpkg-deb --extract "$DEB" "$ROOT"
           test -x "$ROOT/usr/lib/missionplanner10/MissionPlanner10"
           test -s "$ROOT/usr/lib/missionplanner10/airports.csv"
+          test -s "$ROOT/usr/lib/missionplanner10/libdflog_ffi.so"
           test ! -e "$ROOT/usr/lib/missionplanner10/simpleble-c.dll"
           test ! -e "$ROOT/usr/lib/missionplanner10/simpleble.dll"
           test ! -e "$ROOT/usr/lib/missionplanner10/libusb-1.0.dll"
@@ -110,6 +116,7 @@ jobs:
           $requiredFiles = @(
             'MissionPlanner10.exe',
             'e_sqlite3.dll',
+            'dflog_ffi.dll',
             'airports.csv',
             'COPYING.txt',
             'NOTICE.md',
@@ -176,6 +183,9 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Install Rust cross-compilation targets
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
       - name: Publish macOS self-contained application
         shell: bash
         run: |
@@ -191,6 +201,14 @@ jobs:
           test -s "out/$RID/libsimpleble.0.dylib"
           test -s "out/$RID/lib/libvlc.5.dylib"
           test -d "out/$RID/plugins"
+          # the arm64 runner cross-compiles osx-x64, and the dylib only reaches
+          # the publish output through the RID's target path - assert the
+          # Mach-O architecture rather than trusting that plumbing
+          case "$RID" in
+            osx-x64) DFLOG_ARCH=x86_64 ;;
+            osx-arm64) DFLOG_ARCH=arm64 ;;
+          esac
+          test "$(lipo -archs "out/$RID/libdflog_ffi.dylib")" = "$DFLOG_ARCH"
 
       - name: Build ad-hoc signed app archive and DMG
         shell: bash

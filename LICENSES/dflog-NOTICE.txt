@@ -1,0 +1,14 @@
+dflog
+=====
+
+Mission Planner optionally builds and bundles the dflog native dataflash log
+parser (dflog_ffi.dll / libdflog_ffi.so / libdflog_ffi.dylib) from the Rust
+sources in the top-level rust/ directory. dflog is first-party code
+licensed under GNU GPL version 3, the same license as this application; the
+complete GPLv3 text is provided in the top-level LICENSE file.
+
+Statically linked third-party Rust code:
+
+- The Rust standard library (https://github.com/rust-lang/rust) - MIT OR
+  Apache-2.0; used under Apache-2.0, whose text is provided in this
+  directory (Apache-2.0.txt).

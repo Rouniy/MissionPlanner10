@@ -4,7 +4,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
-using Avalonia.Threading;
 
 namespace MissionPlanner.Controls;
 
@@ -402,71 +401,6 @@ public class HudControl : Control {
   private static readonly Pen _whitePen = new(Brushes.White, 1.5);
   private static readonly Pen _thinPen = new(Brushes.White, 1);
 
-  private readonly DispatcherTimer _ease;
-  private double _eRoll, _ePitch, _eYaw, _eAlt, _eAs, _eGs, _eVs;
-  private bool _easeInit;
-
-  public HudControl() {
-    _ease = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-    _ease.Tick += (_, _) => StepEase();
-  }
-
-  protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
-    base.OnAttachedToVisualTree(e);
-    _ease.Start();
-  }
-
-  protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
-    base.OnDetachedFromVisualTree(e);
-    _ease.Stop();
-  }
-
-  private void StepEase() {
-    if (!_easeInit) {
-      _eRoll = Roll;
-      _ePitch = Pitch;
-      _eYaw = Yaw;
-      _eAlt = Alt;
-      _eAs = AirSpeed;
-      _eGs = GroundSpeed;
-      _eVs = VerticalSpeed;
-      _easeInit = true;
-      return;
-    }
-    const double k = 0.4;
-    bool moving = false;
-    moving |= Approach(ref _eRoll, Roll, k);
-    moving |= Approach(ref _ePitch, Pitch, k);
-    moving |= ApproachAngle(ref _eYaw, Yaw, k);
-    moving |= Approach(ref _eAlt, Alt, k);
-    moving |= Approach(ref _eAs, AirSpeed, k);
-    moving |= Approach(ref _eGs, GroundSpeed, k);
-    moving |= Approach(ref _eVs, VerticalSpeed, k);
-    if (moving) {
-      InvalidateVisual();
-    }
-  }
-
-  private static bool Approach(ref double v, double target, double k) {
-    double d = target - v;
-    if (Math.Abs(d) < 1e-3) {
-      v = target;
-      return false;
-    }
-    v += d * k;
-    return true;
-  }
-
-  private static bool ApproachAngle(ref double v, double target, double k) {
-    double d = ((target - v + 540) % 360) - 180;
-    if (Math.Abs(d) < 1e-3) {
-      v = target;
-      return false;
-    }
-    v = (v + d * k + 360) % 360;
-    return true;
-  }
-
   static HudControl() {
     AffectsRender<HudControl>(
         RollProperty,
@@ -537,18 +471,6 @@ public class HudControl : Control {
 
   private IBrush GroundFill() => GroundBrown ? _groundBrownBrush : _groundBrush;
 
-  internal void SnapToValues() {
-    _eRoll = Roll;
-    _ePitch = Pitch;
-    _eYaw = Yaw;
-    _eAlt = Alt;
-    _eAs = AirSpeed;
-    _eGs = GroundSpeed;
-    _eVs = VerticalSpeed;
-    _easeInit = true;
-    InvalidateVisual();
-  }
-
   public override void Render(DrawingContext context) {
     var b = Bounds;
     double w = b.Width,
@@ -586,12 +508,12 @@ public class HudControl : Control {
     double headH = Math.Clamp(h / 14.0, 16, 48);
     var ground = GroundFill();
 
-    double rollRad = (Russian ? 0 : _eRoll) * Math.PI / 180.0;
+    double rollRad = (Russian ? 0 : Roll) * Math.PI / 180.0;
     using (context.PushClip(new Rect(0, headH, w, h - headH)))
     using (context.PushTransform(Matrix.CreateTranslation(cx, cy)))
     using (context.PushTransform(Matrix.CreateRotation(-rollRad))) {
       double big = Math.Max(w, h) * 2;
-      double pitchoffset = _ePitch * perDeg;
+      double pitchoffset = Pitch * perDeg;
       if (videoBackground == null) {
         context.FillRectangle(_skyBrush, new Rect(-big, -big, big * 2, big + pitchoffset));
         context.FillRectangle(ground, new Rect(-big, pitchoffset, big * 2, big * 2 - pitchoffset));
@@ -604,7 +526,7 @@ public class HudControl : Control {
             continue;
           }
 
-          double y = (_ePitch - a) * perDeg;
+          double y = (Pitch - a) * perDeg;
           if (Math.Abs(y) > h * 0.38) {
             continue;
           }
@@ -634,7 +556,7 @@ public class HudControl : Control {
     var reticle = new Pen(new SolidColorBrush(Color.FromArgb(220, 255, 0, 0)),
         Math.Max(2.5, unit * 0.009), lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
     using (context.PushTransform(Russian
-        ? Matrix.CreateRotation(-_eRoll * Math.PI / 180.0, new Point(cx, cy))
+        ? Matrix.CreateRotation(-Roll * Math.PI / 180.0, new Point(cx, cy))
         : Matrix.Identity)) {
       context.DrawLine(reticle, new Point(cx - rgap - wing, cy), new Point(cx - rgap, cy));
       context.DrawLine(reticle, new Point(cx + rgap, cy), new Point(cx + rgap + wing, cy));
@@ -643,7 +565,7 @@ public class HudControl : Control {
     }
 
     if (DisplayHeading) {
-      DrawHeadingTape(context, w, headH, fontsize, _eYaw, NavBearing);
+      DrawHeadingTape(context, w, headH, fontsize, Yaw, NavBearing);
     }
 
     if (DisplayConnection) {
@@ -662,7 +584,7 @@ public class HudControl : Control {
     double tapeW = Math.Max(20, Math.Min(Math.Max(unit * 0.12, 42), w * 0.16));
     var speedRect = new Rect(0, cy - h / 4.0, tapeW, h / 2.0);
     var altRect = new Rect(w - tapeW, cy - h / 4.0, tapeW, h / 2.0);
-    double spd = AirSpeed > 0 ? _eAs : _eGs;
+    double spd = AirSpeed > 0 ? AirSpeed : GroundSpeed;
     if (DisplaySpeed) {
       DrawScrollTape(context, speedRect, spd, TargetSpeed, false, fontsize);
       DrawText(context, $"AS {AirSpeed:0.0}", new Point(2, speedRect.Bottom + 4), fontsize);
@@ -673,8 +595,8 @@ public class HudControl : Control {
           new Point(2, speedRect.Bottom + fontsize * 2 + 12), fontsize, Brushes.White);
     }
     if (DisplayAlt) {
-      DrawScrollTape(context, altRect, _eAlt, TargetAlt, true, fontsize);
-      DrawVsi(context, altRect, _eVs);
+      DrawScrollTape(context, altRect, Alt, TargetAlt, true, fontsize);
+      DrawVsi(context, altRect, VerticalSpeed);
 
       var modeBrush = _modeChanged.AddSeconds(2) > DateTime.Now ? Brushes.Red : _textBrush;
       DrawText(context, Mode, new Point(altRect.Left - 30, altRect.Bottom + 5), fontsize, modeBrush);
@@ -887,7 +809,7 @@ public class HudControl : Control {
 
   private void DrawRollArc(DrawingContext ctx, double cx, double cy, double r, double unit) {
     var c = new Point(cx, cy);
-    using (ctx.PushTransform(Matrix.CreateRotation(-_eRoll * Math.PI / 180.0, c))) {
+    using (ctx.PushTransform(Matrix.CreateRotation(-Roll * Math.PI / 180.0, c))) {
       foreach (int a in new[] { -60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60 }) {
         double rad = (a - 90) * Math.PI / 180.0;
         double len = a == 0 ? unit * 0.028 : unit * 0.016;
@@ -909,7 +831,7 @@ public class HudControl : Control {
       ctx.DrawGeometry(null, _whitePen, geo);
     }
     double ph = unit * 0.026;
-    var pen = new Pen(Brushes.Red, Math.Max(2, unit * (Math.Abs(_eRoll) > 45 ? 0.008 : 0.005)),
+    var pen = new Pen(Brushes.Red, Math.Max(2, unit * (Math.Abs(Roll) > 45 ? 0.008 : 0.005)),
         lineCap: PenLineCap.Round);
     ctx.DrawLine(pen, new Point(cx, cy - r), new Point(cx - ph * 0.7, cy - r + ph));
     ctx.DrawLine(pen, new Point(cx, cy - r), new Point(cx + ph * 0.7, cy - r + ph));

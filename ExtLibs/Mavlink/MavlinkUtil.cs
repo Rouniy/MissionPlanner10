@@ -421,14 +421,75 @@ public static class MavlinkUtil
         return data;
     } // Swap
 
-    public static MAVLink.message_info GetMessageInfo(this MAVLink.message_info[] source, uint msgid)
+    // Lookup table for one message_info array. Instances are immutable after construction, so a
+    // reader that obtained a reference needs no lock.
+    private sealed class MessageInfoIndex
     {
-        foreach (var item in source)
+        public MessageInfoIndex(MAVLink.message_info[] source)
         {
-            if (item.msgid == msgid)
-                return item;
+            var byId = new Dictionary<uint, MAVLink.message_info>(source.Length);
+            foreach (MAVLink.message_info item in source)
+            {
+                // The first entry for an id wins, as it did with the linear scan.
+                if (!byId.ContainsKey(item.msgid))
+                {
+                    byId.Add(item.msgid, item);
+                }
+            }
+
+            Source = source;
+            ById = byId;
         }
 
+        public MAVLink.message_info[] Source { get; }
+
+        public Dictionary<uint, MAVLink.message_info> ById { get; }
+    }
+
+    private static volatile MessageInfoIndex _messageInfoIndex;
+
+    public static MAVLink.message_info GetMessageInfo(this MAVLink.message_info[] source, uint msgid)
+    {
+        // Only the global table is indexed. MAVLINK_MESSAGE_INFOS is a public field that is
+        // replaced with a new array when a dialect registers extra messages, so the index is tied
+        // to the array instance and rebuilt when the field changes; racing threads build
+        // equivalent indexes. Any other array, including a stale reference to a replaced table,
+        // is scanned linearly so that it can never evict the global index.
+        if (!ReferenceEquals(source, MAVLink.MAVLINK_MESSAGE_INFOS))
+        {
+            return FindMessageInfo(source, msgid);
+        }
+
+        MessageInfoIndex index = _messageInfoIndex;
+        if (index == null || !ReferenceEquals(index.Source, source))
+        {
+            index = new MessageInfoIndex(source);
+            _messageInfoIndex = index;
+        }
+
+        if (index.ById.TryGetValue(msgid, out MAVLink.message_info info))
+        {
+            return info;
+        }
+
+        return UnknownMessageInfo(msgid);
+    }
+
+    private static MAVLink.message_info FindMessageInfo(MAVLink.message_info[] source, uint msgid)
+    {
+        foreach (MAVLink.message_info item in source)
+        {
+            if (item.msgid == msgid)
+            {
+                return item;
+            }
+        }
+
+        return UnknownMessageInfo(msgid);
+    }
+
+    private static MAVLink.message_info UnknownMessageInfo(uint msgid)
+    {
         Console.WriteLine("Unknown Packet " + msgid);
         return new MAVLink.message_info();
     }

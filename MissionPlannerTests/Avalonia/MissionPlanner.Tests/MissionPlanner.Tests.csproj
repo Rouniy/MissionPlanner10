@@ -36,6 +36,13 @@
   </Target>
 
   <ItemGroup>
+    <!-- SITL corpus the dflog native/managed parity tests run against -->
+    <None Include="../../../rust/testdata/*.bin" Link="testdata/%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 </Project>
