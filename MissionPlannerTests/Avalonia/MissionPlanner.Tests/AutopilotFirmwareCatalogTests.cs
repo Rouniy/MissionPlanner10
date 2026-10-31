@@ -59,7 +59,7 @@ public sealed class AutopilotFirmwareCatalogTests {
       Info("CUAV-X7", 1010, "OFFICIAL", "V4.7.2", "fb773567896014da", "https://firmware.ardupilot.org/Rover/stable/CUAV-X7/ardurover_with_bl.hex", format: "hex"),
       Info("CubeOrange", 140, "OFFICIAL", "V4.7.2", "fb773567896014da", "https://firmware.ardupilot.org/Rover/stable/CubeOrange/ardurover.apj"),
     };
-    var options = AutopilotFirmwareCatalog.Match(manifest, "ground_rover", 1010, "CUAV-X7", 0xfb773567);
+    var options = AutopilotFirmwareCatalog.Match(manifest, "ground_rover", 1010, "CUAV-X7", "ArduRover V4.7.2 (fb773567)");
     Assert.Equal(new[] {
       "stable V4.7.2 CUAV-X7", "stable V4.7.1 CUAV-X7", "beta V4.7.2 CUAV-X7", "latest (dev) V4.8.0-dev CUAV-X7",
       "stable V4.7.2 CUAV-X7-bdshot",
@@ -75,14 +75,36 @@ public sealed class AutopilotFirmwareCatalogTests {
     Assert.Same(options[0], AutopilotFirmwareCatalog.Recommended(options));
 
     // Unknown board name: every variant counts as preferred and stays in channel/version order.
-    var unnamed = AutopilotFirmwareCatalog.Match(manifest, "GROUND_ROVER", 1010, null, 0);
+    var unnamed = AutopilotFirmwareCatalog.Match(manifest, "GROUND_ROVER", 1010, null, null);
     Assert.All(unnamed, o => Assert.True(o.PreferredPlatform));
     Assert.DoesNotContain(unnamed, o => o.Installed);
     Assert.Equal("stable", unnamed[0].Channel);
 
-    Assert.Empty(AutopilotFirmwareCatalog.Match(manifest, "GROUND_ROVER", 999, null, 0));
-    Assert.Empty(AutopilotFirmwareCatalog.Match(manifest, "GROUND_ROVER", null, null, 0));
-    Assert.Empty(AutopilotFirmwareCatalog.Match(null, "GROUND_ROVER", 1010, null, 0));
+    Assert.Empty(AutopilotFirmwareCatalog.Match(manifest, "GROUND_ROVER", 999, null, null));
+    Assert.Empty(AutopilotFirmwareCatalog.Match(manifest, "GROUND_ROVER", null, null, null));
+    Assert.Empty(AutopilotFirmwareCatalog.Match(null, "GROUND_ROVER", 1010, null, null));
+  }
+
+  [Fact]
+  public void A_release_commit_shared_by_every_vehicle_is_installed_only_for_the_running_vehicle() {
+    var manifest = new[] {
+      Info("CUAV-X7", 1010, "OFFICIAL", "V4.7.2", "fb773567896014da", "https://firmware.ardupilot.org/Plane/stable/CUAV-X7/arduplane.apj", mavType: "FIXED_WING", vehicle: "Plane"),
+      Info("CUAV-X7", 1010, "OFFICIAL", "V4.7.2", "fb773567896014da", "https://firmware.ardupilot.org/Rover/stable/CUAV-X7/ardurover.apj"),
+      Info("CUAV-X7", 1010, "OFFICIAL", "V4.7.2", "fb773567896014da", "https://firmware.ardupilot.org/Copter/stable/CUAV-X7/arducopter-heli.apj", mavType: "HELICOPTER", vehicle: "Copter"),
+    };
+    const string rover = "ArduRover V4.7.2 (fb773567)";
+    Assert.False(Assert.Single(AutopilotFirmwareCatalog.Match(manifest, "FIXED_WING", 1010, "CUAV-X7", rover)).Installed);
+    Assert.True(Assert.Single(AutopilotFirmwareCatalog.Match(manifest, "GROUND_ROVER", 1010, "CUAV-X7", rover)).Installed);
+    Assert.True(Assert.Single(AutopilotFirmwareCatalog.Match(manifest, "HELICOPTER", 1010, "CUAV-X7", "ArduCopter V4.7.2 (fb773567)")).Installed);
+    Assert.Equal("ArduRover", AutopilotFirmwareCatalog.RunningFirmwareName(rover));
+    Assert.True(AutopilotFirmwareCatalog.RunningVehicleMatches("AntennaTracker V4.7.2 (fb773567)", "AntennaTracker"));
+    Assert.False(AutopilotFirmwareCatalog.RunningVehicleMatches(rover, "Plane"));
+    Assert.False(AutopilotFirmwareCatalog.RunningVehicleMatches(null, "Rover"));
+
+    Assert.Equal("", MissionPlanner.ViewModels.Setup.InstallFirmwareViewModel.VehicleChangeWarning(rover, "Rover"));
+    Assert.Equal("", MissionPlanner.ViewModels.Setup.InstallFirmwareViewModel.VehicleChangeWarning(null, "Plane"));
+    Assert.Contains("The board runs ArduRover; installing Plane changes the vehicle type",
+        MissionPlanner.ViewModels.Setup.InstallFirmwareViewModel.VehicleChangeWarning(rover, "Plane"));
   }
 
   [Fact]

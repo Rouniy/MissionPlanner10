@@ -146,6 +146,16 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
     }
   }
 
+  /// <summary>Spelled out when the chosen vehicle type differs from the firmware the board runs.</summary>
+  internal static string VehicleChangeWarning(string? runningVersionString, string? vehicleType) {
+    string? running = AutopilotFirmwareCatalog.RunningFirmwareName(runningVersionString);
+    if (running == null || string.IsNullOrWhiteSpace(vehicleType)
+        || AutopilotFirmwareCatalog.RunningVehicleMatches(runningVersionString, vehicleType)) {
+      return "";
+    }
+    return $" The board runs {running}; installing {vehicleType} changes the vehicle type and resets its parameters to {vehicleType} defaults.";
+  }
+
   private static readonly HttpClient _firmwareHttp = CreateFirmwareHttp();
 
   private static HttpClient CreateFirmwareHttp() {
@@ -180,7 +190,7 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
       SetStatus("Fetching firmware manifest…");
       var options = await Task.Run(() => {
         APFirmware.GetList();
-        return AutopilotFirmwareCatalog.Match(APFirmware.Manifest?.Firmware, tile.MavType, board.BoardId, board.Name, board.Commit);
+        return AutopilotFirmwareCatalog.Match(APFirmware.Manifest?.Firmware, tile.MavType, board.BoardId, board.Name, board.Running);
       });
       if (options.Count == 0) {
         SetStatus($"No {tile.DisplayName} firmware in the ArduPilot manifest for {board.Name ?? "this board"} (board id {board.BoardId}).");
@@ -194,7 +204,8 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
           ? options.FirstOrDefault(o => o.PreferredPlatform && o.Channel == "beta") ?? AutopilotFirmwareCatalog.Recommended(options)
           : AutopilotFirmwareCatalog.Recommended(options);
       BoardLabel = $"{board.Describe()} {options.Count} {tile.DisplayName} build(s) available"
-          + (options.Any(o => o.Installed) ? "; one matches the running commit." : ".");
+          + (options.Any(o => o.Installed) ? "; one is the firmware running now." : ".")
+          + VehicleChangeWarning(board.Running, options[0].VehicleType);
       Status = BoardLabel;
 
       AutopilotFirmwareOption? chosen = ChooseFirmwareAsync != null ? await ChooseFirmwareAsync(this) : SelectedFirmwareOption;

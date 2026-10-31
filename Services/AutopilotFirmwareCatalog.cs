@@ -68,6 +68,24 @@ internal static class AutopilotFirmwareCatalog {
     return hex.Length == 8 && uint.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint commit) ? commit : 0;
   }
 
+  /// <summary>Firmware family from a version string: "ArduRover V4.7.2 (fb773567)" gives "ArduRover".</summary>
+  internal static string? RunningFirmwareName(string? versionString) {
+    if (string.IsNullOrWhiteSpace(versionString)) { return null; }
+    string first = versionString.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+    return first.Length == 0 ? null : first;
+  }
+
+  /// <summary>
+  /// True when the running firmware belongs to the manifest vehicle type: "ArduRover" to Rover,
+  /// "ArduCopter" to Copter (heli builds share it), "AntennaTracker" to AntennaTracker. A release
+  /// commit is the same for every vehicle, so the commit alone cannot tell them apart.
+  /// </summary>
+  internal static bool RunningVehicleMatches(string? versionString, string? vehicleType) {
+    string? name = RunningFirmwareName(versionString);
+    return name != null && !string.IsNullOrWhiteSpace(vehicleType)
+        && name.Contains(vehicleType.Trim(), StringComparison.OrdinalIgnoreCase);
+  }
+
   /// <summary>The bootloader accepts an fmuv3 (9) image on a Cube Black (33); nothing else crosses ids.</summary>
   internal static bool BoardMatches(long firmwareBoardId, int boardId) =>
       firmwareBoardId == boardId || (boardId == 33 && firmwareBoardId == 9);
@@ -99,9 +117,10 @@ internal static class AutopilotFirmwareCatalog {
   /// variant come before sibling variants that share the board id.
   /// </summary>
   internal static List<AutopilotFirmwareOption> Match(
-      IEnumerable<APFirmware.FirmwareInfo>? manifest, string? mavType, int? boardId, string? boardName, uint runningCommit) {
+      IEnumerable<APFirmware.FirmwareInfo>? manifest, string? mavType, int? boardId, string? boardName, string? runningVersionString) {
     var result = new List<AutopilotFirmwareOption>();
     if (manifest == null || string.IsNullOrWhiteSpace(mavType) || boardId == null) { return result; }
+    uint runningCommit = RunningCommit(runningVersionString);
     string commit = runningCommit == 0 ? "" : runningCommit.ToString("x8", CultureInfo.InvariantCulture);
     var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     var versions = new Dictionary<AutopilotFirmwareOption, Version>();
@@ -117,7 +136,8 @@ internal static class AutopilotFirmwareCatalog {
       if (!seen.Add($"{channel}|{versionText}|{platform}|{sha}")) { continue; }
       var option = new AutopilotFirmwareOption(channel, versionText, sha, info.Url, platform,
           info.BoardId, info.VehicleType ?? "", info.MavType ?? "") {
-        Installed = commit.Length != 0 && sha.StartsWith(commit, StringComparison.OrdinalIgnoreCase),
+        Installed = commit.Length != 0 && sha.StartsWith(commit, StringComparison.OrdinalIgnoreCase)
+            && RunningVehicleMatches(runningVersionString, info.VehicleType),
         PreferredPlatform = boardName == null || string.Equals(platform, boardName, StringComparison.OrdinalIgnoreCase),
       };
       versions[option] = VersionOf(info);
