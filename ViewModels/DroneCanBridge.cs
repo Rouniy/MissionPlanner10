@@ -1,134 +1,54 @@
 using System;
-using System.Linq;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using MissionPlanner;
-using MissionPlanner.Comms;
 
 namespace MissionPlanner.ViewModels;
 
+/// <summary>DroneCAN stack over the active MAVLink link, shared with the DroneCAN page through <see cref="MavlinkCanTransport"/>.</summary>
 public sealed class DroneCanBridge : IDisposable {
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private DroneCAN.DroneCAN? _can;
-  private CommsInjection? _port;
-  private bool _run;
-  private int _subId = -1;
+  private MavlinkCanTransport? _transport;
 
   public DroneCAN.DroneCAN? Can => _can;
   public bool IsOpen => _can != null;
+  /// <summary>Why the last <see cref="Start"/> failed: no MAVLink link, a bus conflict or a stack error.</summary>
+  public string? LastError { get; private set; }
 
   public bool Start(byte bus) {
+    LastError = null;
     if (_comPort.BaseStream?.IsOpen != true) {
+      LastError = "Not connected — open the MAVLink link first.";
       return false;
     }
 
-    _run = true;
-
-    Task.Run(() => {
-      Thread.Sleep(1000);
-      while (_run) {
-        try {
-          _comPort.doCommand((byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent,
-              MAVLink.MAV_CMD.CAN_FORWARD, bus, 0, 0, 0, 0, 0, 0, false);
-        } catch {
-        }
-
-        if (_run) {
-          Thread.Sleep(1000);
-        }
-      }
-    });
-
-    _port = new CommsInjection();
-    _can = new DroneCAN.DroneCAN { SourceNode = 127 };
-
-    var can = _can;
-    var port = _port;
-
-    can.FrameReceived += (frame, payload) => {
-      if (payload.packet_data.Length > 8) {
-        _comPort.sendPacket(new MAVLink.mavlink_canfd_frame_t(
-                BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
-                (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent, (byte)(bus - 1),
-                (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length),
-                payload.packet_data),
-            (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent);
-      } else {
-        _comPort.sendPacket(new MAVLink.mavlink_can_frame_t(
-                BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
-                (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent, (byte)(bus - 1),
-                (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length),
-                payload.packet_data),
-            (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent);
-      }
-    };
-
-    port.WriteCallback += (_, bytes) => {
-      var lines = Encoding.ASCII.GetString(bytes.ToArray())
-          .Split(new[] { '\r' }, StringSplitOptions.RemoveEmptyEntries);
-      foreach (var line in lines) {
-        can.ReadMessageSLCAN(line);
-      }
-    };
-
-    _subId = _comPort.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.CAN_FRAME, m => {
-      if (m.msgid == (uint)MAVLink.MAVLINK_MSG_ID.CAN_FRAME) {
-        var pkt = (MAVLink.mavlink_can_frame_t)m.data;
-        var cf = new DroneCAN.CANFrame(BitConverter.GetBytes(pkt.id));
-        var payld = new DroneCAN.CANPayload(pkt.data);
-        var ans = string.Format("{0}{1}{2}{3}\r", 'T', cf.ToHex(), pkt.len.ToString("X"),
-            payld.ToHex(DroneCAN.DroneCAN.dlcToDataLength(pkt.len)));
-        port.AppendBuffer(Encoding.ASCII.GetBytes(ans));
-      } else if (m.msgid == (uint)MAVLink.MAVLINK_MSG_ID.CANFD_FRAME) {
-        var pkt = (MAVLink.mavlink_canfd_frame_t)m.data;
-        var cf = new DroneCAN.CANFrame(BitConverter.GetBytes(pkt.id));
-        var payld = new DroneCAN.CANPayload(pkt.data);
-        var ans = string.Format("{0}{1}{2}{3}\r", 'B', cf.ToHex(), pkt.len.ToString("X"),
-            payld.ToHex(DroneCAN.DroneCAN.dlcToDataLength(pkt.len)));
-        port.AppendBuffer(Encoding.ASCII.GetBytes(ans));
-      }
-
-      return true;
-    }, (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent, true);
-
+    var transport = MavlinkCanTransport.Open(_comPort, (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent,
+        bus, null, out string? conflict);
+    if (transport == null) {
+      LastError = conflict;
+      return false;
+    }
+    var can = new DroneCAN.DroneCAN { SourceNode = 127 };
+    _transport = transport;
+    _can = can;
     try {
-      can.StartSLCAN(port.BaseStream);
+      can.StartSLCAN(transport.Port.BaseStream);
       can.SetupFileServer();
       can.SetupDynamicNodeAllocator();
-    } catch {
+    } catch (Exception e) {
+      LastError = "CAN start failed: " + e.Message;
       Stop();
       return false;
     }
-
     return true;
   }
 
   public void Stop() {
-    _run = false;
-
-    if (_subId != -1) {
-      try {
-        _comPort.UnSubscribeToPacketType(_subId);
-      } catch {
-      }
-
-      _subId = -1;
-    }
-
-    try {
-      _can?.Stop(false);
-    } catch {
-    }
-
+    var transport = _transport;
+    var can = _can;
+    _transport = null;
     _can = null;
-
-    try {
-      _port?.Close();
-    } catch {
-    }
-
-    _port = null;
+    try { transport?.Dispose(); } catch { }
+    try { can?.Stop(false); } catch { }
   }
 
   public void Dispose() => Stop();

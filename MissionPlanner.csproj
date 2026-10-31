@@ -101,6 +101,7 @@
     <Compile Include="Services/StartupUdpListenerService.cs" />
     <Compile Include="Services/TcpSerialHostListener.cs" />
     <Compile Include="ViewModels/ExternalGuidedViewModel.cs" />
+    <Compile Include="ViewModels/MavlinkCanTransport.cs" />
     <Compile Include="Views/DroneCanFieldGraphWindow.cs" />
     <Compile Include="Views/DroneCanSubscriberWindow.cs" />
     <Compile Include="Views/ExternalGuidedView.axaml.cs" />

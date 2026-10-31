@@ -6,8 +6,7 @@ using System.Threading;
 using Mapsui;
 using Mapsui.Projections;
 using MissionPlanner.Utilities;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 
 namespace MissionPlanner.Services;
 
@@ -160,10 +159,11 @@ internal sealed record PropagationRasterResult(
     int ValidSampleCount,
     int MissingSampleCount) {
   internal byte[] EncodePng() {
-    using Image<Rgba32> image = Image.LoadPixelData<Rgba32>(Rgba, Width, Height);
-    using var stream = new MemoryStream();
-    image.SaveAsPng(stream);
-    return stream.ToArray();
+    using var bitmap = new SKBitmap(new SKImageInfo(Width, Height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+    System.Runtime.InteropServices.Marshal.Copy(Rgba, 0, bitmap.GetPixels(), Math.Min(Rgba.Length, bitmap.ByteCount));
+    using var image = SKImage.FromBitmap(bitmap);
+    using var encoded = image.Encode(SKEncodedImageFormat.Png, 100);
+    return encoded.ToArray();
   }
 }
 
@@ -261,7 +261,7 @@ internal static class PropagationService {
           paletteIndex = (int)(normalized * 255);
         }
 
-        Rgba32 color = Palette(paletteIndex);
+        PaletteColor color = Palette(paletteIndex);
         int x0 = column * resolution;
         int y0 = row * resolution;
         int x1 = Math.Min(width, x0 + resolution);
@@ -449,21 +449,23 @@ internal static class PropagationService {
     return (answer, 0);
   }
 
-  private static Rgba32 Palette(int index) {
+  private readonly record struct PaletteColor(byte R, byte G, byte B, byte A);
+
+  private static PaletteColor Palette(int index) {
     if (index is <= 0 or >= 255) {
-      return new Rgba32(0, 0, 0, 0);
+      return new PaletteColor(0, 0, 0, 0);
     }
     float progress = 1.0f - index / 256.0f;
     float div = Math.Abs(progress % 1) * 5;
     byte ascending = (byte)((div % 1) * 255);
     byte descending = (byte)(255 - ascending);
     return (int)div switch {
-      0 => new Rgba32(255, ascending, 0, 100),
-      1 => new Rgba32(descending, 255, 0, 100),
-      2 => new Rgba32(0, 255, ascending, 100),
-      3 => new Rgba32(0, descending, 255, 100),
-      4 => new Rgba32(ascending, 0, 255, 100),
-      _ => new Rgba32(255, 0, descending, 100),
+      0 => new PaletteColor(255, ascending, 0, 100),
+      1 => new PaletteColor(descending, 255, 0, 100),
+      2 => new PaletteColor(0, 255, ascending, 100),
+      3 => new PaletteColor(0, descending, 255, 100),
+      4 => new PaletteColor(ascending, 0, 255, 100),
+      _ => new PaletteColor(255, 0, descending, 100),
     };
   }
 

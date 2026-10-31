@@ -170,6 +170,35 @@ public class DroneCanSessionSafetyTests {
   }
 
   [AvaloniaFact]
+  public async Task Node_status_from_an_unnamed_node_requests_its_node_info_immediately() {
+    var transport = new FakeSlcanTransport("/dev/test-slcan", 115200);
+    var can = new DroneCAN.DroneCAN();
+    using var viewModel = new ConfigDroneCanViewModel(
+        () => null,
+        serialPortNames: () => ["/dev/test-slcan"],
+        serialPortFactory: (_, _) => transport,
+        canFactory: () => can);
+    viewModel.SelectedBusIndex = 2;
+    viewModel.SelectedSerialPort = "/dev/test-slcan";
+    viewModel.ToggleConnectCommand.Execute(null);
+    await WaitForAsync(() => viewModel.IsConnected && !viewModel.IsBusy);
+
+    var status = new DroneCAN.DroneCAN.uavcan_protocol_NodeStatus { uptime_sec = 3 };
+    can.InvokeMessageReceived(MessageFrame(42), status, 0);
+    can.InvokeMessageReceived(MessageFrame(42), status, 1);
+    Dispatcher.UIThread.RunJobs();
+
+    // uavcan.protocol.GetNodeInfo request (type 1, priority 30) from node 127 to node 42.
+    Assert.Equal(1, CountOccurrences(transport.Stream.WritesText, "T1E01AAFF"));
+    Assert.Single(viewModel.Nodes, node => node.Id == 42);
+
+    can.NodeInfo[42] = new DroneCAN.DroneCAN.uavcan_protocol_GetNodeInfo_res();
+    await Task.Delay(2100);
+    can.InvokeMessageReceived(MessageFrame(42), status, 2);
+    Assert.Equal(1, CountOccurrences(transport.Stream.WritesText, "T1E01AAFF"));
+  }
+
+  [AvaloniaFact]
   public async Task Get_parameters_reports_when_the_node_does_not_answer_the_optional_service() {
     var transport = new FakeSlcanTransport("/dev/test-slcan", 115200);
     var can = new DroneCAN.DroneCAN();

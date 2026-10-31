@@ -100,7 +100,12 @@ public sealed class McpLayoutTests {
       Assert.DoesNotContain(window.GetVisualDescendants().OfType<TextBox>(), t => t.Text == "/fake/codex" || t.Text == "/fake/claude");
       Assert.DoesNotContain(window.GetVisualDescendants().OfType<ComboBox>(), c => c.Items.OfType<string>().Contains("Claude Code"));
       Assert.Contains("Do not analyze logs", AgentToolsWindow.DefaultTask);
+      // The initial task is an Advanced setting, like X-Office's panel keeps the main view to agents, sessions and the port.
+      Assert.DoesNotContain(window.GetVisualDescendants().OfType<TextBox>(), t => t.Text == AgentToolsWindow.DefaultTask);
+      window.GetVisualDescendants().OfType<Expander>().Single().IsExpanded = true; Dispatcher.UIThread.RunJobs();
       Assert.Equal(AgentToolsWindow.DefaultTask, window.GetVisualDescendants().OfType<TextBox>().Single(t => t.Text == AgentToolsWindow.DefaultTask).Text);
+      // Each installed agent is a row with its location, not an editable path.
+      Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), t => t.Text?.Contains("/fake/codex", StringComparison.Ordinal) == true);
       found = [ThreeAgents[1]]; await window.FindAgentsAsync(); Dispatcher.UIThread.RunJobs();
       var launches = window.GetVisualDescendants().OfType<Button>().Select(b => b.Content as string)
           .Where(c => c?.StartsWith("Launch ", StringComparison.Ordinal) == true && c != "Launch custom").ToArray();
@@ -118,7 +123,7 @@ public sealed class McpLayoutTests {
       window.Hub.AutoOpenDesktopPort = false;
       window.Show(); await window.FindAgentsAsync(); Dispatcher.UIThread.RunJobs();
       Assert.True(ButtonNamed(window, "Register Codex Desktop").IsEffectivelyVisible);
-      Assert.Contains("Codex Desktop: Not registered.", window.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).Single(t => t?.Contains("Codex Desktop:", StringComparison.Ordinal) == true));
+      Assert.Contains("Desktop application · Not registered ·", window.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).Single(t => t?.StartsWith("Desktop application ·", StringComparison.Ordinal) == true));
       Assert.False(window.GetVisualDescendants().OfType<CheckBox>().Single(c => c.Content as string == "Open at startup").IsChecked);
       await window.Hub.RegisterDesktopAsync(window.Hub.Agents[0]);
       await window.FindAgentsAsync(); Dispatcher.UIThread.RunJobs();

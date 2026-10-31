@@ -53,12 +53,13 @@ internal static class McpAgentDiscovery {
       if (gio != null) {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string dir in new[] { dataHome }.Concat(dataDirs).Where(Path.IsPathRooted)) {
-          foreach (string file in new[] { "codex.desktop", "chatgpt.desktop", "com.openai.codex.desktop", "com.openai.chatgpt.desktop",
-              "claude.desktop", "com.anthropic.claude.desktop", "lm-studio.desktop", "lmstudio.desktop" }) {
+          foreach (string file in DesktopEntryFiles) {
             ct.ThrowIfCancellationRequested();
-            string path = Path.Combine(dir, "applications", file);
+            // Vendors spell these files inconsistently (Claude Desktop ships com.anthropic.Claude.desktop), and
+            // Linux file systems are case sensitive, so match the directory listing instead of guessing the case.
+            string? path = FindDesktopFile(Path.Combine(dir, "applications"), file);
             try {
-              if (!File.Exists(path) || !seen.Add(file)) { continue; }
+              if (path == null || !seen.Add(file)) { continue; }
               string entry = File.ReadAllText(path);
               string? label = DesktopEntryName(entry);
               string? program = DesktopProgram(entry);
@@ -110,6 +111,21 @@ internal static class McpAgentDiscovery {
       }
     }
     return result.ToArray();
+  }
+
+  internal static readonly string[] DesktopEntryFiles = [
+    "codex.desktop", "chatgpt.desktop", "com.openai.codex.desktop", "com.openai.chatgpt.desktop",
+    "claude.desktop", "com.anthropic.claude.desktop", "lm-studio.desktop", "lmstudio.desktop",
+  ];
+
+  /// <summary>The existing file whose name equals <paramref name="file"/> ignoring case, or null.</summary>
+  internal static string? FindDesktopFile(string directory, string file) {
+    try {
+      if (!Directory.Exists(directory)) { return null; }
+      string exact = Path.Combine(directory, file);
+      if (File.Exists(exact)) { return exact; }
+      return Directory.EnumerateFiles(directory).FirstOrDefault(p => string.Equals(Path.GetFileName(p), file, StringComparison.OrdinalIgnoreCase));
+    } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
   }
 
   private static Dictionary<string, string> DesktopValues(string text) {

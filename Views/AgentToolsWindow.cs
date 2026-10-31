@@ -17,9 +17,10 @@ namespace MissionPlanner.Views;
 
 /// <summary>
 /// View over the application-wide <see cref="McpAgentHub"/>, laid out like X-Office's assistant panel:
-/// installed agents with Launch, live sessions with Allow/Revoke/Disconnect, the persistent port and
-/// an activity log. Closing this window hides it only; agents keep working until Stop all connections.
-/// The agent operates logs, parameters, missions and every screen through the application itself.
+/// one row per installed agent (name, kind, location, Launch and desktop Register), the live sessions
+/// with Allow/Revoke/Disconnect, the persistent local port and a status line. Everything else (initial
+/// task, working directory, custom executable, session port, proposals, activity log) is under Advanced.
+/// Closing this window hides it only; agents keep working until Stop all connections.
 /// </summary>
 internal sealed class AgentToolsWindow : Window {
   internal const string DefaultTask = "Connect to the Mission Planner MCP server: read the AI_START resource and tools/list, "
@@ -29,8 +30,8 @@ internal sealed class AgentToolsWindow : Window {
   private sealed record SessionRow(MissionPlannerMcpServer Server, McpConnectionInfo Info) {
     public override string ToString() => Info.ToString();
   }
+  private readonly StackPanel _agentRows = new() { Spacing = 6 };
   private readonly WrapPanel _agentButtons = new();
-  private readonly WrapPanel _desktopButtons = new();
   private readonly CheckBox _autoOpen = new() { Content = "Open at startup", Margin = new Thickness(6, 0, 0, 4), VerticalAlignment = VerticalAlignment.Center };
   private readonly TextBlock _agentState = new() { TextWrapping = TextWrapping.Wrap };
   private readonly ListBox _sessions = new() { MinHeight = 72 };
@@ -65,6 +66,7 @@ internal sealed class AgentToolsWindow : Window {
     _autoOpen.IsChecked = Hub.AutoOpenDesktopPort;
     _autoOpen.IsCheckedChanged += (_, _) => { if (_autoOpen.IsChecked is bool wanted && wanted != Hub.AutoOpenDesktopPort) { Hub.AutoOpenDesktopPort = wanted; } };
     var advanced = new Expander { Header = "Advanced", IsExpanded = false, HorizontalAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 6, Children = {
+      new TextBlock { Text = "Initial task for terminal agents" }, _task,
       new TextBlock { Text = "Temporary session port with bearer token (for manually configured clients)", FontWeight = FontWeight.Bold },
       new WrapPanel { Children = { Button("Open session port", StartAsync), Button("Copy connection settings", CopyAsync) } }, _sessionEndpoint,
       new TextBlock { Text = "Terminal working directory" }, _workingDirectory,
@@ -73,29 +75,32 @@ internal sealed class AgentToolsWindow : Window {
       new TextBlock { Text = "Parameter proposals submitted by agents for operator review", FontWeight = FontWeight.Bold },
       _proposals, new WrapPanel { Children = { Button("Review / apply selected", ApplyAsync), Button("Export selected…", ExportAsync) } },
       Button("Attach flight log…", AttachAsync),
+      new TextBlock { Text = "Activity", FontWeight = FontWeight.Bold },
+      _output,
     } } };
+    // Access controls stay reachable even when agent details or Advanced need scrolling.
+    var sessionActions = new WrapPanel { Children = {
+      Button("Allow", () => SessionAction(0)), Button("Revoke", () => SessionAction(1), true),
+      Button("Disconnect", () => SessionAction(2), true), Button("Allow all", AllowAllAsync),
+      Button("Revoke all", RevokeAllAsync, true), Button("Stop all connections", StopAsync, true),
+    } };
     var body = new StackPanel { Spacing = 8, Children = {
       new TextBlock { Text = "AI agent connection", FontSize = 20 },
-      new TextBlock { Text = "Launch gives the agent full control of Mission Planner: screens, controls, missions, parameters, logs and vehicle commands, "
-          + "using whatever is loaded or connected in the application. Provider login belongs to the agent.", TextWrapping = TextWrapping.Wrap },
-      new TextBlock { Text = "Launch an installed agent", FontWeight = FontWeight.Bold },
-      _agentButtons, _desktopButtons, _agentState,
-      new TextBlock { Text = "Initial task for terminal agents" }, _task,
+      new TextBlock { Text = "Mission Planner serves MCP on this computer only. Launch starts an installed agent already connected to it, "
+          + "with full control of screens, missions, parameters, logs and vehicle commands. Provider login belongs to the agent.", TextWrapping = TextWrapping.Wrap },
+      new TextBlock { Text = "Installed agents", FontWeight = FontWeight.Bold },
+      _agentRows, _agentButtons, _agentState,
       new TextBlock { Text = "Sessions — names are reported by the clients", FontWeight = FontWeight.Bold },
       _sessions,
-      new WrapPanel { Children = { Button("Allow", () => SessionAction(0)), Button("Revoke", () => SessionAction(1), true),
-        Button("Disconnect", () => SessionAction(2), true), Button("Allow all", AllowAllAsync), Button("Revoke all", RevokeAllAsync, true),
-        Button("Stop all connections", StopAsync, true) } },
       new TextBlock { Text = "Persistent local port for desktop applications", FontWeight = FontWeight.Bold },
       new WrapPanel { Children = { _desktopPort, Button("Open port", OpenDesktopAsync), Button("Close port", StopDesktopAsync, true), _autoOpen } },
       _desktopEndpoint, _desktopState,
       advanced,
-      new TextBlock { Text = "Activity", FontWeight = FontWeight.Bold },
-      _output,
     } };
-    Content = new Avalonia.Controls.Grid { Margin = new Thickness(12), RowDefinitions = new RowDefinitions("*,Auto"), RowSpacing = 8,
-      Children = { new ScrollViewer { Content = body }, _status } };
-    Avalonia.Controls.Grid.SetRow(_status, 1);
+    Content = new Avalonia.Controls.Grid { Margin = new Thickness(12), RowDefinitions = new RowDefinitions("*,Auto,Auto"), RowSpacing = 8,
+      Children = { new ScrollViewer { Content = body }, sessionActions, _status } };
+    Avalonia.Controls.Grid.SetRow(sessionActions, 1);
+    Avalonia.Controls.Grid.SetRow(_status, 2);
     _output.Text = hub.RecentOutput;
     _onOutput = Output; hub.Output += _onOutput;
     _timer.Tick += (_, _) => Refresh(); _timer.Start();
@@ -114,29 +119,36 @@ internal sealed class AgentToolsWindow : Window {
     _status.Text = $"Found {agents.Length} installed agent(s). Nothing was launched.";
   }
 
-  /// <summary>One Launch button per installed agent, as in X-Office; agents that are not installed have no button.</summary>
+  /// <summary>One row per installed agent, as in X-Office's panel: name, kind and location, then Launch (and Register for desktop apps). Agents that are not installed have no row.</summary>
   private void RefreshAgents(McpAgent[]? agents = null) {
     agents ??= Hub.Agents;
-    _agentButtons.Children.Clear(); _desktopButtons.Children.Clear();
-    var notes = new List<string>();
+    _agentRows.Children.Clear(); _agentButtons.Children.Clear();
+    bool hasDesktop = false;
     foreach (var agent in agents) {
-      _agentButtons.Children.Add(Button($"Launch {agent.Name}", () => LaunchAgentAsync(agent)));
-      if (!agent.IsDesktop) { continue; }
-      string state = McpDesktopRegistration.RegistrationState(agent.Kind, Hub.DesktopPort);
-      bool registered = state == "Registered";
-      _desktopButtons.Children.Add(Button(registered ? $"Unregister {agent.Name}" : $"Register {agent.Name}",
-          () => registered ? UnregisterDesktopAsync(agent) : RegisterDesktopAsync(agent)));
-      notes.Add($"{agent.Name}: {state}.");
+      var actions = new WrapPanel { Children = { Button($"Launch {agent.Name}", () => LaunchAgentAsync(agent)) } };
+      string detail;
+      if (agent.IsDesktop) {
+        string state = McpDesktopRegistration.RegistrationState(agent.Kind, Hub.DesktopPort);
+        bool registered = state == "Registered";
+        actions.Children.Add(Button(registered ? $"Unregister {agent.Name}" : $"Register {agent.Name}",
+            () => registered ? UnregisterDesktopAsync(agent) : RegisterDesktopAsync(agent)));
+        detail = $"Desktop application · {state} · connects through the persistent port {Hub.DesktopPort}";
+        hasDesktop = true;
+      } else {
+        detail = "Terminal agent · opens in a new terminal with its own session port · " + agent.Executable;
+      }
+      _agentRows.Children.Add(new StackPanel { Spacing = 2, Children = {
+        new TextBlock { Text = agent.Name, FontWeight = FontWeight.Bold },
+        new TextBlock { Text = detail, TextWrapping = TextWrapping.Wrap, Opacity = 0.8 },
+        actions,
+      } });
     }
     _agentButtons.Children.Add(Button("Find agents", FindAgentsAsync));
-    if (notes.Count != 0) {
-      notes.Add("Desktop applications read MCP settings when they start: restart them after registering. "
-          + "They see Mission Planner only while the persistent port is open; Register switches on \"Open at startup\".");
-    }
     _agentState.Text = agents.Length == 0
         ? "No installed agents found: install Codex CLI, Claude Code, Codex/ChatGPT Desktop, Claude Desktop or LM Studio, or use a custom executable under Advanced."
-        : string.Join(Environment.NewLine, new[] { "Terminal agents open in a new terminal with the initial task below." }.Concat(notes));
-    _desktopButtons.IsVisible = _desktopButtons.Children.Count != 0;
+        : hasDesktop ? "Desktop applications read MCP settings when they start: restart them after registering. "
+          + "They see Mission Planner only while the persistent port is open; Register switches on \"Open at startup\"." : "";
+    _agentState.IsVisible = _agentState.Text.Length != 0;
     if (_autoOpen.IsChecked != Hub.AutoOpenDesktopPort) { _autoOpen.IsChecked = Hub.AutoOpenDesktopPort; }
   }
 

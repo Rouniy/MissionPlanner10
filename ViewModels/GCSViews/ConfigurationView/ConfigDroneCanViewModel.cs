@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
@@ -35,10 +36,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private readonly Func<DroneCAN.DroneCAN> _canFactory;
   private readonly bool _subscribedToAppState;
   private DroneCAN.DroneCAN? _can;
-  private CommsInjection? _port;
+  private MavlinkCanTransport? _transport;
+  private readonly ConcurrentDictionary<byte, DateTime> _nodeInfoRequests = new();
   private ICommsSerial? _directPort;
   private IDroneCanMulticastSession? _multicastSession;
-  private MAVLinkInterface? _subscribedLink;
   private DroneCanSessionTarget? _observedTarget;
   private DroneCanSessionTarget? _sessionTarget;
   private CancellationTokenSource? _operationCancellation;
@@ -48,7 +49,6 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private long _targetRevision;
   private long _nodeRevision;
   private byte _busInUse;
-  private int _subId = -1;
   private bool _disposed;
 
   public ConfigDroneCanViewModel()
@@ -591,9 +591,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     _targetInvalidated = false;
     long revision = Interlocked.Increment(ref _targetRevision);
     IsConnected = true;
-    StartMavlinkCAN(target, bus, revision);
-    Status = $"Starting MAVLink CAN{bus} for "
-        + $"{target.SystemId}:{target.ComponentId} on the selected modem…";
+    if (StartMavlinkCAN(target, bus, revision)) {
+      Status = $"Starting MAVLink CAN{bus} for "
+          + $"{target.SystemId}:{target.ComponentId} on the selected modem…";
+    }
   }
 
   [RelayCommand]
@@ -1195,95 +1196,86 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     }
   }
 
-  private void StartMavlinkCAN(
+  private bool StartMavlinkCAN(
       DroneCanSessionTarget target, byte bus, long revision) {
     _busInUse = bus;
     _mavlinkCanRun = true;
-    MAVLinkInterface link = target.Link;
-
-    _ = Task.Run(async () => {
-      await Task.Delay(1000).ConfigureAwait(false);
-      while (IsSessionCurrent(target, revision)) {
-        try {
-          link.doCommand(target.SystemId, target.ComponentId,
-              MAVLink.MAV_CMD.CAN_FORWARD, bus, 0, 0, 0, 0, 0, 0, false);
-        } catch {
-        }
-
-        if (IsSessionCurrent(target, revision)) {
-          await Task.Delay(1000).ConfigureAwait(false);
-        }
-      }
-    });
-
-    _port = new CommsInjection();
     _can = CreateCanProtocol();
-
     var can = _can;
-    var port = _port;
 
-    can.FrameReceived += (frame, payload) => {
-      if (!IsCanSessionCurrent(can, target, revision)) {
-        return;
-      }
-      try {
-        if (payload.packet_data.Length > 8) {
-          link.sendPacket(new MAVLink.mavlink_canfd_frame_t(
-                  BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
-                  target.SystemId, target.ComponentId, (byte)(bus - 1),
-                  (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length), payload.packet_data),
-              target.SystemId, target.ComponentId);
-        } else {
-          link.sendPacket(new MAVLink.mavlink_can_frame_t(
-                  BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
-                  target.SystemId, target.ComponentId, (byte)(bus - 1),
-                  (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length), payload.packet_data),
-              target.SystemId, target.ComponentId);
-        }
-      } catch {
-      }
-    };
-
-    port.WriteCallback += (_, bytes) => {
-      if (!IsCanSessionCurrent(can, target, revision)) {
-        return;
-      }
-      var lines = Encoding.ASCII.GetString(bytes.ToArray())
-          .Split(new[] { '\r' }, StringSplitOptions.RemoveEmptyEntries);
-      foreach (var line in lines) {
-        can.ReadMessageSLCAN(line);
-      }
-    };
-
-    _subscribedLink = link;
-    _subId = link.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.CAN_FRAME, m => {
-      if (!IsCanSessionCurrent(can, target, revision)) {
-        return false;
-      }
-      if (m.msgid == (uint)MAVLink.MAVLINK_MSG_ID.CAN_FRAME) {
-        var pkt = (MAVLink.mavlink_can_frame_t)m.data;
-        var cf = new DroneCAN.CANFrame(BitConverter.GetBytes(pkt.id));
-        var payld = new DroneCAN.CANPayload(pkt.data);
-        var ans = string.Format("{0}{1}{2}{3}\r", 'T', cf.ToHex(), pkt.len.ToString("X"),
-            payld.ToHex(DroneCAN.DroneCAN.dlcToDataLength(pkt.len)));
-        port.AppendBuffer(Encoding.ASCII.GetBytes(ans));
-      } else if (m.msgid == (uint)MAVLink.MAVLINK_MSG_ID.CANFD_FRAME) {
-        var pkt = (MAVLink.mavlink_canfd_frame_t)m.data;
-        var cf = new DroneCAN.CANFrame(BitConverter.GetBytes(pkt.id));
-        var payld = new DroneCAN.CANPayload(pkt.data);
-        var ans = string.Format("{0}{1}{2}{3}\r", 'B', cf.ToHex(), pkt.len.ToString("X"),
-            payld.ToHex(DroneCAN.DroneCAN.dlcToDataLength(pkt.len)));
-        port.AppendBuffer(Encoding.ASCII.GetBytes(ans));
-      }
-
-      return true;
-    }, target.SystemId, target.ComponentId, true);
-
+    // One tunnel per link: the transport renews MAV_CMD_CAN_FORWARD, converts frames both ways and
+    // never echoes received frames back to the vehicle.
+    MavlinkCanTransport? transport = MavlinkCanTransport.Open(
+        target.Link, target.SystemId, target.ComponentId, bus,
+        () => IsCanSessionCurrent(can, target, revision), out string? conflict);
+    if (transport == null) {
+      _can = null;
+      Disconnect(conflict ?? "The MAVLink CAN tunnel is busy.");
+      return false;
+    }
+    _transport = transport;
+    ScheduleBusHint(can, target, revision, bus);
     StartCanProtocol(
-        can, port, target, revision,
+        can, transport.Port, target, revision,
         $"Listening for nodes on MAVLink CAN{bus} from "
             + $"{target.SystemId}:{target.ComponentId} on the selected modem…",
         openTransport: false);
+    return true;
+  }
+
+  /// <summary>
+  /// The autopilot forwards only the selected physical port. After a few seconds, tell the operator
+  /// when nothing but the autopilot's own node answered, which is what a device wired to the other
+  /// connector looks like.
+  /// </summary>
+  private void ScheduleBusHint(
+      DroneCAN.DroneCAN can, DroneCanSessionTarget target, long revision, byte bus) {
+    _ = Task.Run(async () => {
+      await Task.Delay(TimeSpan.FromSeconds(6)).ConfigureAwait(false);
+      PostForSession(can, target, revision, () => {
+        byte other = (byte)(bus == 1 ? 2 : 1);
+        int? autopilotNode = AutopilotNodeId(target, bus);
+        if (Nodes.Count == 0) {
+          Status = $"No DroneCAN traffic on MAVLink CAN{bus} yet. Check CAN_P{bus}_DRIVER and the "
+              + $"wiring, or try MAVLink-CAN{other}: the autopilot forwards only the selected port.";
+        } else if (autopilotNode != null && Nodes.All(node => node.Id == autopilotNode)) {
+          Status = $"Only the autopilot itself (node {autopilotNode}) is visible on MAVLink CAN{bus}. "
+              + $"A device wired to the other CAN connector appears only under MAVLink-CAN{other}.";
+        }
+      });
+    });
+  }
+
+  internal static int? AutopilotNodeId(DroneCanSessionTarget target, byte bus) {
+    try {
+      var param = target.Link.MAVlist[target.SystemId, target.ComponentId].param;
+      int driver = param.ContainsKey($"CAN_P{bus}_DRIVER") ? (int)param[$"CAN_P{bus}_DRIVER"].Value : 1;
+      string name = $"CAN_D{driver}_UC_NODE";
+      return param.ContainsKey(name) ? (int)param[name].Value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Asks a node that is still shown as "?" for its name and versions as soon as it announces itself,
+  /// like the native page does, instead of waiting for the stack's one-node-per-ten-seconds sweep.
+  /// </summary>
+  private void RequestNodeInfoIfUnknown(DroneCAN.DroneCAN can, byte node) {
+    if (node == can.SourceNode || can.NodeInfo.ContainsKey(node)) {
+      return;
+    }
+    DateTime now = DateTime.UtcNow;
+    DateTime last = _nodeInfoRequests.GetOrAdd(node, DateTime.MinValue);
+    if (now - last < TimeSpan.FromSeconds(2)) {
+      return;
+    }
+    _nodeInfoRequests[node] = now;
+    try {
+      can.WriteToStreamSLCAN(can.PackageMessageSLCAN(
+          node, 30, can.TransferID++, new DroneCAN.DroneCAN.uavcan_protocol_GetNodeInfo_req()));
+    } catch {
+    }
   }
 
   private void StartCanProtocol(
@@ -1294,6 +1286,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       string connectedStatus,
       bool openTransport) {
     can.NodeAdded += (id, msg) => {
+      // The stack reports its own outgoing NodeStatus as well; this application is not a bus node to configure.
+      if (id == can.SourceNode) {
+        return;
+      }
       PostForSession(can, target, revision, () => {
         if (Nodes.Any(n => n.Id == id)) {
           return;
@@ -1311,6 +1307,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     can.MessageReceived += (frame, msg, transferID) => {
       if (msg is DroneCAN.DroneCAN.uavcan_protocol_NodeStatus ns) {
+        if (frame.SourceNode == can.SourceNode) {
+          return;
+        }
+        RequestNodeInfoIfUnknown(can, frame.SourceNode);
         PostForSession(can, target, revision, () => {
           UpsertNodeStatus(frame.SourceNode, ns);
         });
@@ -1470,25 +1470,21 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     CancelCurrentOperation();
 
     DroneCAN.DroneCAN? can = _can;
-    CommsInjection? port = _port;
+    MavlinkCanTransport? transport = _transport;
     ICommsSerial? directPort = _directPort;
     IDroneCanMulticastSession? multicastSession = _multicastSession;
-    MAVLinkInterface? subscribedLink = _subscribedLink;
-    int subscription = _subId;
     _can = null;
-    _port = null;
+    _transport = null;
     _directPort = null;
     _multicastSession = null;
-    _subscribedLink = null;
-    _subId = -1;
     _sessionTarget = null;
     _sessionRequiresVehicleTarget = false;
+    _nodeInfoRequests.Clear();
 
-    if (subscription != -1 && subscribedLink != null) {
-      try {
-        subscribedLink.UnSubscribeToPacketType(subscription);
-      } catch {
-      }
+    // Unsubscribes from CAN_FRAME and releases the forwarding lease before the stack stops.
+    try {
+      transport?.Dispose();
+    } catch {
     }
 
     // Stop UDP receive/send before stopping DroneCAN. This prevents its final virtual SLCAN close
@@ -1500,11 +1496,6 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     try {
       can?.Stop(ExitSlcanOnLeave);
-    } catch {
-    }
-
-    try {
-      port?.Close();
     } catch {
     }
 

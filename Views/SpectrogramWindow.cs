@@ -9,7 +9,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using MissionPlanner.Utilities;
-using SixLabors.ImageSharp;
+using SkiaSharp;
 using AvaloniaGrid = Avalonia.Controls.Grid;
 using AvaloniaImage = Avalonia.Controls.Image;
 
@@ -140,7 +140,8 @@ public sealed class SpectrogramWindow : Window {
       using var image = Spectrogram.GenerateImage(
           log, out frequencies, out samples, sensor, fields[i], min: minimum, max: maximum);
       using var stream = new MemoryStream();
-      image.SaveAsPng(stream);
+      using var encoded = SKImage.FromBitmap(image).Encode(SKEncodedImageFormat.Png, 100);
+      encoded.SaveTo(stream);
       png[i] = stream.ToArray();
     }
 
