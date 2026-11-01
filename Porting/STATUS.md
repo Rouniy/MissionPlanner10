@@ -1,6 +1,33 @@
 # Avalonia in-place migration status
 
-Updated: **2026-10-31**.
+Updated: **2026-11-01**.
+
+## Release 1.3.83.6 — DroneCAN, firmware catalogs, MCP DroneCAN tools, HUD — 2026-11-01
+
+- Merged on `origin/master` with merge commits, branch history kept: PR #46 (`3348d5014`,
+  DroneCAN over MAVLink CAN, X-Office-style agent window), PR #47 (`56b67bdfa`, DroneCAN and
+  autopilot firmware catalogs, MCP DroneCAN tools, connect-dialog, Install Firmware and HUD
+  fixes), PR #41 (`9fae128d1`, MCP session startup / Disconnect under load / access controls;
+  its September macOS failure was a VLC download timeout, master was merged into the branch
+  with a one-blank-line conflict), PR #48 (`aa4b05ee0`, lifecycle test accepts a raw socket
+  reset), PR #49 (`65d028a19`, `dronecan_node_command` validates the command name before the
+  vehicle-state checks; this was the real cause of a CI-only `McpDroneCanTests` failure).
+- The single-purpose `build: bump local build number` commit `7a445a826` changed only
+  `build/local-build-number.txt` from `5` to `6`. Annotated tag `v1.3.83.6-7a445a82` is on
+  that commit. Release run `41335568622` passed version validation, Linux, Windows, both
+  macOS builds and publishing; CI run on the commit passed. The non-prerelease GitHub Release
+  https://github.com/Rouniy/MissionPlanner10/releases/tag/v1.3.83.6-7a445a82 has 19 assets
+  (eight human packages, two updater ZIPs, four manifests, four signatures, `SHA256SUMS`).
+- Local verification on `65d028a19` before the bump: `MissionPlanner.slnx` Release build
+  0 errors; full Release tests **1909/1909**, none skipped; six `build/porting/check-*.sh`
+  audits pass; `out/packages/missionplanner10_1.3.83.5-65d028a1_amd64.deb` built locally
+  (needed a user-local rustup for `libdflog_ffi.so`), `lintian` clean, extracted payload
+  complete, 12 s Xvfb launch without exceptions.
+- CI flakes seen once each and green on rerun, not fixed: `MavlinkSerialTcpBridgeTests.
+  Loopback_bridge…` (expected 7 bytes, got 0) on the PR #41 branch.
+- This release record is a post-tag documentation commit and does not change released
+  binaries. Next executable step: qualify the published packages on their target platforms;
+  the user is to confirm the HUD now follows the autopilot without "turn, pause, turn".
 
 ## DroneCAN firmware catalog, MCP node tools — 2026-10-30
 
