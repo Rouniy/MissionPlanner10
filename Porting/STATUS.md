@@ -41,8 +41,11 @@ Updated: **2026-11-04**.
 - Not claimed: Windows/macOS serial behaviour of the buffer (the code path is shared; the
   Windows System.IO.Ports read is synchronous so the buffer is only a small saving there);
   hosted CI for the branch; GUI checks of the page texts.
-- Next executable step: open the PR, let CI run, merge only when authorized. Remaining
-  idea, not started: the MAVLink reader could read whole packets instead of byte/header/payload
+- Merged on the user's instruction ("заливай в мастер") as PR #50, merge commit `e8e27767d`
+  on `origin/master`, branch history kept; Linux, Windows and both macOS CI jobs passed before
+  the merge, CodeQL was still running. This note is the post-merge documentation commit.
+- Next executable step: confirm CodeQL on `master`; the next release build picks the change
+  up. Remaining idea, not started: the MAVLink reader could read whole packets instead of byte/header/payload
   now that the port is buffered, and the DroneCAN page could warn when forwarded CAN traffic
   approaches the link's capacity.
 
