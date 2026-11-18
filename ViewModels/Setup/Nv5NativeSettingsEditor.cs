@@ -5,7 +5,9 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -562,19 +564,8 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
             + $"{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}.tmp");
     bool created = false;
     try {
-      var options = new FileStreamOptions {
-        Mode = FileMode.CreateNew,
-        Access = FileAccess.Write,
-        Share = FileShare.None,
-      };
-      if (!OperatingSystem.IsWindows()) {
-        options.UnixCreateMode = OwnerOnly;
-      }
-      using (var stream = new FileStream(temporary, options)) {
+      using (FileStream stream = CreateOwnerOnlyFile(temporary)) {
         created = true;
-        if (!OperatingSystem.IsWindows()) {
-          File.SetUnixFileMode(stream.SafeFileHandle, OwnerOnly);
-        }
         JsonSerializer.Serialize(stream, snapshot,
             new JsonSerializerOptions { WriteIndented = true });
         stream.Flush(flushToDisk: true);
@@ -595,6 +586,34 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   }
 
   private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+  /// <summary>
+  /// Creates a new file that only the current user can open, before anything is written to it.
+  /// Unix gets mode 0600. Windows gets a protected DACL with one entry for the current user, so
+  /// nothing is inherited from a folder that other users may read; the rename into place keeps it.
+  /// </summary>
+  private static FileStream CreateOwnerOnlyFile(string path) {
+    if (OperatingSystem.IsWindows()) {
+      SecurityIdentifier user = WindowsIdentity.GetCurrent().User
+          ?? throw new UnauthorizedAccessException(
+              "The current Windows account has no security identifier.");
+      var security = new FileSecurity();
+      security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+      security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl,
+          AccessControlType.Allow));
+      return new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.FullControl,
+          FileShare.None, 4096, FileOptions.None, security);
+    }
+    var stream = new FileStream(path, new FileStreamOptions {
+      Mode = FileMode.CreateNew,
+      Access = FileAccess.Write,
+      Share = FileShare.None,
+      UnixCreateMode = OwnerOnly,
+    });
+    // The creation mode is filtered by the umask; set it exactly while the file is still empty.
+    File.SetUnixFileMode(stream.SafeFileHandle, OwnerOnly);
+    return stream;
+  }
 
   /// <summary>Exports the committed values and says on the status line whether it worked.</summary>
   internal bool ExportSnapshot(string path) {

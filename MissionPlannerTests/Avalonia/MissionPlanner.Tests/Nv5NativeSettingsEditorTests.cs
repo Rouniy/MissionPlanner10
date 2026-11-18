@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json.Nodes;
 using MissionPlanner;
@@ -404,6 +406,31 @@ public class Nv5NativeSettingsEditorTests {
       Assert.Equal("stale", File.ReadAllText(path + ".tmp"));
       Assert.Equal(Shared, File.GetUnixFileMode(path + ".tmp"));
       Assert.Equal(2, Directory.GetFiles(directory).Length);
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  [Fact]
+  public void Snapshot_export_on_windows_grants_only_the_current_user() {
+    if (!OperatingSystem.IsWindows()) {
+      return;
+    }
+    var bench = new Bench(TwoSettingModem());
+    Nv5NativeSettingsEditor editor = bench.Attach();
+    string directory = Directory.CreateTempSubdirectory("nv5-export-").FullName;
+    try {
+      string path = Path.Combine(directory, "settings.json");
+      Assert.True(editor.ExportSnapshot(path));
+      FileSecurity security = new FileInfo(path).GetAccessControl();
+      AuthorizationRuleCollection rules = security.GetAccessRules(
+          includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier));
+      Assert.True(security.AreAccessRulesProtected);
+      Assert.NotEmpty(rules);
+      SecurityIdentifier user = WindowsIdentity.GetCurrent().User!;
+      foreach (FileSystemAccessRule rule in rules) {
+        Assert.Equal(user, rule.IdentityReference);
+      }
     } finally {
       Directory.Delete(directory, recursive: true);
     }
