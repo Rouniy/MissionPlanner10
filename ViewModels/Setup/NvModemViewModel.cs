@@ -2246,9 +2246,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
         && (name.StartsWith("TX_", StringComparison.Ordinal)
             || name.StartsWith("RX_", StringComparison.Ordinal));
 
-    // The original GTU NVStat panel predates NV5Settings. Old NV4 RFM firmware
-    // publishes NV_TX/NV_RX node names and does not reliably fill the version
-    // majors, so NVStat identifies it from the first five characters only.
+    // Old NV4 RFM firmware predates the passport. It publishes NV_TX/NV_RX node
+    // names and does not reliably fill the version majors, so the legacy status
+    // check identifies it from the first five characters only.
     bool legacyRfmSignature = name.StartsWith("NV_TX", StringComparison.OrdinalIgnoreCase)
         || name.StartsWith("NV_RX", StringComparison.OrdinalIgnoreCase);
     return currentSettingsSignature || legacyRfmSignature;

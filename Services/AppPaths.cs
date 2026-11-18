@@ -34,7 +34,8 @@ public static class AppPaths {
   public static string SitlCacheRoot => Path.Combine(CacheRoot, "sitl");
   public static string SrtmCacheRoot => Path.Combine(CacheRoot, "srtm");
   // Map tiles intentionally retain the official Mission Planner location. The filesystem cache
-  // format is shared, so Mission Planner 10, official Mission Planner and GTU can reuse downloads.
+  // format is shared, so Mission Planner 10, official Mission Planner and other ground stations
+  // that use the same layout can reuse downloads.
   public static string MapTileCacheRoot => _layout.MapTileCacheRoot;
   public static string UpdateCacheRoot => Path.Combine(CacheRoot, "update");
   public static string PluginRoot => Path.Combine(DataRoot, "plugins");

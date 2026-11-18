@@ -557,8 +557,8 @@ internal struct Nv5RangingCaptureDataMessage {
 }
 
 /// <summary>
-/// Registers the SkyComm messages used by NV5Settings with Mission Planner's generated MAVLink
-/// parser. The upstream MAVLink table is public and mutable, which lets the port add a private
+/// Registers the NV modem messages used by the NV Modem page with Mission Planner's generated
+/// MAVLink parser. The upstream MAVLink table is public and mutable, which lets the port add a private
 /// dialect without editing the pinned Mission Planner submodule.
 /// </summary>
 internal static class NvModemMavlinkDialect {

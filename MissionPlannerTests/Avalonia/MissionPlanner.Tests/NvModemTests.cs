@@ -12,7 +12,7 @@ namespace MissionPlanner.Tests;
 
 public partial class NvModemTests {
   [Fact]
-  public void Registers_exact_skycomm_message_layouts_and_crc_extras() {
+  public void Registers_exact_nv_modem_message_layouts_and_crc_extras() {
     NvModemMavlinkDialect.Register();
 
     Assert.Equal(28, Marshal.SizeOf<NvRxStatMessage>());
@@ -569,8 +569,8 @@ public partial class NvModemTests {
         startTimer: false);
     var source = new NvModemLink(new MAVLinkInterface(), "shared UDP");
 
-    // Legacy RFM builds did not reliably report version major 4. GTU NVStat
-    // therefore identifies these nodes by the case-insensitive NV_TX/NV_RX prefix.
+    // Legacy RFM builds did not reliably report version major 4. The legacy status
+    // check therefore identifies these nodes by the case-insensitive NV_TX/NV_RX prefix.
     viewModel.HandlePacket(source, NodeInfoPacket(
         nodeName, 231, 249, hardwareMajor: 0, softwareMajor: 0));
 
@@ -896,7 +896,7 @@ public partial class NvModemTests {
     Assert.Contains("exactly 32 hexadecimal digits", viewModel.Status,
         StringComparison.OrdinalIgnoreCase);
 
-    // GTU accepts lower- or uppercase hex input and normalizes the editor to uppercase.
+    // Lower- or uppercase hex input is accepted, and the editor normalizes it to uppercase.
     viewModel.KeyText = "ffeeddccbbaa99887766554433221100";
     viewModel.SetKeyCommand.Execute(null);
 
