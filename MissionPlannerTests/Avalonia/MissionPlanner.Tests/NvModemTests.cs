@@ -293,7 +293,7 @@ public partial class NvModemTests {
   }
 
   [Fact]
-  public void Carries_nv5settings_descriptions_and_nv4_refresh_compatibility() {
+  public void Carries_reference_descriptions_and_nv4_refresh_compatibility() {
     Assert.True(NvModemCatalog.IsNv4Signature("REFRESH_SETTING"));
     Assert.True(NvModemCatalog.IsNv4Signature("REFRESH_SETTINGS"));
     Assert.True(NvModemCatalog.IsReadOnly("REFRESH_SETTING"));
@@ -539,7 +539,7 @@ public partial class NvModemTests {
   }
 
   [Fact]
-  public void Nv4_detection_uses_strict_gtu_can_node_signature_at_any_id() {
+  public void Nv4_detection_uses_the_strict_can_node_signature_at_any_id() {
     var transport = new FakeTransport();
     using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
         startTimer: false);
@@ -562,7 +562,7 @@ public partial class NvModemTests {
   [Theory]
   [InlineData("NV_TX", "TX")]
   [InlineData("nv_rx_433", "RX")]
-  public void Nv4_rfm_detection_uses_legacy_gtu_nvstat_node_signature(
+  public void Nv4_rfm_detection_uses_the_legacy_node_signature(
       string nodeName, string expectedRole) {
     var transport = new FakeTransport();
     using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
@@ -1224,7 +1224,7 @@ public partial class NvModemTests {
   }
 
   [Fact]
-  public void Factory_preset_is_staged_locally_with_the_nv5settings_lr2021_defaults() {
+  public void Factory_preset_is_staged_locally_with_the_reference_lr2021_defaults() {
     var transport = new FakeTransport();
     using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
         startTimer: false);
@@ -1255,7 +1255,7 @@ public partial class NvModemTests {
   }
 
   [Fact]
-  public void Factory_lora_preset_uses_the_current_nv5settings_acquisition_values() {
+  public void Factory_lora_preset_uses_the_current_reference_acquisition_values() {
     var transport = new FakeTransport();
     using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
         startTimer: false);
