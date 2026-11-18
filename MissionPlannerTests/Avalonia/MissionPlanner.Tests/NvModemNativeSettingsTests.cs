@@ -156,6 +156,72 @@ public partial class NvModemTests {
   }
 
   [Fact]
+  public void A_native_save_recovers_after_both_earlier_links_to_its_modem_closed() {
+    var bench = new NativeBench();
+    bench.Modem.CommitModel = true;
+    var ethernet = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");
+    bench.Transport.Links.Add(ethernet);
+    bench.Passport(NativePassport());
+    bench.ViewModel.HandlePacket(ethernet, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(), 10, 11));
+    Assert.Equal(2, bench.ViewModel.Devices.Count);
+    NvModemDeviceChoice saving = bench.ViewModel.SelectedDevice!;
+    Assert.Same(bench.Link, saving.State.Key.Link);
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    bool? finished = null;
+    bench.ViewModel.NativeSettings.ConfigurationFinished += success => finished = success;
+    Assert.True(bench.ViewModel.NativeSettings.SetValue("CH1_FREQ_HZ", "915000000"));
+    bench.ViewModel.NativeSettings.Save();
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.StatusText.Contains(
+        "Waiting for restart", StringComparison.Ordinal)));
+
+    // Both earlier connections close during the restart and the modem returns on a third.
+    var replacement = new NvModemLink(new MAVLinkInterface(), "modem USB, reopened");
+    bench.Transport.Links.Remove(bench.Link);
+    bench.Transport.Links.Remove(ethernet);
+    bench.Transport.Links.Add(replacement);
+    bench.Modem.Reboot();
+    int sentBefore = bench.Transport.Sent.Count;
+    bench.ViewModel.HandlePacket(replacement, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(timeBootMs: 40), 10, 11));
+
+    NvModemDeviceChoice modem = Assert.Single(bench.ViewModel.Devices);
+    Assert.Same(saving, modem);
+    Assert.Same(modem, bench.ViewModel.SelectedDevice);
+    Assert.Same(replacement, modem.State.Key.Link);
+    Assert.True(bench.Pump(() => finished != null), bench.ViewModel.NativeSettings.StatusText);
+    Assert.True(finished, bench.ViewModel.NativeSettings.StatusText);
+    Assert.All(bench.Transport.Sent.Skip(sentBefore).Where(sent => IsNative(sent.Packet)),
+        sent => Assert.Same(replacement, sent.Link));
+    Assert.Equal(1, bench.Modem.Commits);
+  }
+
+  [Fact]
+  public void A_modem_whose_earlier_links_all_closed_returns_as_one_record() {
+    var bench = new NativeBench();
+    var ethernet = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");
+    bench.Transport.Links.Add(ethernet);
+    NvModemInfoMessage parameters = NativePassport(capabilities: NvModemCapabilities.MavlinkParameters);
+    bench.Passport(parameters);
+    bench.ViewModel.HandlePacket(ethernet, Packet(NvModemMessageIds.NvModemInfo, parameters,
+        10, 11));
+    Assert.Equal(2, bench.ViewModel.Devices.Count);
+    NvModemDeviceChoice selected = bench.ViewModel.SelectedDevice!;
+
+    var replacement = new NvModemLink(new MAVLinkInterface(), "modem USB, reopened");
+    bench.Transport.Links.Remove(bench.Link);
+    bench.Transport.Links.Remove(ethernet);
+    bench.Transport.Links.Add(replacement);
+    bench.ViewModel.HandlePacket(replacement, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(capabilities: NvModemCapabilities.MavlinkParameters, timeBootMs: 40),
+        10, 11));
+
+    NvModemDeviceChoice modem = Assert.Single(bench.ViewModel.Devices);
+    Assert.Same(selected, modem);
+    Assert.Same(replacement, modem.State.Key.Link);
+  }
+
+  [Fact]
   public void One_modem_on_two_open_links_keeps_a_record_per_link() {
     var bench = new NativeBench();
     var second = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");

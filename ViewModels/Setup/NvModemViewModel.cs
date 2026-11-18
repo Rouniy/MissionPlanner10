@@ -1210,11 +1210,21 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     if (matches.Length == 0) {
       return true;
     }
+    NvModemDeviceState[] superseded = [];
     if (matches.Length != 1) {
-      RetireIdentityCandidate(announcedKey);
-      SetStatus("Multiple modem records reported the same UID2; identity migration is blocked.",
-          true);
-      return false;
+      if (matches.Any(device => Equals(device.Key.Link, announcedKey.Link))) {
+        RetireIdentityCandidate(announcedKey);
+        SetStatus("Multiple modem records reported the same UID2; identity migration is blocked.",
+            true);
+        return false;
+      }
+      // Every candidate's connection has closed: they are earlier routes to this one modem. The
+      // record a native save is bound to moves, else the selected one, else the latest heard.
+      NvModemDeviceState chosen = matches.FirstOrDefault(IsNativeSaveRecord)
+          ?? matches.FirstOrDefault(device => ReferenceEquals(device, SelectedState))
+          ?? matches.MaxBy(device => device.LastSeenUtc)!;
+      superseded = [.. matches.Where(device => !ReferenceEquals(device, chosen))];
+      matches = [chosen];
     }
 
     NvModemDeviceState previous = matches[0];
@@ -1243,9 +1253,26 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       return false;
     }
 
+    foreach (NvModemDeviceState stale in superseded) {
+      // An earlier route to the modem that now answers here: packets still arriving from it are
+      // ignored, as for any record whose identity moved.
+      _devices.Remove(stale.Key);
+      _retiredDeviceKeys.Add(stale.Key);
+      if (stale.Choice != null) {
+        Devices.Remove(stale.Choice);
+      }
+    }
     MigrateDeviceIdentity(previous, target, announcedKey, identity, expectedTransition);
     return true;
   }
+
+  /// <summary>The record a native save in progress was sent to: its verified UID on its original
+  /// route and address.</summary>
+  private bool IsNativeSaveRecord(NvModemDeviceState device) =>
+      NativeSettings.Saving && NativeSettings.Target is { } target
+      && target.Uid.AsSpan().SequenceEqual(device.ModemInfo.Uid2 ?? [])
+      && Equals(target.Route, device.Key.Link)
+      && target.System == device.Key.SystemId && target.Component == device.Key.ComponentId;
 
   private void MigrateDeviceIdentity(
       NvModemDeviceState previous,
