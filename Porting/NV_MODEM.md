@@ -138,8 +138,11 @@ never overlap: maintenance commands and reboot wait while a native save is in pr
   that read's catalogue and committed revision and with 64-bit identifiers as strings; until the
   modem is read again after a save, export and import are unavailable. The file includes key
   words, so it is created readable by its owner only: mode 0600 on Linux and macOS, and on
-  Windows a protected access list granting only the current user. **Load snapshot…** stages a
-  matching catalogue's values as edits and stages nothing if any field is invalid.
+  Windows a protected access list granting only the current user. Those permissions are read back
+  from the new file before anything is written to it; a destination that cannot keep them, such
+  as a FAT32 or exFAT drive, is refused and its earlier file is left as it was.
+  **Load snapshot…** stages a matching catalogue's values as edits and stages nothing if any field
+  is invalid.
 - **Transport.** Frames go out on the Mission Planner link where the modem was seen, from the
   application's GCS system id and component 190. Retries resend the identical payload; the
   firmware matches them by transaction nonce, token and sequence. Each modem UID has a transport

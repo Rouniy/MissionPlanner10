@@ -61,7 +61,7 @@ public class Nv5NativeSettingsEditorTests {
     string directory = Directory.CreateTempSubdirectory("nv5-native-").FullName;
     try {
       string path = Path.Combine(directory, "settings.json");
-      Assert.True(editor.SaveSnapshot(path));
+      Assert.True(editor.SaveSnapshot(path, out _));
       if (!OperatingSystem.IsWindows()) {
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
       }
@@ -431,6 +431,49 @@ public class Nv5NativeSettingsEditorTests {
       foreach (FileSystemAccessRule rule in rules) {
         Assert.Equal(user, rule.IdentityReference);
       }
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  [Fact]
+  public void A_destination_that_cannot_keep_permissions_receives_no_keys() {
+    var bench = new Bench(TwoSettingModem());
+    Nv5NativeSettingsEditor editor = bench.Attach();
+    // As on a FAT32 or exFAT drive, the new file does not stay owner-only.
+    editor.OwnerOnlyCheck = _ => false;
+    string directory = Directory.CreateTempSubdirectory("nv5-export-").FullName;
+    try {
+      string path = Path.Combine(directory, "settings.json");
+      File.WriteAllText(path, "earlier export");
+      Assert.False(editor.ExportSnapshot(path));
+      Assert.Contains("cannot restrict the file", editor.StatusText, StringComparison.Ordinal);
+      Assert.Equal("earlier export", File.ReadAllText(path));
+      Assert.Equal(path, Assert.Single(Directory.GetFiles(directory)));
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  [Fact]
+  public void Owner_only_access_is_read_back_from_the_unix_file_mode() {
+    if (OperatingSystem.IsWindows()) {
+      return;
+    }
+    string directory = Directory.CreateTempSubdirectory("nv5-export-").FullName;
+    try {
+      using var stream = new FileStream(Path.Combine(directory, "mode.json"), FileMode.CreateNew,
+          FileAccess.Write);
+      File.SetUnixFileMode(stream.SafeFileHandle,
+          UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherRead);
+      Assert.False(Nv5NativeSettingsEditor.HasOwnerOnlyAccess(stream));
+      File.SetUnixFileMode(stream.SafeFileHandle,
+          UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+      Assert.False(Nv5NativeSettingsEditor.HasOwnerOnlyAccess(stream));
+      // A mount that maps every file to 0700, such as a FAT drive with fmask=077, is owner-only.
+      File.SetUnixFileMode(stream.SafeFileHandle,
+          UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+      Assert.True(Nv5NativeSettingsEditor.HasOwnerOnlyAccess(stream));
     } finally {
       Directory.Delete(directory, recursive: true);
     }

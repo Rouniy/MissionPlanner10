@@ -537,7 +537,8 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   /// <summary>Writes the committed values as a JSON document. Keys are included, so the file
   /// is created readable by its owner only.</summary>
-  internal bool SaveSnapshot(string path) {
+  internal bool SaveSnapshot(string path, out string? failure) {
+    failure = null;
     // Only values confirmed by a read belong to a committed revision; right after a save they are
     // a local merge, and after a refused save the device may already hold a newer revision.
     if (_values.Count == 0 || _target == null || !_readBack) {
@@ -572,35 +573,56 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     try {
       using (FileStream stream = CreateOwnerOnlyFile(temporary)) {
         created = true;
-        JsonSerializer.Serialize(stream, snapshot,
-            new JsonSerializerOptions { WriteIndented = true });
-        stream.Flush(flushToDisk: true);
-      }
-      File.Move(temporary, fullPath, overwrite: true);
-      return true;
-    } catch (Exception exception) when (exception is IOException
-        or UnauthorizedAccessException) {
-      if (created) {
-        try {
-          File.Delete(temporary);
-        } catch (Exception cleanup) when (cleanup is IOException
-            or UnauthorizedAccessException) {
+        if (OwnerOnlyCheck(stream)) {
+          JsonSerializer.Serialize(stream, snapshot,
+              new JsonSerializerOptions { WriteIndented = true });
+          stream.Flush(flushToDisk: true);
+        } else {
+          failure = "Snapshot not exported: the destination cannot restrict the file to your "
+              + "account, as on a FAT32 or exFAT drive. Choose a folder on a drive that keeps "
+              + "file permissions.";
         }
       }
-      return false;
+      if (failure == null) {
+        File.Move(temporary, fullPath, overwrite: true);
+        return true;
+      }
+    } catch (Exception exception) when (exception is IOException
+        or UnauthorizedAccessException) {
     }
+    if (created) {
+      try {
+        File.Delete(temporary);
+      } catch (Exception cleanup) when (cleanup is IOException
+          or UnauthorizedAccessException) {
+      }
+    }
+    return false;
   }
 
   private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
+  private const UnixFileMode GroupOrOther = UnixFileMode.GroupRead | UnixFileMode.GroupWrite
+      | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherWrite
+      | UnixFileMode.OtherExecute;
+
+  /// <summary>
+  /// Restricts a new, still empty export to its owner and reports whether the destination kept
+  /// that; nothing is written otherwise. Tests replace it, as they cannot mount a drive without
+  /// permissions.
+  /// </summary>
+  internal Func<FileStream, bool> OwnerOnlyCheck { get; set; } = TryRestrictToOwner;
+
   /// <summary>
   /// Creates a new file that only the current user can open, before anything is written to it.
-  /// Unix gets mode 0600. Windows gets a protected DACL with one entry for the current user, so
-  /// nothing is inherited from a folder that other users may read; the rename into place keeps it.
+  /// Unix creates it with mode 0600, which the umask can only narrow. Windows gives it a
+  /// protected DACL with one entry for the current user, so nothing is inherited from a folder
+  /// that other users may read; the rename into place keeps it.
   /// </summary>
   private static FileStream CreateOwnerOnlyFile(string path) {
     if (OperatingSystem.IsWindows()) {
-      SecurityIdentifier user = WindowsIdentity.GetCurrent().User
+      using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+      SecurityIdentifier user = identity.User
           ?? throw new UnauthorizedAccessException(
               "The current Windows account has no security identifier.");
       var security = new FileSecurity();
@@ -610,15 +632,53 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.FullControl,
           FileShare.None, 4096, FileOptions.None, security);
     }
-    var stream = new FileStream(path, new FileStreamOptions {
+    return new FileStream(path, new FileStreamOptions {
       Mode = FileMode.CreateNew,
       Access = FileAccess.Write,
       Share = FileShare.None,
       UnixCreateMode = OwnerOnly,
     });
-    // The creation mode is filtered by the umask; set it exactly while the file is still empty.
-    File.SetUnixFileMode(stream.SafeFileHandle, OwnerOnly);
-    return stream;
+  }
+
+  /// <summary>
+  /// Sets the owner-only mode exactly on Unix, where the umask filtered the creation mode, then
+  /// reads the permissions back from the open file. A destination that cannot keep them (a FAT32
+  /// or exFAT drive, a mount that ignores chmod) reports wider access, or none, and fails.
+  /// </summary>
+  private static bool TryRestrictToOwner(FileStream stream) {
+    try {
+      if (!OperatingSystem.IsWindows()) {
+        File.SetUnixFileMode(stream.SafeFileHandle, OwnerOnly);
+      }
+      return HasOwnerOnlyAccess(stream);
+    } catch (Exception exception) when (exception is IOException
+        or UnauthorizedAccessException or InvalidOperationException or NotSupportedException) {
+      return false;
+    }
+  }
+
+  /// <summary>Whether the open file's permissions admit no one but its owner.</summary>
+  internal static bool HasOwnerOnlyAccess(FileStream stream) {
+    if (OperatingSystem.IsWindows()) {
+      using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+      FileSecurity security = stream.GetAccessControl();
+      AuthorizationRuleCollection rules = security.GetAccessRules(
+          includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier));
+      // A file system without ACLs reports no protected list: .NET shows its null DACL as
+      // full access for Everyone.
+      if (identity.User is not { } user || !security.AreAccessRulesProtected
+          || rules.Count == 0) {
+        return false;
+      }
+      foreach (FileSystemAccessRule rule in rules) {
+        if (rule.AccessControlType != AccessControlType.Allow
+            || !user.Equals(rule.IdentityReference)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return (File.GetUnixFileMode(stream.SafeFileHandle) & GroupOrOther) == 0;
   }
 
   /// <summary>Exports the committed values and says on the status line whether it worked.</summary>
@@ -628,10 +688,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
           + "exporting.");
       return false;
     }
-    bool saved = SaveSnapshot(path);
+    bool saved = SaveSnapshot(path, out string? failure);
     SetStatus(saved
         ? "Committed snapshot exported, including configured encryption keys."
-        : "Snapshot export failed.");
+        : failure ?? "Snapshot export failed.");
     return saved;
   }
 
