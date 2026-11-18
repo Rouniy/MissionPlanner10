@@ -121,6 +121,53 @@ public partial class NvModemTests {
     Assert.True(bench.ViewModel.CanReboot);
   }
 
+  [Fact]
+  public void A_native_save_recovers_on_the_link_that_replaced_its_own() {
+    var bench = new NativeBench();
+    bench.Modem.CommitModel = true;
+    bench.Passport(NativePassport());
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    bool? finished = null;
+    bench.ViewModel.NativeSettings.ConfigurationFinished += success => finished = success;
+    Assert.True(bench.ViewModel.NativeSettings.SetValue("CH1_FREQ_HZ", "915000000"));
+    bench.ViewModel.NativeSettings.Save();
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.StatusText.Contains(
+        "Waiting for restart", StringComparison.Ordinal)));
+
+    // The restart replaces the modem's connection, as a re-enumerated USB port does.
+    var replacement = new NvModemLink(new MAVLinkInterface(), "modem USB, reopened");
+    bench.Transport.Links.Remove(bench.Link);
+    bench.Transport.Links.Add(replacement);
+    bench.Modem.Reboot();
+    int sentBefore = bench.Transport.Sent.Count;
+    bench.ViewModel.HandlePacket(replacement, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(timeBootMs: 40), 10, 11));
+
+    NvModemDeviceChoice modem = Assert.Single(bench.ViewModel.Devices);
+    Assert.Same(modem, bench.ViewModel.SelectedDevice);
+    Assert.Same(replacement, modem.State.Key.Link);
+    Assert.True(bench.Pump(() => finished != null), bench.ViewModel.NativeSettings.StatusText);
+    Assert.True(finished, bench.ViewModel.NativeSettings.StatusText);
+    Assert.All(bench.Transport.Sent.Skip(sentBefore).Where(sent => IsNative(sent.Packet)),
+        sent => Assert.Same(replacement, sent.Link));
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready
+        && bench.ViewModel.NativeSettings.ValuesReadBack));
+    Assert.Equal(1, bench.Modem.Commits);
+  }
+
+  [Fact]
+  public void One_modem_on_two_open_links_keeps_a_record_per_link() {
+    var bench = new NativeBench();
+    var second = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");
+    bench.Transport.Links.Add(second);
+    bench.Passport(NativePassport());
+    bench.ViewModel.HandlePacket(second, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(), 10, 11));
+
+    Assert.Equal(2, bench.ViewModel.Devices.Count);
+    Assert.Same(bench.Link, bench.ViewModel.SelectedDevice!.State.Key.Link);
+  }
+
   [AvaloniaTheory]
   [InlineData(860)]
   [InlineData(1120)]

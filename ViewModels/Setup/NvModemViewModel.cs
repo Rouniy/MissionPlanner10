@@ -1184,10 +1184,14 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       return true;
     }
 
+    // A UID that returns on another connection after its own one closed (a re-plugged USB modem,
+    // a reopened network link) is the same modem: its record moves with it, so a native save in
+    // recovery follows it to the new route. Two open links to one modem stay separate records.
+    var openLinks = new HashSet<NvModemLink>(_transport.Snapshot());
     NvModemDeviceState[] matches = [.. _devices.Values.Where(device =>
         device.ModemInfoReady
         && !Equals(device.Key, announcedKey)
-        && Equals(device.Key.Link, announcedKey.Link)
+        && (Equals(device.Key.Link, announcedKey.Link) || !openLinks.Contains(device.Key.Link))
         && SameModemIdentity(device.ModemInfo, identity))];
     if (matches.Length == 0) {
       return true;
@@ -1201,7 +1205,11 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
     NvModemDeviceState previous = matches[0];
     bool expectedTransition = ExpectedIdentityTransitionMatches(previous, announcedKey);
-    if (!expectedTransition && IsOnline(previous)) {
+    // A record whose connection has closed cannot be a second live endpoint, however recently
+    // it was heard.
+    bool previousLive = IsOnline(previous)
+        && (Equals(previous.Key.Link, announcedKey.Link) || openLinks.Contains(previous.Key.Link));
+    if (!expectedTransition && previousLive) {
       RetireIdentityCandidate(announcedKey);
       SetStatus("Two live modem endpoints reported the same UID2; identity migration is blocked.",
           true);
