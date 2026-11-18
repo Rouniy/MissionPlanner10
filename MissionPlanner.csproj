@@ -105,6 +105,7 @@
     <Compile Include="Services/TcpSerialHostListener.cs" />
     <Compile Include="ViewModels/ExternalGuidedViewModel.cs" />
     <Compile Include="ViewModels/MavlinkCanTransport.cs" />
+    <Compile Include="ViewModels/Setup/Nv5NativeSettingsEditor.cs" />
     <Compile Include="Views/DroneCanFieldGraphWindow.cs" />
     <Compile Include="Views/DroneCanSubscriberWindow.cs" />
     <Compile Include="Views/ExternalGuidedView.axaml.cs" />
