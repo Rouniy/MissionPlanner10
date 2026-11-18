@@ -114,10 +114,11 @@ Capability is known only from the passport. A modem first heard through other te
 PARAM read deferred while the page requests the passport: the read is skipped if the passport
 shows configuration transactions, and sent at once if it does not. Firmware that never sends a
 passport is read after 3 s, as before. A transaction-capable modem whose passport arrives later
-than that has therefore already received one read-only `PARAM_REQUEST_LIST`; from its passport on
-it is configured natively and sent no further PARAM traffic. Modem commands and a native save
-never overlap: maintenance commands and reboot wait while a native save is in progress, and
-**Save and restart** waits while a modem command awaits its acknowledgement.
+than that is read the legacy way until it does: a read-only `PARAM_REQUEST_LIST`, repeated after
+each 2 s without a reply, seven requests at most. From its passport on it is configured natively
+and sent no further PARAM traffic. Modem commands and a native save never overlap: maintenance
+commands and reboot wait while a native save is in progress, and **Save and restart** waits while
+a modem command awaits its acknowledgement.
 
 - **Read.** The complete typed catalogue is read, including inactive PHY settings, in the native
   units (carrier frequency in integer Hz). A modem that reports the same boot, catalogue,

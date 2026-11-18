@@ -388,6 +388,23 @@ public partial class NvModemTests {
         sent => sent.Packet is MAVLink.mavlink_param_request_list_t);
   }
 
+  [Fact]
+  public void A_late_passport_ends_the_legacy_read_and_its_retries() {
+    var bench = new NativeBench();
+    int Requests() => bench.Transport.Sent.Count(
+        sent => sent.Packet is MAVLink.mavlink_param_request_list_t);
+    bench.ViewModel.HandlePacket(bench.Link, Packet(NvModemMessageIds.Nv5LinkStatus,
+        new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 1 }, 10, 11));
+    // No passport within 3 s: the legacy read goes out and, unanswered, is repeated every 2 s.
+    Assert.True(bench.Pump(() => Requests() == 4));
+
+    bench.Passport(NativePassport());
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    bench.Pump(() => false, steps: 200);
+    Assert.True(bench.ViewModel.UsesNativeSettings);
+    Assert.Equal(4, Requests());
+  }
+
   [AvaloniaTheory]
   [InlineData(860)]
   [InlineData(1120)]
