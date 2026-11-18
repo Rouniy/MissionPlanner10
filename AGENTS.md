@@ -3,8 +3,8 @@
 Read `Porting/README.md`, `Porting/BASELINE.md`, `Porting/NATIVE_SURFACE.tsv` and
 `Porting/PORT_SOURCE_IMPORT.tsv` before changing the migration architecture.
 
-The root `MissionPlanner.csproj` is being converted in place from WinForms/net472 to the tested
-cross-platform Avalonia/net10 application. The final repository must contain one main product and
+The root `MissionPlanner.csproj` has been converted in place from WinForms/net472 to the tested
+cross-platform Avalonia/net10 application. The repository must contain one main product and
 assembly named `MissionPlanner`; do not add a second sibling application and do not add the old
 `MissionPlanner-Avalonia/external/MissionPlanner` submodule or source dependency.
 
@@ -24,7 +24,9 @@ separately. Never import `bin`, `obj`, `out`, secrets, signing private keys, or 
 The user temporarily disabled Claude. Do not invoke it until that restriction is explicitly lifted.
 If it is re-enabled, use headless `claude -p`; never use `mcp__claude__Agent`.
 
-Work on `port/avalonia-in-place`. Preserve unexpected user changes, use atomic commits, and do not
-merge to `master`, delete the old port repository, or rewrite published history without explicit
-approval. Before each handoff record exact Git state, tests, builds, remaining blockers, and the
-next executable step in `Porting/STATUS.md`.
+Start each change from the latest `origin/master` on a topic branch named
+`type/short-kebab-case-subject` and deliver it as a pull request. `port/avalonia-in-place` is the
+finished, fully merged migration branch; do not use it. Preserve unexpected user changes, use
+atomic commits, and do not merge to `master`, delete the old port repository, or rewrite published
+history without explicit approval. Before each handoff record exact Git state, tests, builds,
+remaining blockers, and the next executable step in `Porting/STATUS.md`.
