@@ -552,31 +552,49 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
           _client.Result.CommittedRevision.ToString(CultureInfo.InvariantCulture),
       ["values"] = items,
     };
-    string temporary = path + ".tmp";
+    // The document holds key words. It is written to a fresh, unpredictably named file that only
+    // this call can have created (CreateNew fails on any existing path, including a symbolic
+    // link) and that is owner-only before the first byte; the rename then replaces the
+    // destination, whose earlier permissions do not carry over.
+    string fullPath = Path.GetFullPath(path);
+    string temporary = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".",
+        $".{Path.GetFileName(fullPath)}."
+            + $"{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}.tmp");
+    bool created = false;
     try {
       var options = new FileStreamOptions {
-        Mode = FileMode.Create,
+        Mode = FileMode.CreateNew,
         Access = FileAccess.Write,
+        Share = FileShare.None,
       };
       if (!OperatingSystem.IsWindows()) {
-        options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        options.UnixCreateMode = OwnerOnly;
       }
       using (var stream = new FileStream(temporary, options)) {
+        created = true;
+        if (!OperatingSystem.IsWindows()) {
+          File.SetUnixFileMode(stream.SafeFileHandle, OwnerOnly);
+        }
         JsonSerializer.Serialize(stream, snapshot,
             new JsonSerializerOptions { WriteIndented = true });
+        stream.Flush(flushToDisk: true);
       }
-      File.Move(temporary, path, overwrite: true);
+      File.Move(temporary, fullPath, overwrite: true);
       return true;
     } catch (Exception exception) when (exception is IOException
         or UnauthorizedAccessException) {
-      try {
-        File.Delete(temporary);
-      } catch (Exception cleanup) when (cleanup is IOException
-          or UnauthorizedAccessException) {
+      if (created) {
+        try {
+          File.Delete(temporary);
+        } catch (Exception cleanup) when (cleanup is IOException
+            or UnauthorizedAccessException) {
+        }
       }
       return false;
     }
   }
+
+  private const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
   /// <summary>Exports the committed values and says on the status line whether it worked.</summary>
   internal bool ExportSnapshot(string path) {
@@ -606,31 +624,22 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       }
       document = JsonNode.Parse(File.ReadAllText(path)) as JsonObject;
     } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-        or JsonException) {
+        or JsonException or ArgumentException or InvalidOperationException) {
       document = null;
     }
-    if (document == null || Integer(document["schema"]) != 1
-        || Text(document["product"]) != ProductName()
-        || Text(document["catalog_id"])
-            != _client.Result.CatalogId.ToString(CultureInfo.InvariantCulture)
-        || document["values"] is not JsonArray entries) {
-      SetStatus("The snapshot format or product catalogue does not match this device.");
-      return false;
+    SortedDictionary<string, string>? edits;
+    string problem;
+    try {
+      edits = SnapshotEdits(document, out problem);
+    } catch (Exception exception) when (exception is InvalidOperationException
+        or ArgumentException or FormatException) {
+      // Duplicate property names and similar defects surface only when a node is read.
+      edits = null;
+      problem = "Invalid or duplicate snapshot field.";
     }
-    var edits = new SortedDictionary<string, string>(StringComparer.Ordinal);
-    foreach (JsonNode? entry in entries) {
-      string name = Text(entry?["name"]) ?? "";
-      string? text = Text(entry?["value"]);
-      if (!_values.TryGetValue(name, out Value? value) || edits.ContainsKey(name)
-          || Integer(entry?["type"]) != value.Type || text == null) {
-        SetStatus("Invalid or duplicate snapshot field.");
-        return false;
-      }
-      if (!Encode(value, text, out _)) {
-        SetStatus($"Invalid value for {name}.");
-        return false;
-      }
-      edits[name] = text;
+    if (edits == null) {
+      SetStatus(problem);
+      return false;
     }
     int staged = 0;
     foreach ((string name, string text) in edits) {
@@ -643,6 +652,40 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     SetStatus($"Loaded {staged} editable settings locally. Review them and use Save and restart "
         + "to commit.");
     return true;
+  }
+
+  /// <summary>The edits a snapshot document stages, or null with the reason it is refused. Any
+  /// invalid field refuses the whole document, so nothing is staged partially.</summary>
+  private SortedDictionary<string, string>? SnapshotEdits(JsonObject? document,
+      out string problem) {
+    problem = "The snapshot format or product catalogue does not match this device.";
+    if (document == null || Integer(document["schema"]) != 1
+        || Text(document["product"]) != ProductName()
+        || Text(document["catalog_id"])
+            != _client.Result.CatalogId.ToString(CultureInfo.InvariantCulture)
+        || document["values"] is not JsonArray entries) {
+      return null;
+    }
+    var edits = new SortedDictionary<string, string>(StringComparer.Ordinal);
+    foreach (JsonNode? entry in entries) {
+      if (entry is not JsonObject item) {
+        problem = "Invalid or duplicate snapshot field.";
+        return null;
+      }
+      string name = Text(item["name"]) ?? "";
+      string? text = Text(item["value"]);
+      if (!_values.TryGetValue(name, out Value? value) || edits.ContainsKey(name)
+          || Integer(item["type"]) != value.Type || text == null) {
+        problem = "Invalid or duplicate snapshot field.";
+        return null;
+      }
+      if (!Encode(value, text, out _)) {
+        problem = $"Invalid value for {name}.";
+        return null;
+      }
+      edits[name] = text;
+    }
+    return edits;
   }
 
   /// <summary>Native value text exactly as the settings table shows it.</summary>

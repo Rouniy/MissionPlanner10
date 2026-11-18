@@ -127,8 +127,13 @@ public partial class NvModemView : UserControl {
       FileTypeFilter = [NativeSnapshotFiles],
     });
     string? path = files.FirstOrDefault()?.TryGetLocalPath();
-    if (path != null) {
+    if (path == null) {
+      return;
+    }
+    try {
       ViewModel.NativeSettings.LoadSnapshot(path);
+    } catch (Exception ex) {
+      await Dialogs.Alert("Load native configuration snapshot", ex.Message);
     }
   }
 
@@ -151,7 +156,11 @@ public partial class NvModemView : UserControl {
             "EXPORT CONFIGURATION")) {
       return;
     }
-    ViewModel.NativeSettings.ExportSnapshot(path);
+    try {
+      ViewModel.NativeSettings.ExportSnapshot(path);
+    } catch (Exception ex) {
+      await Dialogs.Alert("Export NV modem configuration", ex.Message);
+    }
   }
 
   private async void SaveParameters(object? sender, RoutedEventArgs e) {

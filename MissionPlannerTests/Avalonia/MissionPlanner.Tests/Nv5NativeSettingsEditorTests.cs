@@ -380,6 +380,60 @@ public class Nv5NativeSettingsEditorTests {
   }
 
   [Fact]
+  public void Snapshot_export_is_owner_only_whatever_files_already_exist() {
+    if (OperatingSystem.IsWindows()) {
+      return;
+    }
+    var bench = new Bench(TwoSettingModem());
+    Nv5NativeSettingsEditor editor = bench.Attach();
+    string directory = Directory.CreateTempSubdirectory("nv5-export-").FullName;
+    try {
+      const UnixFileMode Shared = UnixFileMode.UserRead | UnixFileMode.UserWrite
+          | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
+      string path = Path.Combine(directory, "settings.json");
+      // An earlier export and a leftover with the old predictable temporary name, both 0644.
+      File.WriteAllText(path, "old");
+      File.SetUnixFileMode(path, Shared);
+      File.WriteAllText(path + ".tmp", "stale");
+      File.SetUnixFileMode(path + ".tmp", Shared);
+
+      Assert.True(editor.ExportSnapshot(path));
+
+      Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+      Assert.Equal("1234", (string?)JsonNode.Parse(File.ReadAllText(path))!["catalog_id"]);
+      Assert.Equal("stale", File.ReadAllText(path + ".tmp"));
+      Assert.Equal(Shared, File.GetUnixFileMode(path + ".tmp"));
+      Assert.Equal(2, Directory.GetFiles(directory).Length);
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  [Theory]
+  [InlineData("""{"schema":1,"product":"modem","catalog_id":"1234","values":[5]}""")]
+  [InlineData("""{"schema":1,"product":"modem","catalog_id":"1234","values":[null]}""")]
+  [InlineData("""{"schema":1,"product":"modem","catalog_id":"1234","values":[["CH1_RNG_EN"]]}""")]
+  [InlineData("""{"schema":1,"product":"modem","catalog_id":"1234","values":[{"name":5,"type":5,"value":"1"}]}""")]
+  [InlineData("""{"schema":1,"product":"modem","catalog_id":"1234","values":"CH1_RNG_EN"}""")]
+  [InlineData("""{"schema":1,"schema":2,"product":"modem","catalog_id":"1234","values":[]}""")]
+  [InlineData("""[1,2]""")]
+  [InlineData("""not json""")]
+  public void A_malformed_snapshot_is_refused_without_staging_or_throwing(string document) {
+    var bench = new Bench(TwoSettingModem());
+    Nv5NativeSettingsEditor editor = bench.Attach();
+    string directory = Directory.CreateTempSubdirectory("nv5-import-").FullName;
+    try {
+      string path = Path.Combine(directory, "settings.json");
+      File.WriteAllText(path, document);
+      Assert.False(editor.LoadSnapshot(path));
+      Assert.False(editor.HasPendingChanges());
+      Assert.Matches("snapshot|field", editor.StatusText);
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  [Fact]
   public void Real_firmware_core_reads_saves_restarts_and_rereads_through_the_editor() {
     string? fixture = Environment.GetEnvironmentVariable("MP_NV5_CONFIG_FIXTURE");
     if (string.IsNullOrEmpty(fixture)) {
