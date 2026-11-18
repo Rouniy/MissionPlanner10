@@ -90,7 +90,7 @@ public class LayoutOverflowTests {
     }
   }
 
-  private static string Report(List<string> problems, double width,
+  internal static string Report(List<string> problems, double width,
       string view = nameof(JoystickSetupWindow)) {
     string body = string.Join(Environment.NewLine, problems.Take(MaxReported));
     string more = problems.Count > MaxReported
@@ -100,7 +100,7 @@ public class LayoutOverflowTests {
     return $"Layout problems in {view} at {width}px:{Environment.NewLine}{body}{more}";
   }
 
-  private static void CollectGridProblems(Visual root, List<string> problems) {
+  internal static void CollectGridProblems(Visual root, List<string> problems) {
     foreach (AvaloniaGrid grid in root.GetVisualDescendants().OfType<AvaloniaGrid>()) {
       // Grids inside a control template are skipped. Avalonia's own templates routinely park a
       // popup or overlay part in a nominal cell it deliberately exceeds - Fluent's ComboBox puts
@@ -148,7 +148,7 @@ public class LayoutOverflowTests {
   /// A NumericUpDown whose spinner buttons have eaten the whole control still draws its chevrons, so
   /// the defect only shows as a text field arranged down to nothing.
   /// </summary>
-  private static void CollectCollapsedInputs(Visual root, List<string> problems) {
+  internal static void CollectCollapsedInputs(Visual root, List<string> problems) {
     foreach (NumericUpDown input in root.GetVisualDescendants().OfType<NumericUpDown>()) {
       if (!input.IsVisible) {
         continue;

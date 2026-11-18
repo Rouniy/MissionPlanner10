@@ -111,7 +111,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   private static readonly Nv5SettingsSnapshots.Entry Empty = Nv5SettingsSnapshots.Entry.Empty;
 
   private readonly Func<uint> _clock;
-  private readonly byte _system;
+  private readonly Func<byte> _system;
   private readonly byte _component;
   private readonly List<Nv5NativeSettingRow> _allRows = [];
   private readonly Dictionary<string, Nv5NativeSettingRow> _rows = new(StringComparer.Ordinal);
@@ -151,9 +151,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   private bool _reloadPending;
 
   /// <param name="clock">Monotonic milliseconds; wraps like the device's uint32 clocks.</param>
-  /// <param name="system">MAVLink system id of this application's frames.</param>
+  /// <param name="system">MAVLink system id of this application's frames, read whenever a
+  /// transaction starts because the application's id can change.</param>
   /// <param name="component">MAVLink component id of this application's frames.</param>
-  internal Nv5NativeSettingsEditor(Func<uint> clock, byte system, byte component) {
+  internal Nv5NativeSettingsEditor(Func<uint> clock, Func<byte> system, byte component) {
     _clock = clock;
     _system = system;
     _component = component;
@@ -207,6 +208,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   internal Target? Target => _target;
   internal bool Busy => _step is not (Step.Idle or Step.Failed);
+
+  /// <summary>A save or abort is in progress; unlike a read, it must not be cut short.</summary>
+  internal bool Saving => Busy && !Reading();
 
   /// <summary>True once a read or save has ended in failure, until the next one starts.</summary>
   internal bool Failed => _step == Step.Failed;
@@ -491,6 +495,19 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     return values;
   }
 
+  /// <summary>Each edited setting with the value read from the device and the edited text.</summary>
+  internal IReadOnlyList<(string Name, string Before, string After)> PendingChangeList() {
+    var changes = new List<(string Name, string Before, string After)>();
+    foreach ((string name, Nv5NativeSettingRow row) in _rows) {
+      Value value = _values[name];
+      if (Editable(value)
+          && (!Encode(value, row.ValueText, out byte[] bytes) || !Same(bytes, value.Bytes))) {
+        changes.Add((name, Display(value), row.ValueText));
+      }
+    }
+    return changes;
+  }
+
   internal bool HasPendingChanges() {
     foreach ((string name, Nv5NativeSettingRow row) in _rows) {
       Value value = _values[name];
@@ -552,6 +569,19 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return false;
     }
   }
+
+  /// <summary>Exports the committed values and says on the status line whether it worked.</summary>
+  internal bool ExportSnapshot(string path) {
+    bool saved = SaveSnapshot(path);
+    SetStatus(saved
+        ? "Committed snapshot exported, including configured encryption keys."
+        : "Snapshot export failed.");
+    return saved;
+  }
+
+  /// <summary>File name offered for an export of this modem's settings.</summary>
+  internal string SuggestedSnapshotName() =>
+      $"nv5-config-{Convert.ToHexString(_target?.Uid ?? []).ToLowerInvariant()}.json";
 
   /// <summary>Stages a JSON document's values as table edits; nothing is written to the device
   /// and a document with any invalid field stages nothing.</summary>
@@ -672,7 +702,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   private uint Now() => _clock();
 
-  private Nv5ConfigurationClient NewClient() => new(_system, _component);
+  private Nv5ConfigurationClient NewClient() => new(_system(), _component);
 
   private string ProductName() =>
       _target?.Product == Nv5ConfigurationClient.ProductKind.Hub ? "hub" : "modem";

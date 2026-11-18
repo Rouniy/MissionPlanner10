@@ -103,6 +103,51 @@ ordinary NV5 `PARAM_SET` completion the page leaves the full reread to **Refresh
 does not race the `MAV_SAVE_MS` debounce, flash commit and reboot. While a write is in flight the
 target selector is locked, and a target/link change during confirmation prevents the operation.
 
+## Native settings on transaction-capable NV5 firmware
+
+The page decides by capability, not by generation. When a modem's passport advertises
+configuration transactions (`NV_MODEM_INFO` capability bit 14), the page reads and saves its
+settings through the NV5 native configuration protocol (`NV5_CONFIG_CONTROL`, `NV5_CONFIG_ITEM`,
+`NV5_CONFIG_RESULT`, `NV5_CONFIG_VALUE`, 53021–53024) and never sends it PARAM requests. The
+parameter table, presets, key and RTSP groups and the PARAM save buttons give way to **Modem
+settings**; maintenance controls and reboot stay. NV4 modems and NV5 firmware without the bit keep
+the PARAM page described above, unchanged. The firmware's ranging, LPS, calibration and capture
+messages (53020, 53025–53028, 53030–53033) are registered with the shared parser for the features
+that use them.
+
+- **Read.** The complete typed catalogue is read, including inactive PHY settings, in the native
+  units (carrier frequency in integer Hz). A modem that reports the same boot, catalogue,
+  committed revision and digest as an earlier read is shown at once; after a restart with the same
+  revision and digest only derived read-only values, such as the link hash, are read again; a read
+  cut short by a restart resumes where it stopped. A modem serves one read session at a time, so a
+  refused read is tried again on its own for up to 30 s, and readers sharing the page's snapshot
+  store never open two sessions on one modem. **Read settings** and **Refresh selected** always read
+  in full.
+- **Save and restart.** Only changed values are staged; a changed key word stages all four words of
+  that radio's key. The modem validates the complete candidate; a refusal names the field and the
+  candidate link hashes. COMMIT is sent at most four times and is never repeated after a restart.
+  Success needs this save's durable receipt and a same-UID readback of the committed and active
+  revision and digest. A lost receipt with matching settings is reported as uncertain, never as
+  saved, and a transaction failure never falls back to PARAM_SET. After success the modem is read
+  again.
+- **Snapshots.** **Export snapshot…** writes the committed values as JSON, with 64-bit identifiers
+  as strings; it includes key words, so the file is created readable by its owner only. **Load
+  snapshot…** stages a matching catalogue's values as edits and stages nothing if any field is
+  invalid.
+- **Transport.** Frames go out on the Mission Planner link where the modem was seen, from the
+  application's GCS system id and component 190. Retries resend the identical payload; the
+  firmware matches them by transaction nonce, token and sequence. Each modem UID has a transport
+  epoch that advances when the passport uptime goes back, so a restart ends the old boot's session.
+  While a save is in progress the selected modem cannot be changed.
+
+Automated tests cover the protocol client, the editor against an in-process modem with a commit
+model, the page's capability switch for NV4 and NV5, and the layout at narrow widths. With
+`MP_NV5_CONFIG_FIXTURE` set to the NV5 firmware's host `nv5-configuration-fixture`, two further
+tests exchange real frames with the firmware's configuration core: one drives the client through
+commit, restart, recovery and readback, the other reads the real catalogue through the editor,
+saves a change, restarts the fixture and reads the change back. They do not cover flash
+interruption, physical restart timing or radio behavior.
+
 ## Acceptance boundary
 
 The shared Mission Planner parser, custom CRC/layouts, multi-link and HUB target isolation, strict

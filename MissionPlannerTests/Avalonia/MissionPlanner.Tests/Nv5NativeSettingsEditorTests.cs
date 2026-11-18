@@ -354,7 +354,7 @@ public class Nv5NativeSettingsEditorTests {
           UseShellExecute = false,
         })!;
     uint now = 1000;
-    var editor = new Nv5NativeSettingsEditor(() => now, 255, 190);
+    var editor = new Nv5NativeSettingsEditor(() => now, () => 255, 190);
     var queue = new Queue<Nv5ConfigurationFrame>();
     editor.SendFrame += (frame, _) => queue.Enqueue(frame);
     Target target = new Nv5FakeModem().Peer;
@@ -460,7 +460,7 @@ public class Nv5NativeSettingsEditorTests {
     internal Func<Nv5NativeSettingsEditor, Nv5ConfigurationFrame, bool>? Drop { get; set; }
 
     internal Nv5NativeSettingsEditor Add(Nv5SettingsSnapshots? store) {
-      var editor = new Nv5NativeSettingsEditor(() => _now, 255, 190) { Snapshots = store };
+      var editor = new Nv5NativeSettingsEditor(() => _now, () => 255, 190) { Snapshots = store };
       var queue = new Queue<Nv5ConfigurationFrame>();
       editor.SendFrame += (frame, _) => {
         queue.Enqueue(frame);

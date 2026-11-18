@@ -10,7 +10,7 @@ using MissionPlanner.Views.Setup;
 
 namespace MissionPlanner.Tests;
 
-public class NvModemTests {
+public partial class NvModemTests {
   [Fact]
   public void Registers_exact_skycomm_message_layouts_and_crc_extras() {
     NvModemMavlinkDialect.Register();
