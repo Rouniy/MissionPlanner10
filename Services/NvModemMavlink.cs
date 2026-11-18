@@ -15,6 +15,19 @@ internal static class NvModemMessageIds {
   internal const uint NvModemInfo = 53016;
   internal const uint NvEncryptionKeysSet = 53017;
   internal const uint NvEncryptionKeysAck = 53018;
+  internal const uint Nv5Distance = 53020;
+  internal const uint Nv5ConfigControl = 53021;
+  internal const uint Nv5ConfigItem = 53022;
+  internal const uint Nv5ConfigResult = 53023;
+  internal const uint Nv5ConfigValue = 53024;
+  internal const uint Nv5CalControl = 53025;
+  internal const uint Nv5CalItem = 53026;
+  internal const uint Nv5CalResult = 53027;
+  internal const uint Nv5CalValue = 53028;
+  internal const uint Nv5LpsStatus = 53030;
+  internal const uint Nv5LpsBeacon = 53031;
+  internal const uint Nv5RangingCapture = 53032;
+  internal const uint Nv5RangingCaptureData = 53033;
 }
 
 internal static class NvModemInfoFlags {
@@ -26,6 +39,8 @@ internal static class NvModemCapabilities {
   internal const ulong MavlinkParameters = 1UL << 0;
   internal const ulong Rtsp = 1UL << 8;
   internal const ulong AtomicEncryptionKeys = 1UL << 12;
+  internal const ulong ConfigurationTransactions = 1UL << 14;
+  internal const ulong CalibrationTransactions = 1UL << 15;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1, Size = 28)]
@@ -151,6 +166,396 @@ internal static class NvEncryptionKeysResults {
   internal const byte Applied = 0;
 }
 
+// NV5 firmware ranging, LPS, native configuration and calibration messages. Fields are in MAVLink
+// wire order; fields after an "Extensions" comment are MAVLink 2 extensions that older firmware
+// omits, so they decode as zero.
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 97)]
+internal struct Nv5DistanceMessage {
+  internal ulong TimeBootUs;
+  internal ulong CycleUs;
+  internal uint CenterHz;
+  internal uint HopSpanHz;
+  internal uint BoundarySeq;
+  internal uint AgeMs;
+  internal uint WindowUs;
+  internal int DistanceCm;
+  internal byte Channel;
+  internal byte ValidCount;
+  internal byte TimeoutCount;
+  internal byte LateCount;
+  internal byte Status;
+  internal byte Calibration;
+  internal byte Flags;
+
+  // Extensions.
+  internal ulong BankRevision;
+  internal ulong CalibrationEpoch;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+  internal byte[] CalibrationId;
+
+  internal float RawMetres;
+  internal float CorrectedMetres;
+  internal float IndependentVariance;
+  internal float PersistentVariance;
+  internal byte CalibrationStatus;
+  internal byte ReferenceScope;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 75)]
+internal struct Nv5ConfigControlMessage {
+  internal ulong BootNonce;
+  internal ulong ClientNonce;
+  internal ulong Token;
+  internal ulong ExpectedRevision;
+  internal uint Sequence;
+  internal ushort Index;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] Digest;
+
+  internal byte Operation;
+  internal byte Scope;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 101)]
+internal struct Nv5ConfigItemMessage {
+  internal ulong BootNonce;
+  internal ulong ClientNonce;
+  internal ulong Token;
+  internal uint Sequence;
+  internal ushort Offset;
+  internal ushort TotalLength;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+  internal byte[] Name;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 48)]
+  internal byte[] Data;
+
+  internal byte ValueType;
+  internal byte Length;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 251)]
+internal struct Nv5ConfigResultMessage {
+  internal ulong BootNonce;
+  internal ulong ClientNonce;
+  internal ulong Token;
+  internal ulong ReceiptBootNonce;
+  internal ulong TransactionRevision;
+  internal ulong CommittedRevision;
+  internal ulong ActiveRevision;
+  internal ulong SnapshotRevision;
+  internal uint Sequence;
+  internal uint NextSequence;
+  internal uint CatalogId;
+  internal uint Capabilities;
+  internal uint LeaseMs;
+  internal uint Channel1LinkHash;
+  internal uint Channel2LinkHash;
+  internal ushort SettingCount;
+  internal ushort ErrorSetting;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] CommittedDigest;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] ActiveDigest;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] TransactionDigest;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] SnapshotDigest;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+  internal byte[] ErrorName;
+
+  internal byte Operation;
+  internal byte Scope;
+  internal byte State;
+  internal byte Result;
+  internal byte RestartRequired;
+  internal byte IncompleteValue;
+  internal byte CommittedKnown;
+  internal byte CandidateRestartRequired;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 121)]
+internal struct Nv5ConfigValueMessage {
+  internal ulong BootNonce;
+  internal ulong ClientNonce;
+  internal ulong Token;
+  internal ulong Revision;
+  internal uint Sequence;
+  internal uint CatalogId;
+  internal ushort Index;
+  internal ushort SettingCount;
+  internal ushort SettingId;
+  internal ushort Offset;
+  internal ushort TotalLength;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+  internal byte[] Name;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 48)]
+  internal byte[] Data;
+
+  internal byte ValueType;
+  internal byte Length;
+  internal byte Flags;
+  internal byte Scope;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 75)]
+internal struct Nv5CalControlMessage {
+  internal ulong BootNonce;
+  internal ulong ClientNonce;
+  internal ulong Token;
+  internal ulong ExpectedRevision;
+  internal uint Sequence;
+  internal ushort Index;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] Digest;
+
+  internal byte Operation;
+  internal byte Scope;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 101)]
+internal struct Nv5CalItemMessage {
+  internal ulong BootNonce;
+  internal ulong ClientNonce;
+  internal ulong Token;
+  internal uint Sequence;
+  internal ushort Offset;
+  internal ushort TotalLength;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+  internal byte[] Name;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 48)]
+  internal byte[] Data;
+
+  internal byte ValueType;
+  internal byte Length;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 243)]
+internal struct Nv5CalResultMessage {
+  internal ulong BootNonce;
+  internal ulong ClientNonce;
+  internal ulong Token;
+  internal ulong ReceiptBootNonce;
+  internal ulong TransactionRevision;
+  internal ulong CommittedRevision;
+  internal ulong ActiveRevision;
+  internal ulong SnapshotRevision;
+  internal uint Sequence;
+  internal uint NextSequence;
+  internal uint CatalogId;
+  internal uint Capabilities;
+  internal uint LeaseMs;
+  internal ushort SettingCount;
+  internal ushort ErrorSetting;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] CommittedDigest;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] ActiveDigest;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] TransactionDigest;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+  internal byte[] SnapshotDigest;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+  internal byte[] ErrorName;
+
+  internal byte Operation;
+  internal byte Scope;
+  internal byte State;
+  internal byte Result;
+  internal byte RestartRequired;
+  internal byte IncompleteValue;
+  internal byte CommittedKnown;
+  internal byte CandidateRestartRequired;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 121)]
+internal struct Nv5CalValueMessage {
+  internal ulong BootNonce;
+  internal ulong ClientNonce;
+  internal ulong Token;
+  internal ulong Revision;
+  internal uint Sequence;
+  internal uint CatalogId;
+  internal ushort Index;
+  internal ushort SettingCount;
+  internal ushort SettingId;
+  internal ushort Offset;
+  internal ushort TotalLength;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+  internal byte[] Name;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 48)]
+  internal byte[] Data;
+
+  internal byte ValueType;
+  internal byte Length;
+  internal byte Flags;
+  internal byte Scope;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 167)]
+internal struct Nv5LpsStatusMessage {
+  internal ulong BootNonce;
+  internal ulong RuntimeEpoch;
+  internal ulong SnapshotSeq;
+  internal ulong SnapshotTimeUs;
+  internal ulong DatumId;
+  internal ulong Challenge;
+  internal ulong CalibrationRevision;
+  internal ulong PoseTimeUs;
+  internal ulong LastAttemptBurst;
+  internal uint FieldGeneration;
+  internal uint PoseValidForUs;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+  internal float[] PositionEnu;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
+  internal float[] VelocityEn;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)]
+  internal float[] CovarianceEnu;
+
+  internal uint AcceptedBursts;
+  internal uint RejectedBursts;
+  internal uint OutputDrops;
+  internal uint DiscardedResults;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 18)]
+  internal byte[] Uid;
+
+  internal byte LastAttemptStatus;
+  internal byte Role;
+  internal byte Channel;
+  internal byte Status;
+  internal byte AltitudeStatus;
+  internal byte OwnerFlags;
+  internal byte BeaconMask;
+
+  // Extensions.
+  internal byte CalibrationStatus;
+  internal byte CalibratedMask;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 167)]
+internal struct Nv5LpsBeaconMessage {
+  internal ulong BootNonce;
+  internal ulong RuntimeEpoch;
+  internal ulong SnapshotSeq;
+  internal ulong SnapshotTimeUs;
+  internal ulong DatumId;
+  internal ulong Burst;
+  internal ulong Observation;
+  internal ulong LastAttemptBurst;
+  internal ulong AcquiredAtUs;
+  internal ulong CompletedAtUs;
+  internal uint FieldGeneration;
+  internal uint BeaconId;
+  internal uint Address;
+  internal float RawMetres;
+  internal float Metres;
+  internal float Variance;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 18)]
+  internal byte[] Uid;
+
+  internal byte Index;
+  internal byte Flags;
+  internal byte Exchanges;
+  internal byte AttemptStatus;
+  internal byte SolverResult;
+
+  // Extensions.
+  internal ulong BankRevision;
+  internal ulong CalibrationBinding;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+  internal byte[] CalibrationId;
+
+  internal float PersistentVariance;
+  internal byte Eligible;
+  internal byte Exclusion;
+  internal byte CalibrationStatus;
+  internal byte ReferenceScope;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 25)]
+internal struct Nv5RangingCaptureMessage {
+  internal ulong Token;
+  internal uint Sequence;
+  internal uint PeerId;
+  internal ushort Offset;
+  internal byte Operation;
+  internal byte Channel;
+  internal byte Kind;
+  internal byte Scope;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 229)]
+internal struct Nv5RangingCaptureDataMessage {
+  internal ulong BootNonce;
+  internal ulong Token;
+  internal uint Sequence;
+  internal ushort Offset;
+  internal ushort TotalLength;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 200)]
+  internal byte[] Data;
+
+  internal byte Length;
+  internal byte Status;
+  internal byte TargetSystem;
+  internal byte TargetComponent;
+  internal byte SchemaVersion;
+}
+
 /// <summary>
 /// Registers the SkyComm messages used by NV5Settings with Mission Planner's generated MAVLink
 /// parser. The upstream MAVLink table is public and mutable, which lets the port add a private
@@ -186,6 +591,32 @@ internal static class NvModemMavlinkDialect {
         typeof(NvEncryptionKeysSetMessage)),
     new(NvModemMessageIds.NvEncryptionKeysAck, "NV_ENCRYPTION_KEYS_ACK", 61, 19, 19,
         typeof(NvEncryptionKeysAckMessage)),
+    new(NvModemMessageIds.Nv5Distance, "NV5_DISTANCE", 90, 47, 97,
+        typeof(Nv5DistanceMessage)),
+    new(NvModemMessageIds.Nv5ConfigControl, "NV5_CONFIG_CONTROL", 193, 75, 75,
+        typeof(Nv5ConfigControlMessage)),
+    new(NvModemMessageIds.Nv5ConfigItem, "NV5_CONFIG_ITEM", 75, 101, 101,
+        typeof(Nv5ConfigItemMessage)),
+    new(NvModemMessageIds.Nv5ConfigResult, "NV5_CONFIG_RESULT", 0, 251, 251,
+        typeof(Nv5ConfigResultMessage)),
+    new(NvModemMessageIds.Nv5ConfigValue, "NV5_CONFIG_VALUE", 241, 121, 121,
+        typeof(Nv5ConfigValueMessage)),
+    new(NvModemMessageIds.Nv5CalControl, "NV5_CAL_CONTROL", 233, 75, 75,
+        typeof(Nv5CalControlMessage)),
+    new(NvModemMessageIds.Nv5CalItem, "NV5_CAL_ITEM", 219, 101, 101,
+        typeof(Nv5CalItemMessage)),
+    new(NvModemMessageIds.Nv5CalResult, "NV5_CAL_RESULT", 126, 243, 243,
+        typeof(Nv5CalResultMessage)),
+    new(NvModemMessageIds.Nv5CalValue, "NV5_CAL_VALUE", 73, 121, 121,
+        typeof(Nv5CalValueMessage)),
+    new(NvModemMessageIds.Nv5LpsStatus, "NV5_LPS_STATUS", 199, 165, 167,
+        typeof(Nv5LpsStatusMessage)),
+    new(NvModemMessageIds.Nv5LpsBeacon, "NV5_LPS_BEACON", 108, 127, 167,
+        typeof(Nv5LpsBeaconMessage)),
+    new(NvModemMessageIds.Nv5RangingCapture, "NV5_RANGING_CAPTURE", 181, 25, 25,
+        typeof(Nv5RangingCaptureMessage)),
+    new(NvModemMessageIds.Nv5RangingCaptureData, "NV5_RANGING_CAPTURE_DATA", 53, 229, 229,
+        typeof(Nv5RangingCaptureDataMessage)),
   ];
 }
 
