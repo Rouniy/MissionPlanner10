@@ -541,8 +541,8 @@ public partial class NvModemTests {
   [Fact]
   public void Nv4_detection_uses_the_strict_can_node_signature_at_any_id() {
     var transport = new FakeTransport();
-    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
-        startTimer: false);
+    DateTime now = DateTime.UtcNow;
+    using var viewModel = new NvModemViewModel(transport, () => now, startTimer: false);
     var source = new NvModemLink(new MAVLinkInterface(), "shared TCP");
 
     viewModel.HandlePacket(source, NodeInfoPacket("camera.node", 41, 212));
@@ -555,8 +555,20 @@ public partial class NvModemTests {
 
     NvModemDeviceChoice modem = Assert.Single(viewModel.Devices);
     Assert.Contains("NV4 199:254", modem.Label, StringComparison.Ordinal);
-    Assert.Contains(transport.Sent, sent => sent.SystemId == 199 && sent.ComponentId == 254
-        && sent.Packet is MAVLink.mavlink_param_request_list_t);
+    AssertParameterListAfterPassportWait(viewModel, transport, ref now, 199, 254);
+  }
+
+  // A modem first seen without its passport is read as a PARAM list only once the page has waited
+  // for the passport, which could show that it is configured through native transactions.
+  private static void AssertParameterListAfterPassportWait(NvModemViewModel viewModel,
+      FakeTransport transport, ref DateTime now, byte systemId, byte componentId) {
+    bool Requested(FakeTransport.SentPacket sent) => sent.SystemId == systemId
+        && sent.ComponentId == componentId
+        && sent.Packet is MAVLink.mavlink_param_request_list_t;
+    Assert.DoesNotContain(transport.Sent, Requested);
+    now += TimeSpan.FromSeconds(3);
+    viewModel.ServiceTransactions();
+    Assert.Single(transport.Sent, Requested);
   }
 
   [Theory]
@@ -565,8 +577,8 @@ public partial class NvModemTests {
   public void Nv4_rfm_detection_uses_the_legacy_node_signature(
       string nodeName, string expectedRole) {
     var transport = new FakeTransport();
-    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
-        startTimer: false);
+    DateTime now = DateTime.UtcNow;
+    using var viewModel = new NvModemViewModel(transport, () => now, startTimer: false);
     var source = new NvModemLink(new MAVLinkInterface(), "shared UDP");
 
     // Legacy RFM builds did not reliably report version major 4. The legacy status
@@ -577,8 +589,7 @@ public partial class NvModemTests {
     NvModemDeviceChoice modem = Assert.Single(viewModel.Devices);
     Assert.Contains("NV4 231:249", modem.Label, StringComparison.Ordinal);
     Assert.Contains(expectedRole, modem.Label, StringComparison.Ordinal);
-    Assert.Contains(transport.Sent, sent => sent.SystemId == 231 && sent.ComponentId == 249
-        && sent.Packet is MAVLink.mavlink_param_request_list_t);
+    AssertParameterListAfterPassportWait(viewModel, transport, ref now, 231, 249);
   }
 
   [Fact]
@@ -743,6 +754,9 @@ public partial class NvModemTests {
     viewModel.HandlePacket(first, ParameterPacket("MODEM_PROFILE", 7, 1, 2, 1, 68));
     Assert.Single(viewModel.Parameters);
     viewModel.HandlePacket(second, Packet(NvModemMessageIds.Nv5LinkStatus, status, 2, 68));
+    // Neither modem sent a passport, so their first reads go out once the page stops waiting.
+    now += TimeSpan.FromSeconds(3);
+    viewModel.ServiceTransactions();
 
     transport.Sent.Clear();
     viewModel.SelectedDevice = viewModel.Devices.Single(item =>
@@ -1184,6 +1198,10 @@ public partial class NvModemTests {
     var source = new NvModemLink(new MAVLinkInterface(), "UDP silent modem");
     var status = new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 0 };
     viewModel.HandlePacket(source, Packet(NvModemMessageIds.Nv5LinkStatus, status, 5, 68));
+    // Without a passport the first read goes out once the page stops waiting for one.
+    now += TimeSpan.FromSeconds(3);
+    viewModel.ServiceTransactions();
+    Assert.Single(transport.Sent, sent => sent.Packet is MAVLink.mavlink_param_request_list_t);
     transport.Sent.Clear();
 
     for (int retry = 0; retry < 6; retry++) {
@@ -1208,6 +1226,9 @@ public partial class NvModemTests {
     var source = new NvModemLink(new MAVLinkInterface(), "UDP slow NV5");
     viewModel.HandlePacket(source, Packet(NvModemMessageIds.Nv5LinkStatus,
         new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 0 }, 18, 68));
+    // Without a passport the first read goes out once the page stops waiting for one.
+    now += TimeSpan.FromSeconds(3);
+    viewModel.ServiceTransactions();
     viewModel.HandlePacket(source, ParameterPacket("MODEM_PROFILE", 7,
         (byte)MAVLink.MAV_PARAM_TYPE.UINT32, 3, 18, 68));
     transport.Sent.Clear();

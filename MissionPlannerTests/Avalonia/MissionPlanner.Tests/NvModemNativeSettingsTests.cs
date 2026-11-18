@@ -168,6 +168,23 @@ public partial class NvModemTests {
     Assert.Same(bench.Link, bench.ViewModel.SelectedDevice!.State.Key.Link);
   }
 
+  [Fact]
+  public void A_capable_modem_heard_before_its_passport_is_never_sent_params() {
+    var bench = new NativeBench();
+    bench.ViewModel.HandlePacket(bench.Link, Packet(NvModemMessageIds.Nv5LinkStatus,
+        new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 1 }, 10, 11));
+    bench.Pump(() => false, steps: 5);
+    Assert.DoesNotContain(bench.Transport.Sent,
+        sent => sent.Packet is MAVLink.mavlink_param_request_list_t);
+
+    bench.Passport(NativePassport());
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    bench.Pump(() => false, steps: 50);
+    Assert.True(bench.ViewModel.UsesNativeSettings);
+    Assert.DoesNotContain(bench.Transport.Sent,
+        sent => sent.Packet is MAVLink.mavlink_param_request_list_t);
+  }
+
   [AvaloniaTheory]
   [InlineData(860)]
   [InlineData(1120)]

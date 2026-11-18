@@ -171,7 +171,12 @@ internal sealed class NvModemDeviceState {
   internal NvModemDeviceKey Key { get; set; }
   internal NvModemGeneration Generation { get; set; }
   internal uint ProductProfile { get; set; }
+  internal DateTime FirstSeenUtc { get; set; }
   internal DateTime LastSeenUtc { get; set; }
+
+  /// <summary>A PARAM list read waits for the passport, which says whether the modem is
+  /// configured through native transactions instead.</summary>
+  internal bool ParameterRequestDeferred { get; set; }
   internal int ExpectedParameterCount { get; set; }
   internal Dictionary<string, double> Parameters { get; } = new(StringComparer.Ordinal);
   internal Dictionary<string, byte> ParameterTypes { get; } = new(StringComparer.Ordinal);
@@ -233,6 +238,10 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private static readonly TimeSpan ParameterListTimeout = TimeSpan.FromSeconds(3);
   private static readonly TimeSpan ParameterListRetry = TimeSpan.FromSeconds(2);
   private static readonly TimeSpan ExpectedIdentityTransition = TimeSpan.FromSeconds(15);
+
+  // How long a newly seen modem's PARAM read waits for its passport. The page requests the
+  // passport on discovery; firmware that never sends one is read after this.
+  private static readonly TimeSpan PassportWait = TimeSpan.FromSeconds(3);
   private const int MaximumWriteAttempts = 3;
   private const int MaximumParameterListRetries = 6;
   private const ushort SetTransmitEnabledCommand = 42010;
@@ -1093,7 +1102,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     bool inserted;
     if (device == null) {
       inserted = true;
-      device = new NvModemDeviceState(key);
+      device = new NvModemDeviceState(key) { FirstSeenUtc = _utcNow() };
       _devices.Add(key, device);
       device.Choice = new NvModemDeviceChoice(device);
       Devices.Add(device.Choice);
@@ -1110,6 +1119,11 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       device.ModemInfo = modemInfo;
       device.ModemInfoReady = true;
       ObserveNativeBoot(modemInfo);
+      if (device.ParameterRequestDeferred) {
+        // The capability is known now: the deferred read goes out, unless it is native.
+        device.ParameterRequestDeferred = false;
+        SendParameterRequestList(device);
+      }
     }
 
     device.LastSeenUtc = _utcNow();
@@ -2154,6 +2168,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       if (SupportsNativeSettings(device)) {
         // Its settings are read through configuration transactions, never as a PARAM list.
         device.ParameterListInProgress = false;
+      } else if (device.ParameterRequestDeferred && now - device.FirstSeenUtc >= PassportWait) {
+        // No passport arrived: older firmware, read as before.
+        SendParameterRequestList(device);
       }
       if (!device.ParameterListInProgress) {
         continue;
@@ -2200,8 +2217,14 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private void SendParameterRequestList(NvModemDeviceState device, bool retry = false) {
     if (SupportsNativeSettings(device)) {
       device.ParameterListInProgress = false;
+      device.ParameterRequestDeferred = false;
       return;
     }
+    if (!device.ModemInfoReady && _utcNow() - device.FirstSeenUtc < PassportWait) {
+      device.ParameterRequestDeferred = true;
+      return;
+    }
+    device.ParameterRequestDeferred = false;
     if (!retry) {
       device.ParameterRefreshPending = true;
     }
