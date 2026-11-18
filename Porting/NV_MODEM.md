@@ -39,11 +39,15 @@ lost while the setup page is still closed. An ordinary `AUTOPILOT_VERSION` is no
 a flight controller as a modem. NV4 firmware advertises either `REFRESH_SETTING` or the older
 `REFRESH_SETTINGS`; the page recognizes both and always writes the advertised name.
 The shared passport is accepted only at schema version 1, generation 4 or 5, and with the MAVLink
-parameter capability bit set. A nonzero `UID2` is the durable device identity. If an offline modem
-returns on the same Mission Planner link with a new system/component address, its parameter and UI
-state moves to the new address instead of creating a duplicate. An address change just written by
-this page is also accepted after `MAV_SAVE_MS` persistence. Concurrent live duplicates, ambiguous
-UIDs, occupied target addresses and identity changes during a write are rejected.
+parameter capability bit set. A nonzero `UID2` is the durable device identity. If a modem returns
+with a new system/component address, on the same Mission Planner link once offline or on another
+link once its own connection closed, its parameter and UI state moves to the new address instead
+of creating a duplicate. Records left on closed connections are earlier routes to the same modem:
+they never count as live duplicates and are retired when it moves. An address change just written
+by this page is accepted at once: through `PARAM_SET` after `MAV_SAVE_MS` persistence, and through
+a native save of `MAV_SYS_ID` (system ID) or `LOCAL_IP_4` (component ID). A second live address on
+one link, ambiguous UIDs, occupied target addresses and identity changes during a write are
+rejected. Two open links to one modem keep a record each.
 
 ## Settings behavior
 

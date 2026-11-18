@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -296,6 +297,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     };
     NativeSettings.BusyChanged += _ => RefreshControls();
     NativeSettings.EditsChanged += RefreshControls;
+    NativeSettings.CommitSent += ArmNativeIdentityTransition;
     NativeSettings.PropertyChanged += (_, args) => {
       if (args.PropertyName == nameof(Nv5NativeSettingsEditor.CanSave)) {
         OnPropertyChanged(nameof(CanSaveNativeSettings));
@@ -1230,35 +1232,35 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     if (matches.Length == 0) {
       return true;
     }
-    NvModemDeviceState[] superseded = [];
-    if (matches.Length != 1) {
-      if (matches.Any(device => Equals(device.Key.Link, announcedKey.Link))) {
-        RetireIdentityCandidate(announcedKey);
-        SetStatus("Multiple modem records reported the same UID2; identity migration is blocked.",
-            true);
-        return false;
-      }
-      // Every candidate's connection has closed: they are earlier routes to this one modem. The
-      // record a native save is bound to moves, else the selected one, else the latest heard.
-      NvModemDeviceState chosen = matches.FirstOrDefault(IsNativeSaveRecord)
-          ?? matches.FirstOrDefault(device => ReferenceEquals(device, SelectedState))
-          ?? matches.MaxBy(device => device.LastSeenUtc)!;
-      superseded = [.. matches.Where(device => !ReferenceEquals(device, chosen))];
-      matches = [chosen];
+    // A record whose connection has closed is an earlier route to this modem, never a second
+    // live endpoint, however recently it was heard: only a record on the announcing link can
+    // conflict with the new address.
+    NvModemDeviceState[] sameLink =
+        [.. matches.Where(device => Equals(device.Key.Link, announcedKey.Link))];
+    if (sameLink.Length > 1) {
+      RetireIdentityCandidate(announcedKey);
+      SetStatus("Multiple modem records reported the same UID2; identity migration is blocked.",
+          true);
+      return false;
     }
-
-    NvModemDeviceState previous = matches[0];
-    bool expectedTransition = ExpectedIdentityTransitionMatches(previous, announcedKey);
-    // A record whose connection has closed cannot be a second live endpoint, however recently
-    // it was heard.
-    bool previousLive = IsOnline(previous)
-        && (Equals(previous.Key.Link, announcedKey.Link) || openLinks.Contains(previous.Key.Link));
-    if (!expectedTransition && previousLive) {
+    if (sameLink.Length == 1 && IsOnline(sameLink[0])
+        && !ExpectedIdentityTransitionMatches(sameLink[0], announcedKey)) {
       RetireIdentityCandidate(announcedKey);
       SetStatus("Two live modem endpoints reported the same UID2; identity migration is blocked.",
           true);
       return false;
     }
+
+    // One record moves to the new address: the one a native save is bound to, else the selected
+    // one, so the page keeps following the modem; else the one on this link, else the latest
+    // heard. The others are earlier routes to the same modem and are retired.
+    NvModemDeviceState previous = matches.FirstOrDefault(IsNativeSaveRecord)
+        ?? matches.FirstOrDefault(device => ReferenceEquals(device, SelectedState))
+        ?? sameLink.FirstOrDefault()
+        ?? matches.MaxBy(device => device.LastSeenUtc)!;
+    NvModemDeviceState[] superseded =
+        [.. matches.Where(device => !ReferenceEquals(device, previous))];
+    bool expectedTransition = ExpectedIdentityTransitionMatches(previous, announcedKey);
     if (IsBusy || _currentWrite != null || _writeQueue.Count != 0) {
       _retiredDeviceKeys.Add(announcedKey);
       SetStatus("The modem identity changed during a configuration transaction; migration is "
@@ -1393,6 +1395,38 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     device.IdentityTransitionExpiresUtc = Later(_utcNow(), device.RebootReadyUtc)
         + ExpectedIdentityTransition;
   }
+
+  /// <summary>
+  /// A native save that changes MAV_SYS_ID or LOCAL_IP_4 restarts the modem under a new MAVLink
+  /// address: the firmware takes its system ID from the one and its component ID from the other.
+  /// That address is expected exactly as after a PARAM save, so a modem that returns within the
+  /// online window still moves its record.
+  /// </summary>
+  private void ArmNativeIdentityTransition(
+      IReadOnlyDictionary<string, Nv5ConfigurationClient.Value> candidate) {
+    NvModemDeviceState? device = _devices.Values.FirstOrDefault(IsNativeSaveRecord);
+    if (device == null) {
+      return;
+    }
+    byte system = NativeAddressByte(candidate, "MAV_SYS_ID", device.Key.SystemId);
+    byte component = NativeAddressByte(candidate, "LOCAL_IP_4", device.Key.ComponentId);
+    if (system == device.Key.SystemId && component == device.Key.ComponentId) {
+      return;
+    }
+    device.ExpectedSystemId = system;
+    device.ExpectedComponentId = component;
+    device.IdentityTransitionExpected = true;
+    device.IdentityTransitionExpiresUtc = _utcNow() + ExpectedIdentityTransition;
+  }
+
+  private static byte NativeAddressByte(
+      IReadOnlyDictionary<string, Nv5ConfigurationClient.Value> values, string name,
+      byte fallback) =>
+      values.TryGetValue(name, out Nv5ConfigurationClient.Value? value)
+          && value.Type == Nv5ConfigValueTypes.UInt32 && value.Bytes.Length == 4
+          && BinaryPrimitives.ReadUInt32LittleEndian(value.Bytes) is var number
+          && number <= byte.MaxValue
+          ? (byte)number : fallback;
 
   private static byte ParameterByte(
       NvModemDeviceState device, string name, byte fallback) {

@@ -257,6 +257,108 @@ public partial class NvModemTests {
   }
 
   [Fact]
+  public void An_address_changing_native_save_recovers_beside_a_closed_alias() {
+    var bench = new NativeBench();
+    bench.Modem.CommitModel = true;
+    bench.Modem.Settings.Add(new Nv5FakeModem.Setting("MAV_SYS_ID", 10));
+    var ethernet = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");
+    bench.Transport.Links.Add(ethernet);
+    bench.Passport(NativePassport());
+    bench.ViewModel.HandlePacket(ethernet, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(), 10, 11));
+    // The Ethernet connection closes; its record stays behind as an earlier route.
+    bench.Transport.Links.Remove(ethernet);
+    Assert.Equal(2, bench.ViewModel.Devices.Count);
+    NvModemDeviceChoice saving = bench.ViewModel.SelectedDevice!;
+    Assert.Same(bench.Link, saving.State.Key.Link);
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    bool? finished = null;
+    bench.ViewModel.NativeSettings.ConfigurationFinished += success => finished = success;
+    Assert.True(bench.ViewModel.NativeSettings.SetValue("MAV_SYS_ID", "12"));
+    bench.ViewModel.NativeSettings.Save();
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.StatusText.Contains(
+        "Waiting for restart", StringComparison.Ordinal)));
+    // Its telemetry is still heard at the old address just before the restart.
+    bench.ViewModel.HandlePacket(bench.Link, Packet(NvModemMessageIds.Nv5LinkStatus,
+        new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 1 }, 10, 11));
+
+    // The modem restarts on the same USB connection under its new system ID, well within the
+    // online window of its old address.
+    bench.Modem.Reboot();
+    bench.Modem.Peer = bench.Modem.Peer with { System = 12 };
+    bench.ViewModel.HandlePacket(bench.Link, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(timeBootMs: 40), 12, 11));
+
+    NvModemDeviceChoice modem = Assert.Single(bench.ViewModel.Devices);
+    Assert.Same(saving, modem);
+    Assert.Same(modem, bench.ViewModel.SelectedDevice);
+    Assert.Equal(12, modem.State.Key.SystemId);
+    Assert.True(bench.Pump(() => finished != null), bench.ViewModel.NativeSettings.StatusText);
+    Assert.True(finished, bench.ViewModel.NativeSettings.StatusText);
+    Assert.Equal(1, bench.Modem.Commits);
+  }
+
+  [Fact]
+  public void A_save_keeps_its_record_when_the_modem_returns_where_an_older_one_waits() {
+    var bench = new NativeBench();
+    bench.Modem.CommitModel = true;
+    bench.Modem.Settings.Add(new Nv5FakeModem.Setting("MAV_SYS_ID", 10));
+    var ethernet = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");
+    bench.Transport.Links.Add(ethernet);
+    bench.ViewModel.HandlePacket(ethernet, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(), 10, 11));
+    NvModemDeviceChoice saving = bench.ViewModel.SelectedDevice!;
+    Assert.Same(ethernet, saving.State.Key.Link);
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    // The same modem is also heard once over USB, then that record stays quiet.
+    bench.Passport(NativePassport());
+    Assert.Equal(2, bench.ViewModel.Devices.Count);
+    bench.Pump(() => false, steps: 60);
+    bool? finished = null;
+    bench.ViewModel.NativeSettings.ConfigurationFinished += success => finished = success;
+    Assert.True(bench.ViewModel.NativeSettings.SetValue("MAV_SYS_ID", "12"));
+    bench.ViewModel.NativeSettings.Save();
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.StatusText.Contains(
+        "Waiting for restart", StringComparison.Ordinal)));
+
+    // Ethernet drops during the restart and the modem returns over USB alone.
+    bench.Transport.Links.Remove(ethernet);
+    bench.Modem.Reboot();
+    bench.Modem.Peer = bench.Modem.Peer with { System = 12 };
+    bench.ViewModel.HandlePacket(bench.Link, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(timeBootMs: 40), 12, 11));
+
+    // The saving, selected record moves; the older USB record is retired.
+    NvModemDeviceChoice modem = Assert.Single(bench.ViewModel.Devices);
+    Assert.Same(saving, modem);
+    Assert.Same(modem, bench.ViewModel.SelectedDevice);
+    Assert.Same(bench.Link, modem.State.Key.Link);
+    Assert.True(bench.Pump(() => finished != null), bench.ViewModel.NativeSettings.StatusText);
+    Assert.True(finished, bench.ViewModel.NativeSettings.StatusText);
+    Assert.Equal(1, bench.Modem.Commits);
+  }
+
+  [Fact]
+  public void An_unexpected_address_beside_a_closed_alias_is_still_a_live_conflict() {
+    var bench = new NativeBench();
+    var ethernet = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");
+    bench.Transport.Links.Add(ethernet);
+    NvModemInfoMessage parameters = NativePassport(capabilities: NvModemCapabilities.MavlinkParameters);
+    bench.Passport(parameters);
+    bench.ViewModel.HandlePacket(ethernet, Packet(NvModemMessageIds.NvModemInfo, parameters,
+        10, 11));
+    bench.Transport.Links.Remove(ethernet);
+
+    // The modem was just heard at 10:11 on USB when a second address there claims its UID.
+    bench.ViewModel.HandlePacket(bench.Link, Packet(NvModemMessageIds.NvModemInfo, parameters,
+        12, 11));
+
+    Assert.Equal(2, bench.ViewModel.Devices.Count);
+    Assert.All(bench.ViewModel.Devices, device => Assert.Equal(10, device.State.Key.SystemId));
+    Assert.Contains("Two live modem endpoints", bench.ViewModel.Status, StringComparison.Ordinal);
+  }
+
+  [Fact]
   public void One_modem_on_two_open_links_keeps_a_record_per_link() {
     var bench = new NativeBench();
     var second = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");

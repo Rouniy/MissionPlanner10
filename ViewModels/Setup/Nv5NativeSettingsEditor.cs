@@ -181,6 +181,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   internal event Action? DurableSaved;
 
+  /// <summary>Raised with the committed candidate once COMMIT is sent; the device restarts under
+  /// the MAVLink address those values give it.</summary>
+  internal event Action<IReadOnlyDictionary<string, Value>>? CommitSent;
+
   /// <summary>The settings of the table, filtered by <see cref="FilterText"/>.</summary>
   public ObservableCollection<Nv5NativeSettingRow> Rows { get; } = [];
 
@@ -1254,6 +1258,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     }
     _commitSent = true;
     SetStep(Step.Commit);
+    CommitSent?.Invoke(CandidateValues());
   }
 
   private void Rebuild() {
