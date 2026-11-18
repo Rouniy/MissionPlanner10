@@ -25,8 +25,7 @@ The user temporarily disabled Claude. Do not invoke it until that restriction is
 If it is re-enabled, use headless `claude -p`; never use `mcp__claude__Agent`.
 
 Start each change from the latest `origin/master` on a topic branch named
-`type/short-kebab-case-subject` and deliver it as a pull request. `port/avalonia-in-place` is the
-finished, fully merged migration branch; do not use it. Preserve unexpected user changes, use
-atomic commits, and do not merge to `master`, delete the old port repository, or rewrite published
-history without explicit approval. Before each handoff record exact Git state, tests, builds,
-remaining blockers, and the next executable step in `Porting/STATUS.md`.
+`type/short-kebab-case-subject` and deliver it as a pull request. Preserve unexpected user changes,
+use atomic commits, and do not merge to `master`, delete the old port repository, or rewrite
+published history without explicit approval. Before each handoff record exact Git state, tests,
+builds, remaining blockers, and the next executable step in `Porting/STATUS.md`.
