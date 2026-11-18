@@ -100,12 +100,20 @@ target selector is locked, and a target/link change during confirmation prevents
 The page decides by capability, not by generation. When a modem's passport advertises
 configuration transactions (`NV_MODEM_INFO` capability bit 14), the page reads and saves its
 settings through the NV5 native configuration protocol (`NV5_CONFIG_CONTROL`, `NV5_CONFIG_ITEM`,
-`NV5_CONFIG_RESULT`, `NV5_CONFIG_VALUE`, 53021–53024) and never sends it PARAM requests. The
-parameter table, presets, key and RTSP groups and the PARAM save buttons give way to **Modem
-settings**; maintenance controls and reboot stay. NV4 modems and NV5 firmware without the bit keep
-the PARAM page described above, unchanged. The firmware's ranging, LPS, calibration and capture
-messages (53020, 53025–53028, 53030–53033) are registered with the shared parser for the features
-that use them.
+`NV5_CONFIG_RESULT`, `NV5_CONFIG_VALUE`, 53021–53024). The parameter table, presets, key and RTSP
+groups and the PARAM save buttons give way to **Modem settings**; maintenance controls and reboot
+stay. NV4 modems and NV5 firmware without the bit keep the PARAM page described above, unchanged.
+The firmware's ranging, LPS, calibration and capture messages (53020, 53025–53028, 53030–53033)
+are registered with the shared parser for the features that use them.
+
+Capability is known only from the passport. A modem first heard through other telemetry has its
+PARAM read deferred while the page requests the passport: the read is skipped if the passport
+shows configuration transactions, and sent at once if it does not. Firmware that never sends a
+passport is read after 3 s, as before. A transaction-capable modem whose passport arrives later
+than that has therefore already received one read-only `PARAM_REQUEST_LIST`; from its passport on
+it is configured natively and sent no further PARAM traffic. Modem commands and a native save
+never overlap: maintenance commands and reboot wait while a native save is in progress, and
+**Save and restart** waits while a modem command awaits its acknowledgement.
 
 - **Read.** The complete typed catalogue is read, including inactive PHY settings, in the native
   units (carrier frequency in integer Hz). A modem that reports the same boot, catalogue,
@@ -122,10 +130,12 @@ that use them.
   revision and digest. A lost receipt with matching settings is reported as uncertain, never as
   saved, and a transaction failure never falls back to PARAM_SET. After success the modem is read
   again.
-- **Snapshots.** **Export snapshot…** writes the committed values as JSON, with 64-bit identifiers
-  as strings; it includes key words, so the file is created readable by its owner only. **Load
-  snapshot…** stages a matching catalogue's values as edits and stages nothing if any field is
-  invalid.
+- **Snapshots.** **Export snapshot…** writes the values of the last read as JSON, labelled with
+  that read's catalogue and committed revision and with 64-bit identifiers as strings; until the
+  modem is read again after a save, export and import are unavailable. The file includes key
+  words, so it is created readable by its owner only: mode 0600 on Linux and macOS, and on
+  Windows a protected access list granting only the current user. **Load snapshot…** stages a
+  matching catalogue's values as edits and stages nothing if any field is invalid.
 - **Transport.** Frames go out on the Mission Planner link where the modem was seen, from the
   application's GCS system id and component 190. Retries resend the identical payload; the
   firmware matches them by transaction nonce, token and sequence. Each modem UID has a transport
