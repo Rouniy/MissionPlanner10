@@ -291,7 +291,12 @@ internal sealed class Nv5ConfigurationClient {
     return Control(Nv5ConfigOperations.Info, 0, 0, ++_correlation, 0, 0, 0, [], now);
   }
 
-  internal bool Begin(ulong nonce, uint now) {
+  /// <summary>
+  /// Opens a transaction based on <paramref name="expectedRevision"/>: the committed revision whose
+  /// values the caller staged edits against. The device refuses a stale base, so a change made in
+  /// between can never be overwritten by edits made to older values.
+  /// </summary>
+  internal bool Begin(ulong nonce, ulong expectedRevision, uint now) {
     if (_phase != ClientPhase.Ready || _pending || nonce == 0 || nonce == _clientNonce) {
       return false;
     }
@@ -303,7 +308,7 @@ internal sealed class Nv5ConfigurationClient {
     _stagedName = [];
     _clientNonce = nonce;
     _token = 0;
-    _baseRevision = _result.CommittedRevision;
+    _baseRevision = expectedRevision;
     return Control(Nv5ConfigOperations.Begin, nonce, 0, 0, 0, _baseRevision, 0, [], now);
   }
 

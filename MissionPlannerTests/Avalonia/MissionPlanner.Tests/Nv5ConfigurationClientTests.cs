@@ -140,16 +140,31 @@ public class Nv5ConfigurationClientTests(ITestOutputHelper output) {
     Assert.False(Deliver(old));
     Assert.True(Deliver(current));
 
-    Assert.True(_client.Begin(Nonce, _now));
+    Assert.True(_client.Begin(Nonce, 17, _now));
     var wire = (Nv5ConfigControlMessage)Next().Payload;
     Assert.Equal(Boot + 1, wire.BootNonce);
     Assert.Equal(Nonce, wire.ClientNonce);
   }
 
   [Fact]
+  public void Begin_is_based_on_the_reviewed_revision_not_on_the_last_reply() {
+    Ready();
+    Assert.True(_client.Begin(Nonce, 17, _now));
+    var refused = Response(Next(), Nv5ConfigStates.Idle, Nv5ConfigResults.StaleRevision);
+    refused.CommittedRevision = 18;
+    Assert.True(Deliver(refused));
+    Assert.Equal(Phase.Ready, _client.Phase);
+    Assert.Equal(18UL, _client.Result.CommittedRevision);
+
+    // A retry with the same edits stays based on the revision they were made against.
+    Assert.True(_client.Begin(Nonce + 1, 17, _now));
+    Assert.Equal(17UL, ((Nv5ConfigControlMessage)Next().Payload).ExpectedRevision);
+  }
+
+  [Fact]
   public void Busy_begin_cannot_adopt_another_owners_validated_state() {
     Ready();
-    Assert.True(_client.Begin(Nonce, _now));
+    Assert.True(_client.Begin(Nonce, 17, _now));
     Assert.True(Deliver(Response(Next(), Nv5ConfigStates.Validated, Nv5ConfigResults.Busy)));
     Assert.Equal(Phase.Ready, _client.Phase);
     Assert.False(_client.Stage("MAV_SAVE_MS", Nv5ConfigValueTypes.UInt32, new byte[4], _now));
@@ -182,7 +197,7 @@ public class Nv5ConfigurationClientTests(ITestOutputHelper output) {
     Assert.True(Deliver(Response(Next(), Nv5ConfigStates.Aborted)));
     _client.Service(_now += 1000);
     Assert.Null(_client.TakeOutbound(_now));
-    Assert.True(_client.Begin(Nonce + 1, _now));
+    Assert.True(_client.Begin(Nonce + 1, 17, _now));
     Assert.True(Deliver(Response(Next(), Nv5ConfigStates.Staged)));
     _client.Service(_now += 1000);
     Assert.Null(_client.TakeOutbound(_now));
@@ -524,7 +539,7 @@ public class Nv5ConfigurationClientTests(ITestOutputHelper output) {
     Assert.True(_client.Discover(target, _now));
     Pump();
     Assert.Equal(Phase.Ready, _client.Phase);
-    Assert.True(_client.Begin(Nonce, _now));
+    Assert.True(_client.Begin(Nonce, _client.Result.CommittedRevision, _now));
     Pump();
     byte[] saveMs = Convert.FromHexString("b80b0000");
     Assert.True(_client.Stage("MAV_SAVE_MS", Nv5ConfigValueTypes.UInt32, saveMs, _now));
@@ -591,7 +606,7 @@ public class Nv5ConfigurationClientTests(ITestOutputHelper output) {
 
   private void Staged() {
     Ready();
-    Assert.True(_client.Begin(Nonce, _now));
+    Assert.True(_client.Begin(Nonce, 17, _now));
     Assert.True(Deliver(Response(Next(), Nv5ConfigStates.Staged)));
     Assert.Equal(Phase.Staged, _client.Phase);
   }

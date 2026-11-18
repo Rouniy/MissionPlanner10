@@ -150,6 +150,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   private bool _rebuilding;
   private bool _reloadPending;
 
+  // Set when the device refused a save because its settings changed after they were read: the
+  // edits were made to values that are no longer current, so only a new read may lift it.
+  private bool _refreshRequired;
+
   /// <param name="clock">Monotonic milliseconds; wraps like the device's uint32 clocks.</param>
   /// <param name="system">MAVLink system id of this application's frames, read whenever a
   /// transaction starts because the application's id can change.</param>
@@ -306,6 +310,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _values = new SortedDictionary<string, Value>(StringComparer.Ordinal);
     _valuesIdentity = Empty;
     _readBack = false;
+    _refreshRequired = false;
     ClearRows();
     _started = _commitSent = false;
     Reload();
@@ -341,6 +346,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
         if (result.Operation is Nv5ConfigOperations.Validate or Nv5ConfigOperations.Status) {
           reason += $" Candidate link hashes: radio 1 = {result.Channel1LinkHash}, radio 2 = "
               + $"{result.Channel2LinkHash}. Compare with the peer before setting CHn_PEER_HASH.";
+        }
+        if (result.Result == Nv5ConfigResults.StaleRevision && !Reading()) {
+          _refreshRequired = true;
         }
         // Refusals that pass on their own: another session holds the device, or a session or
         // revision ran out. A read tries again.
@@ -728,7 +736,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     CanRead = !Busy && _target is { Verified: true };
     CanImport = !Busy && _values.Count != 0;
     CanExport = !Busy && _values.Count != 0;
-    CanSave = !Busy && HasPendingChanges();
+    CanSave = !Busy && _readBack && !_refreshRequired && HasPendingChanges();
   }
 
   private bool Reading() =>
@@ -1004,6 +1012,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _readValues = new SortedDictionary<string, Value>(StringComparer.Ordinal);
     _known.Clear();
     _readBack = true;
+    _refreshRequired = false;
     _valuesIdentity = _reading;
     _resume = Empty;
     _fullRead = false;
@@ -1084,6 +1093,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _valuesIdentity = known with { Values = Empty.Values };
     _resume = Empty;
     _readBack = true;
+    _refreshRequired = false;
     Rebuild();
     SetStep(Step.Idle);
     SetStatus($"{_values.Count} settings at revision {info.CommittedRevision}, unchanged since "
@@ -1111,6 +1121,15 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   private void StartSave(bool commit) {
     if (Busy || (commit && !HasPendingChanges())) {
+      return;
+    }
+    if (_refreshRequired) {
+      SetStatus("Settings changed on the device since they were read. Use Read settings and "
+          + "review your changes before saving.");
+      return;
+    }
+    if (!_readBack) {
+      SetStatus("The values shown are not a confirmed readback. Use Read settings before saving.");
       return;
     }
     _autoCommit = commit;
@@ -1143,7 +1162,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
         }
       }
     }
-    if (!_client.Begin(FreshNonce(), Now())) {
+    // Bound to the revision of the values on screen, so the device refuses the save if anything
+    // changed after they were read instead of applying these edits over that change.
+    if (!_client.Begin(FreshNonce(), _valuesIdentity.Revision, Now())) {
       Fail("Refresh the device before starting a new transaction.");
       return;
     }

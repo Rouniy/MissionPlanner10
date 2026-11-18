@@ -341,6 +341,45 @@ public class Nv5NativeSettingsEditorTests {
   }
 
   [Fact]
+  public void A_save_refused_for_a_newer_revision_cannot_be_repeated_over_that_change() {
+    Nv5FakeModem modem = CatalogueModem();
+    modem.CommitModel = true;
+    var bench = new Bench(modem);
+    Nv5NativeSettingsEditor editor = bench.Attach(new Nv5SettingsSnapshots());
+    Assert.True(editor.SetValue("CH1_FREQ_HZ", "915000000"));
+    // Another client commits a change after this editor read the settings.
+    modem.Commit("CH1_FREQ_HZ", 433000000);
+
+    editor.Save();
+    Assert.True(bench.Pump(() => !editor.Busy));
+    Assert.Contains("Settings changed on the device", editor.StatusText, StringComparison.Ordinal);
+    Assert.False(editor.CanSave);
+    Assert.True(editor.HasPendingChanges());
+
+    // Pressing Save again sends nothing: the edits belong to values that are no longer current.
+    int begins = modem.Seen.Count(frame => IsControl(frame, Nv5ConfigOperations.Begin));
+    editor.Save();
+    Assert.True(bench.Pump(() => !editor.Busy));
+    Assert.Equal(begins, modem.Seen.Count(frame => IsControl(frame, Nv5ConfigOperations.Begin)));
+    Assert.Contains("Read settings", editor.StatusText, StringComparison.Ordinal);
+    Assert.Equal(0, modem.Commits);
+    Assert.Equal(433000000u, modem.Settings.Single(setting => setting.Name == "CH1_FREQ_HZ").Raw);
+
+    // Once the current settings are read, the operator can deliberately save over them.
+    editor.RereadDevice();
+    Assert.True(bench.Pump(() => editor.Ready));
+    Assert.Equal(433000000u, Number(editor, "CH1_FREQ_HZ"));
+    Assert.True(editor.SetValue("CH1_FREQ_HZ", "915000000"));
+    Assert.True(editor.CanSave);
+    editor.Save();
+    Assert.True(bench.Pump(() => editor.AwaitingReconnect && modem.Commits == 1
+        || editor.Failed), editor.StatusText);
+    Assert.False(editor.Failed, editor.StatusText);
+    BeginMessage(modem, out ulong expected);
+    Assert.Equal(18UL, expected);
+  }
+
+  [Fact]
   public void Real_firmware_core_reads_saves_restarts_and_rereads_through_the_editor() {
     string? fixture = Environment.GetEnvironmentVariable("MP_NV5_CONFIG_FIXTURE");
     if (string.IsNullOrEmpty(fixture)) {
@@ -436,6 +475,12 @@ public class Nv5NativeSettingsEditorTests {
 
   private static bool IsControl(Nv5ConfigurationFrame frame, byte operation) =>
       frame.Payload is Nv5ConfigControlMessage control && control.Operation == operation;
+
+  /// <summary>The expected revision the latest BEGIN was based on.</summary>
+  private static void BeginMessage(Nv5FakeModem modem, out ulong expectedRevision) =>
+      expectedRevision = modem.Seen.Select(frame => frame.Payload)
+          .OfType<Nv5ConfigControlMessage>()
+          .Last(control => control.Operation == Nv5ConfigOperations.Begin).ExpectedRevision;
 
   private static uint Number(Nv5NativeSettingsEditor editor, string name) =>
       BinaryPrimitives.ReadUInt32LittleEndian(editor.CandidateValues()[name].Bytes);
@@ -634,8 +679,11 @@ internal sealed class Nv5FakeModem {
         break;
       case Nv5ConfigOperations.Begin:
         Staged.Clear();
-        reply.Result = BusyBegin ? Nv5ConfigResults.Busy : Nv5ConfigResults.Ok;
-        reply.Token = BusyBegin ? 0UL : 99UL;
+        // As the firmware does: edits based on an older committed revision are refused.
+        reply.Result = BusyBegin ? Nv5ConfigResults.Busy
+            : control.ExpectedRevision != Revision ? Nv5ConfigResults.StaleRevision
+            : Nv5ConfigResults.Ok;
+        reply.Token = reply.Result == Nv5ConfigResults.Ok ? 99UL : 0UL;
         reply.NextSequence = 1;
         reply.TransactionRevision = Revision;
         reply.State = Nv5ConfigStates.Staged;
