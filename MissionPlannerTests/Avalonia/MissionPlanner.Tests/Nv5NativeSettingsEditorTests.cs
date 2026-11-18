@@ -436,6 +436,52 @@ public class Nv5NativeSettingsEditorTests {
     }
   }
 
+  [Fact]
+  public void Snapshot_export_is_labelled_with_the_read_its_values_came_from() {
+    Nv5FakeModem modem = CatalogueModem();
+    modem.CommitModel = true;
+    var bench = new Bench(modem);
+    Nv5NativeSettingsEditor editor = bench.Attach(new Nv5SettingsSnapshots());
+    string directory = Directory.CreateTempSubdirectory("nv5-export-").FullName;
+    try {
+      string path = Path.Combine(directory, "settings.json");
+      // Another client commits revision 18 after this read; the refused save must not relabel
+      // revision 17's values with it.
+      Assert.True(editor.SetValue("CH1_FREQ_HZ", "915000000"));
+      modem.Commit("CH1_FREQ_HZ", 433000000);
+      editor.Save();
+      Assert.True(bench.Pump(() => !editor.Busy));
+      Assert.Contains("Settings changed", editor.StatusText, StringComparison.Ordinal);
+      Assert.True(editor.ExportSnapshot(path));
+      Assert.Equal("17", ExportedRevision(path));
+      Assert.Equal("868000000", ExportedValue(path, "CH1_FREQ_HZ"));
+
+      // Right after a save the values are a local merge: nothing is exported until they are read.
+      editor.RereadDevice();
+      Assert.True(bench.Pump(() => editor.Ready));
+      Assert.True(editor.SetValue("CH1_FREQ_HZ", "915000000"));
+      bool? finished = null;
+      editor.ConfigurationFinished += success => finished = success;
+      editor.Save();
+      Assert.True(bench.Pump(() => editor.AwaitingReconnect && modem.Commits == 1));
+      modem.Reboot();
+      editor.ObserveTarget(modem.Peer with { TransportEpoch = modem.Peer.TransportEpoch + 1 }, 30);
+      Assert.True(bench.Pump(() => finished != null));
+      Assert.True(finished, editor.StatusText);
+      Assert.False(editor.CanExport);
+      Assert.False(editor.ExportSnapshot(path));
+      Assert.Contains("Read settings", editor.StatusText, StringComparison.Ordinal);
+      Assert.Equal("17", ExportedRevision(path));
+
+      Assert.True(bench.Pump(() => editor.Ready && editor.ValuesReadBack));
+      Assert.True(editor.ExportSnapshot(path));
+      Assert.Equal("19", ExportedRevision(path));
+      Assert.Equal("915000000", ExportedValue(path, "CH1_FREQ_HZ"));
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
   [Theory]
   [InlineData("""{"schema":1,"product":"modem","catalog_id":"1234","values":[5]}""")]
   [InlineData("""{"schema":1,"product":"modem","catalog_id":"1234","values":[null]}""")]
@@ -556,6 +602,13 @@ public class Nv5NativeSettingsEditorTests {
 
   private static bool IsControl(Nv5ConfigurationFrame frame, byte operation) =>
       frame.Payload is Nv5ConfigControlMessage control && control.Operation == operation;
+
+  private static string? ExportedRevision(string path) =>
+      (string?)JsonNode.Parse(File.ReadAllText(path))!["committed_revision"];
+
+  private static string? ExportedValue(string path, string name) =>
+      (string?)JsonNode.Parse(File.ReadAllText(path))!["values"]!.AsArray()
+          .Single(entry => (string?)entry!["name"] == name)!["value"];
 
   /// <summary>The expected revision the latest BEGIN was based on.</summary>
   private static void BeginMessage(Nv5FakeModem modem, out ulong expectedRevision) =>

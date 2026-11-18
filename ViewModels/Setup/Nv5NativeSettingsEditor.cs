@@ -534,7 +534,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   /// <summary>Writes the committed values as a JSON document. Keys are included, so the file
   /// is created readable by its owner only.</summary>
   internal bool SaveSnapshot(string path) {
-    if (_values.Count == 0 || _target == null) {
+    // Only values confirmed by a read belong to a committed revision; right after a save they are
+    // a local merge, and after a refused save the device may already hold a newer revision.
+    if (_values.Count == 0 || _target == null || !_readBack) {
       return false;
     }
     var items = new JsonArray();
@@ -549,9 +551,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       ["schema"] = 1,
       ["product"] = ProductName(),
       ["uid2"] = Convert.ToHexString(_target.Uid).ToLowerInvariant(),
-      ["catalog_id"] = _client.Result.CatalogId.ToString(CultureInfo.InvariantCulture),
-      ["committed_revision"] =
-          _client.Result.CommittedRevision.ToString(CultureInfo.InvariantCulture),
+      // The identity of the read these values came from, never the latest reply's.
+      ["catalog_id"] = _valuesIdentity.CatalogId.ToString(CultureInfo.InvariantCulture),
+      ["committed_revision"] = _valuesIdentity.Revision.ToString(CultureInfo.InvariantCulture),
       ["values"] = items,
     };
     // The document holds key words. It is written to a fresh, unpredictably named file that only
@@ -617,6 +619,11 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   /// <summary>Exports the committed values and says on the status line whether it worked.</summary>
   internal bool ExportSnapshot(string path) {
+    if (!_readBack) {
+      SetStatus("The values shown are not a confirmed readback. Use Read settings before "
+          + "exporting.");
+      return false;
+    }
     bool saved = SaveSnapshot(path);
     SetStatus(saved
         ? "Committed snapshot exported, including configured encryption keys."
@@ -632,6 +639,11 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   /// and a document with any invalid field stages nothing.</summary>
   internal bool LoadSnapshot(string path) {
     if (Busy || _values.Count == 0) {
+      return false;
+    }
+    if (!_readBack) {
+      SetStatus("The values shown are not a confirmed readback. Use Read settings before "
+          + "loading a snapshot.");
       return false;
     }
     JsonObject? document;
@@ -681,7 +693,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (document == null || Integer(document["schema"]) != 1
         || Text(document["product"]) != ProductName()
         || Text(document["catalog_id"])
-            != _client.Result.CatalogId.ToString(CultureInfo.InvariantCulture)
+            != _valuesIdentity.CatalogId.ToString(CultureInfo.InvariantCulture)
         || document["values"] is not JsonArray entries) {
       return null;
     }
@@ -796,8 +808,8 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   private void RefreshCommands() {
     IsBusy = Busy;
     CanRead = !Busy && _target is { Verified: true };
-    CanImport = !Busy && _values.Count != 0;
-    CanExport = !Busy && _values.Count != 0;
+    CanImport = !Busy && _readBack && _values.Count != 0;
+    CanExport = !Busy && _readBack && _values.Count != 0;
     CanSave = !Busy && _readBack && !_refreshRequired && HasPendingChanges();
   }
 
