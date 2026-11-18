@@ -296,6 +296,11 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     };
     NativeSettings.BusyChanged += _ => RefreshControls();
     NativeSettings.EditsChanged += RefreshControls;
+    NativeSettings.PropertyChanged += (_, args) => {
+      if (args.PropertyName == nameof(Nv5NativeSettingsEditor.CanSave)) {
+        OnPropertyChanged(nameof(CanSaveNativeSettings));
+      }
+    };
     _transport.PacketReceived += OnPacketReceived;
     _transport.LinksChanged += OnLinksChanged;
     RadioStatuses.Add(new NvRadioStatusRow(1));
@@ -379,6 +384,15 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
   public bool UsesNativeSettings => SelectedState is { } device && SupportsNativeSettings(device);
   public bool CanSwitchDevice => !IsBusy && !NativeSettings.Saving;
+
+  /// <summary>A native save waits for any modem command still awaiting its acknowledgement, just
+  /// as those commands wait for a native save.</summary>
+  public bool CanSaveNativeSettings => !IsBusy && NativeSettings.CanSave;
+
+  partial void OnIsBusyChanged(bool value) {
+    OnPropertyChanged(nameof(CanSaveNativeSettings));
+    OnPropertyChanged(nameof(CanSwitchDevice));
+  }
   public bool HasSelectedDevice => SelectedDevice != null;
   public bool HasParameters => Parameters.Count != 0;
   public bool HasPendingChanges => _parameterRows.Values.Any(row => row.IsChanged)
@@ -498,14 +512,20 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   [RelayCommand]
   private async Task SaveNativeSettings() {
     NvModemDeviceState? device = SelectedState;
-    if (device == null || !NativeSettings.CanSave) {
+    if (device == null || !CanSaveNativeSettings) {
+      if (IsBusy) {
+        SetStatus("Wait for the pending modem command to finish before saving.", true);
+      }
       return;
     }
     if (!await Dialogs.Confirm("Save and restart NV modem", NativeSaveSummary(device))) {
       return;
     }
-    if (!ReferenceEquals(device, SelectedState) || !NativeSettings.CanSave) {
-      SetStatus("The selected modem changed before confirmation; nothing was saved.", true);
+    // The dialog gives a modem command time to start; it must not overlap the native save.
+    if (!ReferenceEquals(device, SelectedState) || !CanSaveNativeSettings) {
+      SetStatus(IsBusy
+          ? "A modem command started before confirmation; nothing was saved."
+          : "The selected modem changed before confirmation; nothing was saved.", true);
       return;
     }
     NativeSettings.Save();
@@ -2601,6 +2621,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private void RefreshControls() {
     OnPropertyChanged(nameof(UsesNativeSettings));
     OnPropertyChanged(nameof(CanSwitchDevice));
+    OnPropertyChanged(nameof(CanSaveNativeSettings));
     OnPropertyChanged(nameof(HasSelectedDevice));
     OnPropertyChanged(nameof(HasParameters));
     OnPropertyChanged(nameof(HasPendingChanges));

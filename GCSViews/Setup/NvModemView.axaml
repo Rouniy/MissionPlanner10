@@ -78,7 +78,7 @@
                       IsEnabled="{Binding NativeSettings.CanSave}" Margin="0,0,8,4" />
               <Button x:Name="SaveNativeSettingsButton" Content="Save and restart"
                       Command="{Binding SaveNativeSettingsCommand}"
-                      IsEnabled="{Binding NativeSettings.CanSave}" Margin="0,0,0,4"
+                      IsEnabled="{Binding CanSaveNativeSettings}" Margin="0,0,0,4"
                       ToolTip.Tip="Validate and save the complete configuration; the modem then restarts." />
             </WrapPanel>
             <TextBlock Grid.Row="2" Classes="fieldlbl" TextWrapping="Wrap" Margin="0,0,0,6"

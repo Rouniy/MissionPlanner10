@@ -222,6 +222,41 @@ public partial class NvModemTests {
   }
 
   [Fact]
+  public void A_native_save_waits_for_a_pending_modem_command() {
+    var bench = new NativeBench();
+    bench.Passport(NativePassport());
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    // Radio 1 transmits with its transmitter suppressed, so it can be enabled.
+    bench.ViewModel.HandlePacket(bench.Link, Packet(NvModemMessageIds.Nv5LinkStatus,
+        new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 1, TxState = 2 }, 10, 11));
+    Assert.True(bench.ViewModel.NativeSettings.SetValue("CH1_FREQ_HZ", "915000000"));
+    Assert.True(bench.ViewModel.CanSaveNativeSettings);
+    Assert.True(bench.ViewModel.CanEnableTransmitter);
+
+    bench.ViewModel.SetTransmitterEnabledCommand.Execute("true");
+    Assert.True(bench.ViewModel.IsBusy);
+    Assert.False(bench.ViewModel.CanSaveNativeSettings);
+    int begins = bench.Transport.Sent.Count(sent =>
+        sent.Packet is Nv5ConfigControlMessage { Operation: Nv5ConfigOperations.Begin });
+    bench.ViewModel.SaveNativeSettingsCommand.Execute(null);
+    Assert.Equal(begins, bench.Transport.Sent.Count(sent =>
+        sent.Packet is Nv5ConfigControlMessage { Operation: Nv5ConfigOperations.Begin }));
+    Assert.False(bench.ViewModel.NativeSettings.Busy);
+    Assert.Contains("pending modem command", bench.ViewModel.Status, StringComparison.Ordinal);
+
+    // The acknowledgement settles the command; only then may the save go ahead.
+    bench.ViewModel.HandlePacket(bench.Link, Packet((uint)MAVLink.MAVLINK_MSG_ID.COMMAND_ACK,
+        new MAVLink.mavlink_command_ack_t {
+          command = 42010,
+          result = (byte)MAVLink.MAV_RESULT.ACCEPTED,
+          target_system = 255,
+          target_component = 190,
+        }, 10, 11));
+    Assert.False(bench.ViewModel.IsBusy);
+    Assert.True(bench.ViewModel.CanSaveNativeSettings);
+  }
+
+  [Fact]
   public void One_modem_on_two_open_links_keeps_a_record_per_link() {
     var bench = new NativeBench();
     var second = new NvModemLink(new MAVLinkInterface(), "modem Ethernet");
