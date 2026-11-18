@@ -94,6 +94,33 @@ public partial class NvModemTests {
         .Single(row => row.Name == "CH1_FREQ_HZ").ValueText);
   }
 
+  [Fact]
+  public void A_native_save_disables_reboot_and_transmitter_commands_until_it_settles() {
+    var bench = new NativeBench();
+    bench.Modem.CommitModel = true;
+    bench.Passport(NativePassport());
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    bench.Passport(NativePassport(timeBootMs: 11_000));
+    Assert.True(bench.ViewModel.CanReboot);
+
+    Assert.True(bench.ViewModel.NativeSettings.SetValue("CH1_FREQ_HZ", "915000000"));
+    bench.ViewModel.NativeSettings.Save();
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.StatusText.Contains(
+        "Waiting for restart", StringComparison.Ordinal)));
+    // The modem is still online: its passport keeps arriving while the commit waits.
+    bench.Passport(NativePassport(timeBootMs: 12_000));
+    Assert.False(bench.ViewModel.CanEdit);
+    Assert.False(bench.ViewModel.CanReboot);
+    Assert.False(bench.ViewModel.CanUseNv5Controls);
+
+    bench.Modem.Reboot();
+    bench.Passport(NativePassport(timeBootMs: 40));
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready
+        && bench.ViewModel.NativeSettings.ValuesReadBack));
+    bench.Passport(NativePassport(timeBootMs: 1_000));
+    Assert.True(bench.ViewModel.CanReboot);
+  }
+
   [AvaloniaTheory]
   [InlineData(860)]
   [InlineData(1120)]

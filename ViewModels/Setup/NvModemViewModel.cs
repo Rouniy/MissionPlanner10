@@ -374,7 +374,10 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   public bool HasParameters => Parameters.Count != 0;
   public bool HasPendingChanges => _parameterRows.Values.Any(row => row.IsChanged)
       || SelectedState is { } device && RtspPending(device);
-  public bool CanEdit => SelectedState is { } device && IsOnline(device) && !IsBusy;
+  // A native save owns the modem until it settles; a reboot, transmitter command or PARAM write in
+  // between could cut the commit short or race its restart.
+  public bool CanEdit => SelectedState is { } device && IsOnline(device) && !IsBusy
+      && !NativeSettings.Saving;
   public bool CanSave => CanEdit && HasPendingChanges;
   public bool CanUseNv5Controls => CanEdit
       && SelectedState?.Generation == NvModemGeneration.Nv5;
