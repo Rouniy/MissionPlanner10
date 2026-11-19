@@ -203,6 +203,57 @@ internal struct Nv5DistanceMessage {
   internal byte ReferenceScope;
 }
 
+/// <summary>Result validity of <see cref="Nv5DistanceMessage.Status"/>. A modem that answers
+/// ranging requests reports <see cref="Waiting"/> for good.</summary>
+internal static class Nv5DistanceStatuses {
+  internal const byte Disabled = 0;
+  internal const byte Waiting = 1;
+  internal const byte Valid = 2;
+  internal const byte Timeout = 3;
+  internal const byte Late = 4;
+  internal const byte HardwareFault = 5;
+  internal const byte Stale = 6;
+  internal const byte Suppressed = 7;
+}
+
+/// <summary>Summary calibration state of <see cref="Nv5DistanceMessage.Calibration"/>.</summary>
+internal static class Nv5DistanceCalibrations {
+  internal const byte Unknown = 0;
+  internal const byte Uncalibrated = 1;
+  internal const byte Calibrated = 2;
+}
+
+internal static class Nv5DistanceFlags {
+  internal const byte Restored = 1;
+  internal const byte RfAvailable = 2;
+  internal const byte WindowActive = 4;
+}
+
+/// <summary>Live calibration applicability of
+/// <see cref="Nv5DistanceMessage.CalibrationStatus"/>.</summary>
+internal static class Nv5RangingCalibrationStatuses {
+  internal const byte NotEvaluated = 0;
+  internal const byte Applied = 1;
+  internal const byte NoRecord = 2;
+  internal const byte IdentityUnknown = 3;
+  internal const byte PeerMismatch = 4;
+  internal const byte ProfileMismatch = 5;
+  internal const byte AssemblyMismatch = 6;
+  internal const byte WrongReferenceScope = 7;
+  internal const byte Unchecked = 8;
+  internal const byte OutsideDomain = 9;
+  internal const byte Incomplete = 10;
+  internal const byte InvalidModel = 11;
+  internal const byte InvalidResult = 12;
+  internal const byte UnsupportedUncertainty = 13;
+}
+
+/// <summary>Correction reference plane of <see cref="Nv5DistanceMessage.ReferenceScope"/>.</summary>
+internal static class Nv5RangingReferenceScopes {
+  internal const byte RfConnectorPair = 0;
+  internal const byte WholeAssembly = 1;
+}
+
 [StructLayout(LayoutKind.Sequential, Pack = 1, Size = 75)]
 internal struct Nv5ConfigControlMessage {
   internal ulong BootNonce;

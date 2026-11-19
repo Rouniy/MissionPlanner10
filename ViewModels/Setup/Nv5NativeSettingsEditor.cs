@@ -165,6 +165,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _system = system;
     _component = component;
     _client = NewClient();
+    UpdateDistanceRows();
   }
 
   /// <summary>A frame to send on the target's own link.</summary>
@@ -282,13 +283,17 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (sameRoute && !restart) {
       return;
     }
-    if (sameUid && Reading()) {
-      // A restart or a new route ends what the device was doing for this editor; the read goes
-      // on where it stopped.
+    if (sameUid && (Reading() || (_quickWrite && !_commitSent && Busy))) {
+      // A restart or a new route ends what the device was doing for this editor. A read goes on
+      // where it stopped; a switch-off that was not committed is begun again on the new boot.
       EndReadSession();
       _target = target;
-      _retries = 0;
-      StartRead();
+      if (_quickWrite) {
+        StartQuickWrite();
+      } else {
+        _retries = 0;
+        StartRead();
+      }
       return;
     }
     if (!sameUid && Reading()) {
@@ -319,10 +324,14 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _refreshRequired = false;
     ClearRows();
     _started = _commitSent = false;
+    ResetDistance();
     Reload();
   }
 
   internal bool Receive(MAVLink.MAVLinkMessage message, object route) {
+    if (message.msgid == NvModemMessageIds.Nv5Distance) {
+      return ReceiveDistance(message, route);
+    }
     if (_target == null || !_client.Receive(message, route, _target.TransportEpoch, Now())) {
       return false;
     }
@@ -384,9 +393,14 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (_client.TakeOutbound(Now()) is { } frame) {
       SendFrame?.Invoke(frame, _target);
     }
+    UpdateDistance();
     bool recovering = _step == Step.Recovery;
     if (Busy && unchecked(Now() - (recovering ? _recoveryStarted : _progress))
         > (recovering ? 30000u : 12000u)) {
+      // A switch-off keeps trying until its modem is back; a read waits for the next restart.
+      if (!recovering && _quickWrite && RetryLater("The modem stopped answering.", false)) {
+        return;
+      }
       Fail(_commitSent
           ? "Restart/readback was not confirmed. The save outcome remains uncertain."
           : "Configuration timed out; no save was confirmed.", _commitSent);
@@ -469,7 +483,8 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
         || _client.Phase != Phase.Validated || _client.Pending) {
       return false;
     }
-    if (CommitCheck != null && !CommitCheck(CandidateValues())) {
+    // A ranging switch-off changes no identity or address, which is all this check guards.
+    if (CommitCheck != null && !_quickWrite && !CommitCheck(CandidateValues())) {
       Fail("The selected device or requested address is no longer available. Review the device "
           + "settings before saving.");
       return false;
@@ -883,7 +898,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   }
 
   private bool Reading() =>
-      _step is Step.Info or Step.ReadBegin or Step.Read or Step.ReadEnd;
+      !_quickWrite && _step is Step.Info or Step.ReadBegin or Step.Read or Step.ReadEnd;
 
   private void StartRead() {
     KeepForResume();
@@ -947,12 +962,18 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _kept = _readValues.Count;
   }
 
-  /// <summary>Repeats a failed read after a pause.</summary>
+  /// <summary>Repeats a failed read, or a ranging switch-off not yet committed, after a
+  /// pause.</summary>
   private bool RetryLater(string reason, bool deviceBusy) {
-    if (!Reading()) {
+    bool quick = _quickWrite && !_commitSent && Busy;
+    if (!Reading() && !quick) {
       return false;
     }
-    if (_retries == 0) {
+    if (quick) {
+      if (unchecked(Now() - _quickStarted) > QuickWriteBudgetMs) {
+        return false;
+      }
+    } else if (_retries == 0) {
       _retryStarted = Now();
     } else if (unchecked(Now() - _retryStarted) > ReadRetryBudgetMs) {
       return false;
@@ -962,17 +983,31 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       _retries++;
     }
     EndReadSession();
-    KeepForResume();
+    if (!quick) {
+      KeepForResume();
+    }
     ReleaseReader();
     _client = NewClient();
+    if (quick) {
+      _writes.Clear();
+      _writes.AddRange(_quickWrites);
+      _started = false;
+    }
     _retryAt = Now() + delay;
     _retryPending = true;
     _waitingForReader = false;
     SetStep(Step.Info);
-    SetStatus(deviceBusy
-        ? "Another configuration session is using this modem; it is read once that session "
-            + "ends…"
-        : $"{reason} Reading again…");
+    if (quick) {
+      SetStatus(deviceBusy
+          ? "The modem is busy with another configuration operation; ranging is switched off "
+              + "once that ends…"
+          : $"{reason} Trying again to switch ranging off…");
+    } else {
+      SetStatus(deviceBusy
+          ? "Another configuration session is using this modem; it is read once that session "
+              + "ends…"
+          : $"{reason} Reading again…");
+    }
     return true;
   }
 
@@ -1011,6 +1046,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return;
     }
     if (_client.Phase == Phase.Error) {
+      if (_quickWrite && RetryLater("Configuration protocol failed.", false)) {
+        return;
+      }
       Fail("Configuration protocol failed.", _commitSent);
       return;
     }
@@ -1082,6 +1120,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return;
     }
     if (_client.Phase is not (Phase.Ready or Phase.RestartRequired)) {
+      return;
+    }
+    if (_quickWrite) {
+      AdvanceQuickWriteInfo();
       return;
     }
     if (UseSnapshot()) {
@@ -1197,15 +1239,28 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   private void AdvanceRecovery() {
     if (_client.Phase == Phase.Active && _client.DurableConfirmed) {
       _started = false;
-      _values = new SortedDictionary<string, Value>(
-          CandidateValues().ToDictionary(pair => pair.Key, pair => pair.Value),
-          StringComparer.Ordinal);
+      bool quick = _quickWrite;
+      _quickWrite = false;
+      if (quick) {
+        // Only what the switch-off wrote is known; edits in the table were not saved.
+        foreach (Value written in _quickWrites) {
+          if (_values.TryGetValue(written.Name, out Value? held)) {
+            _values[written.Name] = held with { Bytes = Copy(written.Bytes) };
+          }
+        }
+      } else {
+        _values = new SortedDictionary<string, Value>(
+            CandidateValues().ToDictionary(pair => pair.Key, pair => pair.Value),
+            StringComparer.Ordinal);
+      }
       _valuesIdentity = Empty;
       // Derived read-only values such as the link hash stay stale until the next read.
       _readBack = false;
       Rebuild();
       SetStep(Step.Idle);
-      SetStatus("Saved, restarted and verified active.");
+      SetStatus(quick
+          ? "Ranging switched off, restarted and verified active."
+          : "Saved, restarted and verified active.");
       _reloadPending = true;
       ConfigurationFinished?.Invoke(true);
     } else if (_client.Phase == Phase.Superseded) {
@@ -1251,7 +1306,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       EndReadSession();
     }
     ReleaseReader();
-    _retryPending = _waitingForReader = false;
+    _retryPending = _waitingForReader = _quickWrite = false;
     SetStatus(reason);
     _writes.Clear();
     if (!uncertain && _started && !_client.Pending && _client.Abort(Now())) {
@@ -1323,7 +1378,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     }
     _commitSent = true;
     SetStep(Step.Commit);
-    CommitSent?.Invoke(CandidateValues());
+    // A ranging switch-off announces no identity change, and it has no read values to inspect.
+    if (!_quickWrite) {
+      CommitSent?.Invoke(CandidateValues());
+    }
   }
 
   private void Rebuild() {
@@ -1351,6 +1409,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     ShowRows();
     _rebuilding = false;
     RefreshCommands();
+    UpdateDistanceRows();
     EditsChanged?.Invoke();
   }
 
@@ -1359,6 +1418,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _rows.Clear();
     Rows.Clear();
     RefreshCommands();
+    UpdateDistanceRows();
   }
 
   private void ShowRows() {

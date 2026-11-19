@@ -10,7 +10,7 @@ using Target = MissionPlanner.Services.Nv5ConfigurationClient.Target;
 
 namespace MissionPlanner.Tests;
 
-public class Nv5NativeSettingsEditorTests {
+public partial class Nv5NativeSettingsEditorTests {
   // A modem with two settings, no configuration digest and a validation that refuses the
   // candidate, as the transaction protocol's own editor tests use.
   [Fact]
@@ -738,6 +738,29 @@ public class Nv5NativeSettingsEditorTests {
       return done();
     }
 
+    /// <summary>Delivers ranging telemetry from the modem's own address and route.</summary>
+    internal void Distance(Nv5DistanceMessage value) {
+      NvModemMavlinkDialect.Register();
+      byte[] bytes = new MAVLink.MavlinkParse().GenerateMAVLinkPacket20(
+          (MAVLink.MAVLINK_MSG_ID)NvModemMessageIds.Nv5Distance, value, false, Modem.Peer.System,
+          Modem.Peer.Component);
+      MAVLink.MAVLinkMessage message = new MAVLink.MavlinkParse().ReadPacket(
+          new MemoryStream(bytes))!;
+      foreach ((Nv5NativeSettingsEditor editor, _) in _editors.ToList()) {
+        editor.Receive(message, Modem.Peer.Route);
+      }
+    }
+
+    /// <summary>Lets time pass without any reply, servicing the editors as the page does.</summary>
+    internal void Wait(uint milliseconds) {
+      for (uint waited = 0; waited < milliseconds; waited += 20) {
+        _now += 20;
+        foreach ((Nv5NativeSettingsEditor editor, _) in _editors.ToList()) {
+          editor.Service();
+        }
+      }
+    }
+
     /// <summary>Settings the firmware derives, which a new boot reads again.</summary>
     internal int Derived(int first = 0, int count = -1) =>
         Modem.Settings.Skip(first).Take(count < 0 ? Full : count)
@@ -777,6 +800,7 @@ internal sealed class Nv5FakeModem {
   internal int RefuseReadBegins { get; set; }
   internal bool SingleReader { get; set; }
   internal int ReadBegins { get; private set; }
+  internal int Begins { get; private set; }
   internal int Reads { get; private set; }
   internal int Commits { get; private set; }
 
@@ -868,6 +892,7 @@ internal sealed class Nv5FakeModem {
         _readOpen = false;
         break;
       case Nv5ConfigOperations.Begin:
+        Begins++;
         Staged.Clear();
         // As the firmware does: edits based on an older committed revision are refused.
         reply.Result = BusyBegin ? Nv5ConfigResults.Busy
