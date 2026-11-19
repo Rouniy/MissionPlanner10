@@ -468,10 +468,12 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   /// <summary>
   /// Ends a save that has not been committed and keeps the table as it is, as the pair window does
   /// when the other modem's check fails. A request still in flight is answered before the abort
-  /// goes out. Raises no <see cref="ConfigurationFinished"/>: the caller ended the save.
+  /// goes out, and a save already being cancelled keeps its reason. Raises no
+  /// <see cref="ConfigurationFinished"/>: the caller ended the save.
   /// </summary>
   internal void Cancel(string reason) {
-    if (!Busy || _commitSent || Reading() || _quickWrite || _step == Step.Aborting) {
+    if (!Busy || _commitSent || Reading() || _quickWrite || _cancelPending
+        || _step == Step.Aborting) {
       return;
     }
     _writes.Clear();

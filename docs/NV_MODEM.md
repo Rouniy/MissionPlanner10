@@ -194,10 +194,13 @@ window cannot open now, for example while the modem is read or has unsaved edits
   retrying. Once a commit has gone out, the window stays open until every committed save is
   confirmed or has failed; a modem not yet committed when the other one fails is not committed at
   all. A check that fails before either commit aborts both transactions and gives each table back
-  what it showed before the save, edits made in its tab included; the form keeps its values. A
-  modem's refusal is named with the field and link hashes it reported. A modem whose settings
-  changed after it was read must be read again before either modem saves. The measuring end of a
-  running pair changes only with ranging switched off first.
+  what it showed before the save, edits made in its tab included; the form keeps its values.
+  Close waits until every such abort is answered, including one that waits for a request still in
+  flight, and then closes the window on its own: a closed window sends nothing more, and the modem
+  would stay busy until its writer lease ran out. A save begun meanwhile keeps the window open for
+  its outcome. A modem's refusal is named with the field and link hashes it reported. A modem
+  whose settings changed after it was read must be read again before either modem saves. The
+  measuring end of a running pair changes only with ranging switched off first.
 - **Switching off.** Clearing the box and saving switches ranging off on both modems. When ranging
   is on somewhere and the modems are not both read, one of them restarted within the last minute,
   or one of them lacks the margin setting, each modem that may range saves only `CHn_RNG_EN = 0`

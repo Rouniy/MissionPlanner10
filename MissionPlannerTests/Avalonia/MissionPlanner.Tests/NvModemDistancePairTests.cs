@@ -950,6 +950,95 @@ public class NvModemDistancePairTests {
   }
 
   [Fact]
+  public void Close_waits_for_a_stopped_check_to_be_aborted_on_its_modem() {
+    var bench = new PairBench();
+    bench.Modems[1].BusyBegin = true;
+    NvModemDistancePairViewModel pair = bench.Open();
+    Nv5NativeSettingsEditor first = pair.Modem1Editor;
+    var closes = new List<bool>();
+    pair.CloseRequested += () => closes.Add(pair.TryClose());
+    pair.RangingEnabled = true;
+    pair.Apply();
+    // Modem 2 refuses its BEGIN while modem 1's is unanswered, so modem 1's abort has to wait.
+    bench.HoldFirst = true;
+    Assert.True(bench.Pump(() => !pair.Active), pair.Status);
+    Assert.False(pair.TryClose());
+    Assert.Equal("Closing once Modem 1 · 10:10 has cancelled its unfinished save…", pair.Status);
+    Assert.Equal("Not saved: pair setup stopped before saving.", first.StatusText);
+
+    // Answered, that BEGIN is followed by the abort, whose answer the window waits for as well.
+    bench.Release();
+    bench.HoldFirst = true;
+    Assert.True(bench.Pump(() => bench.Held.Count != 0), first.StatusText);
+    Assert.False(bench.Pump(() => closes.Count != 0, steps: 100));
+    Assert.True(first.Busy);
+    bench.Release();
+    Assert.True(bench.Pump(() => closes.Count != 0, steps: 100), first.StatusText);
+    Assert.Equal([true], closes);
+    Assert.Contains(bench.Modems[0].Seen, frame => frame.Payload is Nv5ConfigControlMessage {
+      Operation: Nv5ConfigOperations.Abort,
+    });
+  }
+
+  [Fact]
+  public void Close_cancels_a_check_still_open_before_the_window_lets_its_modem_go() {
+    var bench = new PairBench();
+    NvModemDistancePairViewModel pair = bench.Open();
+    Nv5NativeSettingsEditor first = pair.Modem1Editor;
+    var closes = new List<bool>();
+    pair.CloseRequested += () => closes.Add(pair.TryClose());
+    // A check modem 1 holds open, validated and waiting for its commit.
+    Assert.True(first.Prepare());
+    Assert.True(bench.Pump(() => bench.Modems[0].Validations == 1), first.StatusText);
+    Assert.True(first.Busy);
+    Assert.False(pair.TryClose());
+    Assert.Equal("Closing once Modem 1 · 10:10 has cancelled its unfinished save…", pair.Status);
+    Assert.True(bench.Pump(() => closes.Count != 0, steps: 100), first.StatusText);
+    Assert.Equal([true], closes);
+    Assert.Equal("Not saved: the pair window is closing.", first.StatusText);
+    Assert.Equal(0, bench.Modems[0].Commits);
+    Assert.Contains(bench.Modems[0].Seen, frame => frame.Payload is Nv5ConfigControlMessage {
+      Operation: Nv5ConfigOperations.Abort,
+    });
+  }
+
+  [Fact]
+  public void Close_during_a_read_goes_at_once_and_frees_both_read_sessions() {
+    var bench = new PairBench();
+    NvModemDistancePairViewModel pair = bench.Create();
+    Assert.True(bench.Pump(() => bench.Modems[0].Reads > 2 && bench.Modems[1].Reads > 2),
+        pair.Status);
+    Assert.True(pair.Modem1Editor.Busy && pair.Modem2Editor.Busy);
+    Assert.True(pair.TryClose());
+    bench.Pump(() => false, steps: 20);
+    foreach (Nv5FakeModem modem in bench.Modems) {
+      Assert.True(modem.Reads < modem.Settings.Count);
+      Assert.Contains(modem.Seen, frame => frame.Payload is Nv5ConfigControlMessage {
+        Operation: Nv5ConfigOperations.ReadEnd,
+      });
+    }
+  }
+
+  [Fact]
+  public void A_switch_off_begun_while_close_waits_keeps_the_window_open_for_its_outcome() {
+    var bench = new PairBench();
+    bench.Modems[1].Set("CH1_RNG_EN", 1);
+    bench.Modems[1].FailCommit = true;
+    NvModemDistancePairViewModel pair = bench.Open();
+    var closes = 0;
+    pair.CloseRequested += () => closes++;
+    Assert.True(pair.Modem1Editor.Prepare());
+    Assert.False(pair.TryClose());
+    // Ranging is switched off on modem 2 alone while modem 1's check is being cancelled.
+    pair.Apply();
+    Assert.True(pair.Active);
+    Assert.True(bench.Pump(() => !pair.Active && !pair.Modem1Editor.Busy), pair.Status);
+    Assert.False(bench.Pump(() => closes != 0, steps: 100));
+    Assert.StartsWith("Modem 1 · 10:10: ranging is off. Modem 2 · 10:11: ranging was not switched "
+        + "off.", pair.Status, StringComparison.Ordinal);
+  }
+
+  [Fact]
   public void A_modem_changed_since_its_read_is_read_again_before_either_modem_saves() {
     var bench = new PairBench();
     NvModemDistancePairViewModel pair = bench.Open();

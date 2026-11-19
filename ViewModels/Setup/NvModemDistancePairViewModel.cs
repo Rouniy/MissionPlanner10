@@ -156,6 +156,9 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   private bool _refreshing;
   private bool _quiet;
 
+  // Set when Close waits for a save stopped before its commit to be cancelled on its modem.
+  private bool _closePending;
+
   /// <param name="first">The modem selected on the settings page: Modem 1.</param>
   /// <param name="second">The modem the window opens on as Modem 2.</param>
   /// <param name="createEditor">Makes an editor that shares the page's snapshot store.</param>
@@ -199,6 +202,9 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   /// <summary>A modem's commit was sent with these values; it restarts under the address they
   /// give it.</summary>
   internal event Action<Nv5NativeSettingsEditor, IReadOnlyDictionary<string, Value>>? CommitSent;
+
+  /// <summary>A close that waited for unfinished saves to be cancelled can go ahead.</summary>
+  internal event Action? CloseRequested;
 
   public Nv5NativeSettingsEditor Modem1Editor => _editors[0];
   public Nv5NativeSettingsEditor Modem2Editor => _editors[1];
@@ -422,11 +428,29 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   private bool Follows(Target current, Target next) =>
       Equals(current.Route, next.Route) || !_routeOpen(current.Route);
 
-  /// <summary>Closes unless a save is under way or a committed save has no outcome yet; drops
-  /// what was staged and frees both modems' read sessions.</summary>
+  /// <summary>
+  /// Closes unless a save is under way or a committed save has no outcome yet; drops what was
+  /// staged and frees both modems' read sessions. A save stopped before its commit is cancelled on
+  /// its modem first, since a closed window sends nothing more and the modem would stay busy until
+  /// its writer lease ran out; <see cref="CloseRequested"/> follows once it is.
+  /// </summary>
   internal bool TryClose() {
     if (Active || _editors.Any(editor => editor.AwaitingReconnect)) {
       Status = "Wait for both save outcomes before closing this window.";
+      return false;
+    }
+    var ending = new List<string>();
+    for (int i = 0; i < 2; i++) {
+      _editors[i].Cancel("Not saved: the pair window is closing.");
+      if (_editors[i].Saving) {
+        ending.Add(_names[i]);
+      }
+    }
+    _closePending = ending.Count != 0;
+    if (_closePending) {
+      Status = ending.Count == 2
+          ? $"Closing once {ending[0]} and {ending[1]} have cancelled their unfinished saves…"
+          : $"Closing once {ending[0]} has cancelled its unfinished save…";
       return false;
     }
     foreach (Nv5NativeSettingsEditor editor in _editors) {
@@ -719,6 +743,11 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   }
 
   private void RefreshNow() {
+    if (_closePending && !_editors.Any(editor => editor.Saving)) {
+      _closePending = false;
+      CloseRequested?.Invoke();
+      return;
+    }
     // A read in progress is left to finish; cutting it off would fail the editor instead. One
     // that only waits to be tried again has nothing to lose, so the switch need not wait for it.
     if (_peerSwitch && !Active && (!_editors[1].Busy || _editors[1].Retrying)) {
@@ -1405,6 +1434,8 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     bool wasActive = Active;
     _state = state;
     if (Active) {
+      // A save begun while Close waits keeps the window open for its outcome.
+      _closePending = false;
       CanApply = false;
       FormEnabled = PeerEnabled = ManagerEnabled = MarginEnabled = SpanEnabled = false;
     }

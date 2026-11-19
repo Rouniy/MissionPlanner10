@@ -314,6 +314,19 @@ public partial class NvModemTests {
       Assert.True(window.IsVisible);
       Assert.Contains("Wait for both save outcomes", pair.Status, StringComparison.Ordinal);
       Assert.True(bench.Pump(() => !pair.Active));
+
+      // The failed checks are aborted on both modems before the window lets them go; it then
+      // closes on its own.
+      window.Close();
+      Assert.True(window.IsVisible);
+      Assert.Equal("Closing once Modem 1 · 10:10 and Modem 2 · 10:11 have cancelled their "
+          + "unfinished saves…", pair.Status);
+      Assert.True(bench.Pump(() => !window.IsVisible, steps: 100), pair.Status);
+      foreach (Nv5FakeModem modem in bench.Modems) {
+        Assert.Contains(modem.Seen, frame => frame.Payload is Nv5ConfigControlMessage {
+          Operation: Nv5ConfigOperations.Abort,
+        });
+      }
     } finally {
       window.Close();
     }

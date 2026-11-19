@@ -7,9 +7,11 @@ namespace MissionPlanner.Views.Setup;
 /// <summary>
 /// Configures ranging between two NV5 modems. Saving restarts both modems, so no button is the
 /// default one: Enter in a field only ends the edit. The window stays open until both save
-/// outcomes are known.
+/// outcomes are known, and Close goes ahead once a save stopped before its commit is cancelled.
 /// </summary>
 public partial class NvModemDistancePairWindow : Window {
+  private NvModemDistancePairViewModel? _pair;
+
   public NvModemDistancePairWindow() {
     AvaloniaXamlLoader.Load(this);
     this.FindControl<Button>("PairApply")!.Click += (_, _) => ViewModel?.Apply();
@@ -25,7 +27,19 @@ public partial class NvModemDistancePairWindow : Window {
         args.Cancel = true;
       }
     };
+    DataContextChanged += (_, _) => Follow(ViewModel);
+    Closed += (_, _) => Follow(null);
   }
 
   private NvModemDistancePairViewModel? ViewModel => DataContext as NvModemDistancePairViewModel;
+
+  private void Follow(NvModemDistancePairViewModel? pair) {
+    if (_pair != null) {
+      _pair.CloseRequested -= Close;
+    }
+    _pair = pair;
+    if (_pair != null) {
+      _pair.CloseRequested += Close;
+    }
+  }
 }
