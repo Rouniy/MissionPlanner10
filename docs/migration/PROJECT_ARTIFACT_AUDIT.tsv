@@ -21,28 +21,28 @@ build.bat	retain	MissionPlanner.slnx	Current Windows SDK build/test convenience 
 ExtLibs/7zip	remove	ExtLibs/ICSharpCode.SharpZipLib/ICSharpCode.SharpZipLib.csproj	Unreferenced legacy LZMA SDK/sample project; active archive services use maintained SharpCompress/SharpZipLib paths.
 ExtLibs/Antenna	remove	Services/AntennaTrackerOutputs.cs	All three serial antenna output protocols are ported and regression-tested in the native service.
 ExtLibs/Benchmark	remove	ExtLibs/Mavlink/MAVLink.csproj	Old net461 one-file benchmark experiment, outside the supported graph and with no build/documentation entry point.
-ExtLibs/DriverCleanup	remove	Porting/FEATURE_AUDIT.md	Retired Windows driver-cleanup executable; current port delegates driver handling to the OS.
+ExtLibs/DriverCleanup	remove	docs/migration/FEATURE_AUDIT.md	Retired Windows driver-cleanup executable; current port delegates driver handling to the OS.
 ExtLibs/Exocortex.DSP	remove	MissionPlanner.slnx	Unreferenced legacy DSP snapshot with no current product, test, generator or packaging consumer.
 ExtLibs/GDAL	remove	Services/NativeGdalApi.cs	Obsolete managed/GDI GDAL wrapper replaced by dynamic current native-GDAL bindings.
 ExtLibs/GeoUtility/GeoutilityMobile.csproj	remove	ExtLibs/GeoUtility/GeoUtility.csproj	Obsolete mobile-only project metadata; shared GeoUtility source remains in the active project.
 ExtLibs/GeoUtility/GeoutilityMobile.sln	remove	ExtLibs/GeoUtility/GeoUtility.csproj	Obsolete mobile-only solution metadata; shared GeoUtility source remains in the active project.
 ExtLibs/HIL	remove	SITL-TESTING.md	Retired managed X-Plane/FlightGear/Ateryx simulation stack; supported simulator workflow is SITL and the native X-Plane bridge remains separate.
 ExtLibs/LibTessDotNet	remove	MissionPlanner.slnx	No active consumer; its only remaining reverse reference was the simultaneously retired SvgNet tree.
-ExtLibs/ManagedNativeWifi.Simple	remove	Porting/FEATURE_AUDIT.md	Windows Wi-Fi helper existed only for the retired Solo network installer.
+ExtLibs/ManagedNativeWifi.Simple	remove	docs/migration/FEATURE_AUDIT.md	Windows Wi-Fi helper existed only for the retired Solo network installer.
 ExtLibs/Maps	remove	Controls/MapView.cs	Broken legacy GMap/System.Drawing renderer replaced by the native Mapsui map stack.
 ExtLibs/MavlinkMessagePlugin	remove	ViewModels/FlightDataViewModel.cs	Old sample plugin replaced by the built-in MAVLink message inspection workflow.
 ExtLibs/MissionPlanner.Drawing.Common	remove	Services/NativeGdalApi.cs	Compatibility shim consumed only by the retired GDAL/Android drawing projects.
 ExtLibs/Mock	remove	MissionPlannerTests/Avalonia/MissionPlanner.Tests	Obsolete sample host for the retired MAVLink-message plugin; current plugin/runtime behavior has automated tests.
 ExtLibs/MockDroneID	remove	MissionPlannerTests/Avalonia/MissionPlanner.Tests/OpenDroneIdTests.cs	Hard-coded developer traffic generator superseded by deterministic OpenDroneID tests and native UI coverage.
 ExtLibs/NetDFULib	remove	Services/LegacyFirmwareUploader.cs	Windows ST vendor-DLL flasher replaced by the active cross-platform DFU firmware workflow.
-ExtLibs/SharpAdbClient	remove	Porting/FEATURE_AUDIT.md	ADB library existed only for retired Android/Solo installers and has no supported product consumer.
+ExtLibs/SharpAdbClient	remove	docs/migration/FEATURE_AUDIT.md	ADB library existed only for retired Android/Solo installers and has no supported product consumer.
 ExtLibs/SvgNet	remove	MissionPlanner.slnx	Unreferenced GDI/Skia SVG bridge; current Avalonia assets and rendering do not consume it.
 ExtLibs/System.Drawing.android	remove	MissionPlanner.slnx	Retired Xamarin/Android drawing compatibility project.
 ExtLibs/Transitions	remove	MissionPlanner.slnx	Unreferenced WinForms-era animation helper; Avalonia supplies the current transition system.
 ExtLibs/UAVCANFlasher	remove	GCSViews/ConfigurationView/ConfigDroneCanView.axaml	Standalone legacy flasher replaced by integrated DroneCAN firmware upload.
 ExtLibs/UsbSerialForAndroid	remove	MissionPlanner.slnx	Retired Xamarin Android USB-serial binding and bundled Java artifacts.
 ExtLibs/md5sum	remove	build/linux/package.sh	Obsolete net472 helper; packaging uses the host md5sum utility directly.
-ExtLibs/solo	remove	Porting/FEATURE_AUDIT.md	Obsolete unauthenticated Solo Wi-Fi/SSH installer deliberately retired by the feature audit.
+ExtLibs/solo	remove	docs/migration/FEATURE_AUDIT.md	Obsolete unauthenticated Solo Wi-Fi/SSH installer deliberately retired by the feature audit.
 ExtLibs/tlogThumbnailHandler	remove	Services/LogIndexService.cs	Windows shell extension replaced by the cross-platform in-app log route thumbnail workflow.
 ExtLibs/zlib.net	remove	MissionPlanner.slnx	Unreferenced legacy zlib snapshot; active compression paths use current framework/SharpZipLib implementations.
 LogAnalyzer	remove	Services/LogAnalyzer.cs	Python 2/py2exe analyzer replaced by the in-process cross-platform implementation of all 17 enabled checks and regression tests.

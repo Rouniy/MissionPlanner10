@@ -9,7 +9,7 @@ fail() {
   exit 1
 }
 
-manifest=Porting/WINFORMS_RETIREMENT.tsv
+manifest=docs/migration/WINFORMS_RETIREMENT.tsv
 expected_header=$'retired_path\tbaseline_role\tdecision\tnative_evidence\tnotes'
 [[ "$(head -n 1 "$manifest")" == "$expected_header" ]] || fail "unexpected manifest header"
 
@@ -30,7 +30,7 @@ forms_projects=$(rg -l '<UseWindowsForms>[[:space:]]*true</UseWindowsForms>|Syst
 [[ -z "$forms_projects" ]] || fail "WinForms project metadata remains: $forms_projects"
 
 forms_code=$(rg -l '^[[:space:]]*(using[[:space:]]+(static[[:space:]]+)?|namespace[[:space:]]+|global::)System\.Windows\.Forms|System\.Windows\.Forms\.(Form|Control|UserControl|MessageBox|ToolStrip|Application)' \
-  --glob '*.cs' --glob '!Porting/Reference/**' . || true)
+  --glob '*.cs' --glob '!docs/migration/Reference/**' . || true)
 [[ -z "$forms_code" ]] || fail "WinForms code remains: $forms_code"
 
 [[ ! -e .gitmodules ]] || fail ".gitmodules remains even though the repository has no submodule"

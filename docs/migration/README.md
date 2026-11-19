@@ -1,9 +1,11 @@
 # In-place Avalonia migration
 
-This directory is the auditable control plane for replacing the root Mission Planner WinForms
-application with the existing cross-platform Avalonia port. It intentionally lives in the native
-Mission Planner fork so the final implementation, backend fixes, plugins, documentation and future
-upstream merges share one history.
+This directory is the record of replacing the root Mission Planner WinForms application in place
+with the cross-platform Avalonia port. The work happened in the native Mission Planner fork so the
+implementation, backend fixes, plugins, documentation and future upstream merges share one
+history. Its manifests are frozen; the scripts in `build/migration/` check them, and CI runs
+`check-native-surface.sh`. Product documentation is in [`docs/`](../), and the running status
+and handoff log is [`docs/STATUS.md`](../STATUS.md).
 
 ## Non-negotiable result
 
@@ -40,22 +42,22 @@ project, package and deliberately retired source row with native evidence. Toget
 708 paths at the pinned source commit and are guarded by its canonical path/blob digest:
 
 ```bash
-./build/porting/check-port-source-resolution.sh
+./build/migration/check-port-source-resolution.sh
 # Strong local check against the read-only source worktree:
-./build/porting/check-port-source-resolution.sh /home/alex/src/MP/MissionPlanner-Avalonia
+./build/migration/check-port-source-resolution.sh /home/alex/src/MP/MissionPlanner-Avalonia
 ```
 
 Regenerate both inventories with:
 
 ```bash
-./build/porting/generate-manifests.sh /home/alex/src/MP/MissionPlanner-Avalonia
+./build/migration/generate-manifests.sh /home/alex/src/MP/MissionPlanner-Avalonia
 ```
 
 Import the pinned application-owned source (not its project graph, tests, old submodule, build
 output, or repository metadata) with:
 
 ```bash
-./build/porting/import-application.sh /home/alex/src/MP/MissionPlanner-Avalonia
+./build/migration/import-application.sh /home/alex/src/MP/MissionPlanner-Avalonia
 ```
 
 The importer verifies the exact source commit, refuses a dirty source, uses only the reviewed
@@ -69,7 +71,7 @@ disappear from `NATIVE_SURFACE.tsv`.
 Import the pinned regression-test sources (without copying their old project graph) with:
 
 ```bash
-./build/porting/import-tests.sh /home/alex/src/MP/MissionPlanner-Avalonia
+./build/migration/import-tests.sh /home/alex/src/MP/MissionPlanner-Avalonia
 ```
 
 Test sources are placed below `MissionPlannerTests/Avalonia`, renamed to the native
@@ -78,11 +80,11 @@ Test sources are placed below `MissionPlannerTests/Avalonia`, renamed to the nat
 Import the pinned historical audits needed to verify the migration with:
 
 ```bash
-./build/porting/import-reference-docs.sh /home/alex/src/MP/MissionPlanner-Avalonia
+./build/migration/import-reference-docs.sh /home/alex/src/MP/MissionPlanner-Avalonia
 ```
 
-These files live in `Porting/Reference` and are evidence for the in-place migration rather than a
-second source tree. They remain byte-identical to their recorded source blobs, except
+These files live in `docs/migration/Reference` and are evidence for the in-place migration rather
+than a second source tree. They remain byte-identical to their recorded source blobs, except
 `NV_MODEM.md` and `PORT_STATUS.md`: private product names were removed after import, so
 `PORT_SOURCE_RESOLUTION.tsv` records them as merged into those files.
 
@@ -102,7 +104,7 @@ files, while the native translation editor intentionally reads only translatable
 `.csproj`, `.sln`, `.slnx` or `.vcxproj`, a missing retained tool, or the return of a removed path:
 
 ```bash
-./build/porting/check-project-artifacts.sh
+./build/migration/check-project-artifacts.sh
 ```
 
 This is deliberately stricter than deleting everything outside the solution. Conditional Windows
@@ -114,7 +116,7 @@ It distinguishes conditional Windows runtime payloads, hardware-driver artifacts
 from stale binary duplicates and compatibility assemblies:
 
 ```bash
-./build/porting/check-binary-artifacts.sh
+./build/migration/check-binary-artifacts.sh
 ```
 
 `KEY_ARTIFACT_AUDIT.tsv` accounts for committed strong-name/certificate containers. It removes
@@ -122,7 +124,7 @@ unreferenced inherited PFX/SNK files and makes the few retained public/strong-na
 explicit; updater and package private signing keys remain external secrets:
 
 ```bash
-./build/porting/check-key-artifacts.sh
+./build/migration/check-key-artifacts.sh
 ```
 
 The generator deliberately starts uncertain native C# entries as `unported-blocker`. Classification

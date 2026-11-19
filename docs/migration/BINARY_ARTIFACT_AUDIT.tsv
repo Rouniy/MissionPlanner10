@@ -14,7 +14,7 @@ Utilities/protogen/protogen.exe	retain	Utilities/protogen/csharp.xslt	Retained p
 ExtLibs/AStar.dll	remove	MissionPlanner.slnx	Unreferenced prebuilt legacy assembly with no compile, runtime, generator or package consumer.
 ExtLibs/BitMiracle.LibTiff.NetStandard.dll	remove	ExtLibs/Utilities/MissionPlanner.Utilities.csproj	Stale binary duplicate; the active project restores BitMiracle.LibTiff.NET from NuGet.
 ExtLibs/CoreCompat.System.Drawing.dll	remove	MissionPlanner.csproj	Unreferenced System.Drawing compatibility binary from retired UI experiments.
-ExtLibs/DirectShowLib-2005.dll	remove	Porting/FEATURE_AUDIT.md	Unreferenced DirectShow binary; current video and recording use cross-platform LibVLC/Skia paths.
+ExtLibs/DirectShowLib-2005.dll	remove	docs/migration/FEATURE_AUDIT.md	Unreferenced DirectShow binary; current video and recording use cross-platform LibVLC/Skia paths.
 ExtLibs/DotSpatial.Projections.dll	remove	ExtLibs/Utilities/MissionPlanner.Utilities.csproj	Stale binary duplicate; the active graph restores MP.DotSpatial.Projections from NuGet.
 ExtLibs/Ionic.Zip.NetStandard.dll	remove	ExtLibs/Utilities/MissionPlanner.Utilities.csproj	Stale binary duplicate; the active graph restores DotNetZip.NetStandard from NuGet.
 ExtLibs/Ionic.Zip.NetStandard.pdb	remove	ExtLibs/Utilities/MissionPlanner.Utilities.csproj	Debug symbols for the removed stale DotNetZip binary.

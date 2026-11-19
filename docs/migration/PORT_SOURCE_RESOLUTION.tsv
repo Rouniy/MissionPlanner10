@@ -7,7 +7,7 @@ source_path	source_blob	resolution	native_evidence	notes
 .github/workflows/codeql.yml	d4baf573c5e01af25a13e3e1ffbc69f308dd6b85	merge	.github/workflows/codeql.yml	Merged CodeQL workflow for the native fork paths.
 .github/workflows/release.yml	87476dd466703128ca0f6acc930963172957e127	merge	.github/workflows/release.yml	Merged signed GitHub Release publishing and all supported artifacts.
 .gitignore	02501d322523dea88ceaa8d128da7496ae2c740e	merge	.gitignore	Merged Avalonia publish package test and local-tool outputs with native ignores.
-.gitmodules	a56dc503fcd8451c2a50daadc702f006ae0d27f4	retire	Porting/BASELINE.md	The source entry only declared external/MissionPlanner; the in-place fork deliberately has no application submodule.
+.gitmodules	a56dc503fcd8451c2a50daadc702f006ae0d27f4	retire	docs/migration/BASELINE.md	The source entry only declared external/MissionPlanner; the in-place fork deliberately has no application submodule.
 Directory.Build.props	629452a4bdae21c337276fe766311ae608ddad8e	merge	Directory.Build.props	Merged deterministic warning version and cross-platform build policy.
 Directory.Build.targets	962657724ad7e48d0e9b972666f954a3c4548aeb	merge	Directory.Build.targets	Merged runtime asset filtering and in-place packaging targets.
 Directory.Packages.props	e0fb7f65964b110fd721d5aa682dabaff16afba9	merge	Directory.Packages.props	Merged the central Avalonia test and runtime dependency versions.
@@ -45,11 +45,11 @@ build/make-update-bundle.py	602ce357465f3b91a4668aa25c0b5b9e378ab6b9	merge	build
 build/simpleble/fetch-macos.sh	d87c7edd2928094311972e9e7b670ea9f9b6f34b	exact	build/simpleble/fetch-macos.sh	Imported byte-for-byte.
 build/version.sh	02efb23ebe69fd90059c2e2c4dc9573df41ed212	merge	build/version.sh	Merged official Mission Planner version build date commit and package-safe forms.
 build/vlc/fetch-macos.sh	1484823c3ebf92232ec854749198eeb0af7f1cb8	exact	build/vlc/fetch-macos.sh	Imported byte-for-byte.
-docs/NV_MODEM.md	8a29bc6353586cd8080f4fc7a6a46556ec6c1328	merge	Porting/Reference/NV_MODEM.md	Reference snapshot kept with private product names removed after import.
-docs/PORT_STATUS.md	ddc34b888fec56810d0a2a66c4b11e4cf1798a78	merge	Porting/Reference/PORT_STATUS.md	Reference snapshot kept with private product names removed after import.
-external/Directory.Build.props	34aaf583f8d4d13237b81ac03d61772acd6db492	retire	Porting/BASELINE.md	Only configured the removed external native checkout; the in-place project uses root policy.
-external/Directory.Packages.props	5f9708a97f38de5ec3174674b50ebba430ba9504	retire	Porting/BASELINE.md	Only configured the removed external native checkout; root package policy is authoritative.
-external/MissionPlanner	67a3c4f22bd1b38ac499f9756902e04fa4ed8444	retire	Porting/BASELINE.md	The exact gitlink baseline became this repository history and is intentionally not vendored.
+docs/NV_MODEM.md	8a29bc6353586cd8080f4fc7a6a46556ec6c1328	merge	docs/migration/Reference/NV_MODEM.md	Reference snapshot kept with private product names removed after import.
+docs/PORT_STATUS.md	ddc34b888fec56810d0a2a66c4b11e4cf1798a78	merge	docs/migration/Reference/PORT_STATUS.md	Reference snapshot kept with private product names removed after import.
+external/Directory.Build.props	34aaf583f8d4d13237b81ac03d61772acd6db492	retire	docs/migration/BASELINE.md	Only configured the removed external native checkout; the in-place project uses root policy.
+external/Directory.Packages.props	5f9708a97f38de5ec3174674b50ebba430ba9504	retire	docs/migration/BASELINE.md	Only configured the removed external native checkout; root package policy is authoritative.
+external/MissionPlanner	67a3c4f22bd1b38ac499f9756902e04fa4ed8444	retire	docs/migration/BASELINE.md	The exact gitlink baseline became this repository history and is intentionally not vendored.
 global.json	512142d2bea1add9d1cf54884a7fde22666bad51	exact	global.json	Imported byte-for-byte to preserve the .NET 10 feature-band policy promised by README.
 src/MissionPlannerAvalonia.LegacyPluginApi/MainV2Compatibility.cs	df9f11da1d0f2edebd4bd08f626438537abc9b17	exact	Plugin/LegacyCompatibility/MainV2Compatibility.cs	Imported byte-for-byte into the native plugin location.
 src/MissionPlannerAvalonia.LegacyPluginApi/MissionPlannerAvalonia.LegacyPluginApi.csproj	16482f4ef23382abfb1a63b74b4c13ff6a753b9e	merge	MissionPlanner.csproj	Merged the legacy ABI directly into MissionPlanner.dll instead of emitting a conflicting second assembly.
@@ -60,10 +60,10 @@ src/MissionPlannerAvalonia.PluginApi/PluginHost.cs	d5ec634dec562ac06c0e6baa3120a
 src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj	3ad616e37d70ba7e0801a0226e8c538cb98d72c9	merge	MissionPlanner.csproj	Replaced the root WinForms project in place and merged native backends resources version and identity.
 src/Px4Uploader/Px4Uploader.csproj	524eef2f711a0789a3f0b91116ee750be414b096	merge	ExtLibs/px4uploader/px4uploader.csproj	Merged CoreCLR uploader settings into the canonical native px4uploader project.
 src/UpstreamCompat/MonoRuntimeSettingsCompatibility.cs	8d6cc1d40eade2ac0d333f951015f54180b3a22d	merge	Services/AppPaths.cs;ExtLibs/Utilities/Settings.cs	Replaced the Mono marker shim with explicit XDG/config/cache paths in native Settings.
-srtm/S36E149.hgt	53147945c5eeb9f630e6dbdcdf117506a12528ce	retire	Porting/PROJECT_CLEANUP_AUDIT.md	Unreferenced 25 MiB developer terrain sample; runtime and tests use selected cached or generated terrain.
-srtm/S36E149.hgt.zip	fe0863adac305b3679541beedf45e0ac8b9cd722	retire	Porting/PROJECT_CLEANUP_AUDIT.md	Duplicate compressed developer terrain sample with no source build test or package consumer.
-srtm/SRTM1	206de63f5eeebd7ca32fa4e002e248bbffb09fda	retire	Porting/PROJECT_CLEANUP_AUDIT.md	Unreferenced developer terrain sample; no product path assumes repository-local SRTM data.
-srtm/SRTM3	084619437fdd9edbc6b5f42665c730d67761df0a	retire	Porting/PROJECT_CLEANUP_AUDIT.md	Unreferenced developer terrain sample; no product path assumes repository-local SRTM data.
+srtm/S36E149.hgt	53147945c5eeb9f630e6dbdcdf117506a12528ce	retire	docs/migration/PROJECT_CLEANUP_AUDIT.md	Unreferenced 25 MiB developer terrain sample; runtime and tests use selected cached or generated terrain.
+srtm/S36E149.hgt.zip	fe0863adac305b3679541beedf45e0ac8b9cd722	retire	docs/migration/PROJECT_CLEANUP_AUDIT.md	Duplicate compressed developer terrain sample with no source build test or package consumer.
+srtm/SRTM1	206de63f5eeebd7ca32fa4e002e248bbffb09fda	retire	docs/migration/PROJECT_CLEANUP_AUDIT.md	Unreferenced developer terrain sample; no product path assumes repository-local SRTM data.
+srtm/SRTM3	084619437fdd9edbc6b5f42665c730d67761df0a	retire	docs/migration/PROJECT_CLEANUP_AUDIT.md	Unreferenced developer terrain sample; no product path assumes repository-local SRTM data.
 tests/MissionPlannerAvalonia.LegacyReference/MissionPlannerAvalonia.LegacyReference.csproj	775c5746b6d226bfcaa53e49506bc425eb6e276d	merge	MissionPlannerTests/Avalonia/MissionPlanner.LegacyReference/MissionPlanner.LegacyReference.csproj	Renamed identity and retargeted references into the in-place graph.
 tests/MissionPlannerAvalonia.LegacyTestPlugin/MissionPlannerAvalonia.LegacyTestPlugin.csproj	93502103ebac50af7de29d6dd03241d02e7f33b8	merge	MissionPlannerTests/Avalonia/MissionPlanner.LegacyTestPlugin/MissionPlanner.LegacyTestPlugin.csproj	Renamed identity and retained the net472 binary compatibility fixture.
 tests/MissionPlannerAvalonia.TestPlugin.Dependency/MissionPlannerAvalonia.TestPlugin.Dependency.csproj	c0d6cada099fa4b7116f3e18e1818fe22a64e200	merge	MissionPlannerTests/Avalonia/MissionPlanner.TestPlugin.Dependency/MissionPlanner.TestPlugin.Dependency.csproj	Renamed identity and retained the portable plugin dependency fixture.
