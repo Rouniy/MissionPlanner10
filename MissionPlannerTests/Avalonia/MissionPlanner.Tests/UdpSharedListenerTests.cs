@@ -36,9 +36,7 @@ public class UdpSharedListenerTests {
     };
 
     Task opening = Task.Run(listener.Open);
-    Assert.True(SpinWait.SpinUntil(
-        () => listener.client?.Client?.LocalEndPoint is IPEndPoint,
-        TimeSpan.FromSeconds(2)));
+    Assert.True(SpinWait.SpinUntil(() => IsBound(listener), TimeSpan.FromSeconds(2)));
     listener.CancelConnect = true;
     await opening.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -46,5 +44,18 @@ public class UdpSharedListenerTests {
     using var sender = new UdpClient(AddressFamily.InterNetwork);
     await sender.SendAsync([0x01], 1, new IPEndPoint(IPAddress.Loopback, port));
     Assert.True(SpinWait.SpinUntil(() => listener.BytesToRead > 0, TimeSpan.FromSeconds(2)));
+  }
+
+  /// <summary>
+  /// Whether Open has bound its listener. Open first closes the unbound client the constructor
+  /// made, and UdpClient.Close disposes the socket before it clears Client, so a probe at that
+  /// moment reaches a disposed socket; it is not bound yet.
+  /// </summary>
+  private static bool IsBound(UdpSerial listener) {
+    try {
+      return listener.client?.Client?.LocalEndPoint is IPEndPoint;
+    } catch (ObjectDisposedException) {
+      return false;
+    }
   }
 }
