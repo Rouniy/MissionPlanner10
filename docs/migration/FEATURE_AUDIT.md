@@ -84,7 +84,8 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   files. The page does not create a private socket or serial connection: every device identity
   includes the exact already-open MAVLink interface plus system/component IDs, so identical sysids
   on two links remain isolated. Device changes and refreshes immediately discard displayed values;
-  no modem parameter list is persisted between application sessions. See [`NV_MODEM.md`](../NV_MODEM.md).
+  no modem parameter list is persisted between application sessions. See
+  [`NV_MODEM.md`](../NV_MODEM.md).
 - MAVLink signing key management: add/use/delete/disable.
 - A visible cross-platform Tools menu exposes MAVLink Inspector, MAVLink Mirror, NMEA output,
   Cursor-on-Target/TAK output, spectrogram, link/connection diagnostics and log tools.
@@ -930,6 +931,6 @@ is explicitly overridden with the compatible CVE-2026-39959-fixed 0.92.0 release
 `dotnet list package --vulnerable
 --include-transitive` audit reports no vulnerable package in the Avalonia application graph.
 The seven CodeQL findings reviewed in this synchronization and their code-level mitigations or
-reachability decisions are recorded in [`CODEQL_TRIAGE.md`](Reference/CODEQL_TRIAGE.md). Two unused-web-sample
-alerts closed through precise analysis scoping; the other five remain visible and no alert was
-dismissed merely to make the dashboard green.
+reachability decisions are recorded in [`CODEQL_TRIAGE.md`](Reference/CODEQL_TRIAGE.md). Two
+unused-web-sample alerts closed through precise analysis scoping; the other five remain visible and
+no alert was dismissed merely to make the dashboard green.

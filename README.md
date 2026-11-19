@@ -37,8 +37,9 @@ official Mission Planner usage questions belong in the ArduPilot documentation a
 
 The in-place migration started from native Mission Planner commit
 `67a3c4f22bd1b38ac499f9756902e04fa4ed8444`. Source provenance and the remaining native surface are
-audited under [`docs/migration/`](docs/migration/README.md); upstream updates can now be merged into this same tree.
-The hardware-free acceptance workflow is documented in the [SITL checklist](SITL-TESTING.md).
+audited under [`docs/migration/`](docs/migration/README.md); upstream updates can now be merged into
+this same tree. The hardware-free acceptance workflow is documented in the
+[SITL checklist](SITL-TESTING.md).
 
 The application version combines the upstream value from `Properties/AssemblyInfo.cs`, the tracked
 local build number in `build/local-build-number.txt` and the repository commit. For example,
@@ -54,12 +55,12 @@ Signed beta tags append `-beta` or `-beta.N`; they are published as GitHub prere
 discovered by the enabled Beta Updates preference; stable and beta channels both read only signed
 manifests attached to this repository's GitHub Releases.
 
-See the live [port status](docs/STATUS.md) and the pinned
+See the [status log](docs/STATUS.md) and the pinned
 [feature audit](docs/migration/FEATURE_AUDIT.md) for the support matrix and remaining work. The
-native [portable plugin host](docs/migration/Reference/PLUGINS.md) documents the official-style lifecycle,
-installation paths, Avalonia extension API, binary compatibility for non-visual legacy plugins and
-the explicit source-adaptation boundary for legacy plugins that embed WinForms controls. The
-application itself has no WinForms source, project, runtime dependency or submodule.
+native [portable plugin host](docs/migration/Reference/PLUGINS.md) documents the official-style
+lifecycle, installation paths, Avalonia extension API, binary compatibility for non-visual legacy
+plugins and the explicit source-adaptation boundary for legacy plugins that embed WinForms controls.
+The application itself has no WinForms source, project, runtime dependency or submodule.
 
 ## AI flight diagnostics
 
@@ -311,10 +312,11 @@ dotnet test MissionPlannerTests/Avalonia/MissionPlanner.Tests/MissionPlanner.Tes
 ```
 
 The clean solution build is expected to report zero warnings and zero errors. The current warning
-audit and exact reproduction commands are in [`docs/migration/WARNING_AUDIT.md`](docs/migration/WARNING_AUDIT.md).
-The conservative file/directory/build-system classification is recorded in
-[`docs/migration/PROJECT_CLEANUP_AUDIT.md`](docs/migration/PROJECT_CLEANUP_AUDIT.md); do not delete excluded native
-files merely because they are not yet in the transitional Avalonia compile list.
+audit and exact reproduction commands are in
+[`docs/migration/WARNING_AUDIT.md`](docs/migration/WARNING_AUDIT.md). The conservative
+file/directory/build-system classification is recorded in
+[`docs/migration/PROJECT_CLEANUP_AUDIT.md`](docs/migration/PROJECT_CLEANUP_AUDIT.md); do not delete
+excluded native files merely because they are not yet in the transitional Avalonia compile list.
 
 ## License
 

@@ -1,9 +1,11 @@
 # In-place Avalonia migration
 
-This directory is the auditable control plane for replacing the root Mission Planner WinForms
-application with the existing cross-platform Avalonia port. It intentionally lives in the native
-Mission Planner fork so the final implementation, backend fixes, plugins, documentation and future
-upstream merges share one history.
+This directory is the record of replacing the root Mission Planner WinForms application in place
+with the cross-platform Avalonia port. The work happened in the native Mission Planner fork so the
+implementation, backend fixes, plugins, documentation and future upstream merges share one
+history. Its manifests are frozen; the scripts in `build/migration/` check them, and CI runs
+`check-native-surface.sh`. Product documentation is in [`docs/`](../), and the running status
+and handoff log is [`docs/STATUS.md`](../STATUS.md).
 
 ## Non-negotiable result
 
@@ -81,8 +83,8 @@ Import the pinned historical audits needed to verify the migration with:
 ./build/migration/import-reference-docs.sh /home/alex/src/MP/MissionPlanner-Avalonia
 ```
 
-These files live in `docs/migration/Reference`, remain byte-identical to their recorded source blobs and
-are evidence for the in-place migration rather than a second source tree.
+These files live in `docs/migration/Reference`, remain byte-identical to their recorded source blobs
+and are evidence for the in-place migration rather than a second source tree.
 
 Later corrections and implementation advances belong in the live `FEATURE_AUDIT.md`,
 `NV_MODEM.md` and `TEMP_HANDLER_AUDIT.md` files. The matching names below `Reference/` are the

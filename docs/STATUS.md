@@ -1,4 +1,7 @@
-# Avalonia in-place migration status
+# Status and handoff log
+
+Newest entries first. The earlier entries cover the in-place Avalonia migration, whose record and
+manifests are in [migration/](migration/README.md).
 
 Updated: **2026-11-04**.
 
@@ -2131,8 +2134,8 @@ Updated: **2026-11-04**.
   `MissionPlannerTests/Avalonia`; their five adapted projects reference the root application and
   native libraries directly. The UDP transport fixture uses an ephemeral listener port instead of
   colliding with a live modem on 14550.
-- Six pinned historical audits are preserved in `docs/migration/Reference` with a blob manifest. They are
-  migration evidence, not a copied source tree.
+- Six pinned historical audits are preserved in `docs/migration/Reference` with a blob manifest.
+  They are migration evidence, not a copied source tree.
 - A clean Release build of the complete test graph succeeds with zero warnings and zero errors
   after resolving all 156 inherited `ExtLibs` diagnostics without a repository-wide `NoWarn`; the
   decisions and reproduction commands are recorded in `WARNING_AUDIT.md`. All **1379/1379**
