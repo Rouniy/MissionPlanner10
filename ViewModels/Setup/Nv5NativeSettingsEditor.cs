@@ -396,6 +396,11 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return;
     }
     Advance();
+    // The next request goes out at once rather than on the owner's next tick, so a read of the
+    // whole catalogue takes round trips, not service intervals.
+    if (_target != null && _client.TakeOutbound(Now()) is { } next) {
+      SendFrame?.Invoke(next, _target);
+    }
   }
 
   /// <summary>Reads the device, or takes its settings from the shared store when it reports no

@@ -316,6 +316,16 @@ public class Nv5NativeSettingsEditorTests {
   }
 
   [Fact]
+  public void A_read_asks_for_each_setting_as_soon_as_the_previous_one_arrives() {
+    var bench = new Bench(CatalogueModem());
+    uint start = bench.Now;
+    bench.Attach();
+    // The owner services the editor only now and then; replies must not wait for it.
+    uint elapsed = bench.Now - start;
+    Assert.True(elapsed < 200, $"{elapsed} ms to read {bench.Full} settings");
+  }
+
+  [Fact]
   public void Save_commits_once_survives_the_restart_and_verifies_activation() {
     Nv5FakeModem modem = CatalogueModem();
     modem.CommitModel = true;
@@ -675,6 +685,9 @@ public class Nv5NativeSettingsEditorTests {
     private uint _now = 1000;
 
     internal Nv5FakeModem Modem { get; } = modem;
+
+    /// <summary>The fake clock, in milliseconds.</summary>
+    internal uint Now => _now;
     internal int Full => Modem.Settings.Count;
     internal event Action<Nv5NativeSettingsEditor, Nv5ConfigurationFrame>? Sent;
 
