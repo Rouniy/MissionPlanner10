@@ -85,6 +85,14 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     Failed,
   }
 
+  /// <summary>How one modem's part of a pair save ended.</summary>
+  private enum SaveOutcome {
+    Pending,
+    Saved,
+    Unconfirmed,
+    NotSaved,
+  }
+
   private sealed record Peer(Target Target, uint Uptime, string Label);
 
   // Limits of the modem's ranging schedule. The modem still validates every candidate; these
@@ -123,7 +131,9 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   private readonly Func<object, bool> _routeOpen;
   private readonly uint[] _hash = new uint[2];
   private readonly bool[] _prepared = new bool[2];
-  private readonly bool[] _complete = new bool[2];
+  private readonly bool[] _committed = new bool[2];
+  private readonly SaveOutcome[] _outcome = new SaveOutcome[2];
+  private readonly string[] _outcomeReason = ["", ""];
   private readonly int[] _offOutcome = new int[2];
   private readonly string[] _offReason = ["", ""];
 
@@ -170,7 +180,10 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
       int index = i;
       Nv5NativeSettingsEditor editor = _editors[i];
       editor.SendFrame += (frame, target) => SendFrame?.Invoke(frame, target);
-      editor.CommitSent += values => CommitSent?.Invoke(editor, values);
+      editor.CommitSent += values => {
+        _committed[index] = true;
+        CommitSent?.Invoke(editor, values);
+      };
       editor.Prepared += (valid, channel1, channel2) => OnPrepared(index, valid, channel1, channel2);
       editor.DurableSaved += () => OnDurableSaved(index);
       editor.ConfigurationFinished += success => OnConfigurationFinished(index, success);
@@ -409,10 +422,10 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   private bool Follows(Target current, Target next) =>
       Equals(current.Route, next.Route) || !_routeOpen(current.Route);
 
-  /// <summary>Closes unless a save is under way; drops what was staged and frees both
-  /// modems' read sessions.</summary>
+  /// <summary>Closes unless a save is under way or a committed save has no outcome yet; drops
+  /// what was staged and frees both modems' read sessions.</summary>
   internal bool TryClose() {
-    if (Active) {
+    if (Active || _editors.Any(editor => editor.AwaitingReconnect)) {
       Status = "Wait for both save outcomes before closing this window.";
       return false;
     }
@@ -508,7 +521,8 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     _first = side == 1 ? 1 - transmitter : transmitter;
     _secondStarted = false;
     Array.Clear(_prepared);
-    Array.Clear(_complete);
+    Array.Clear(_committed);
+    Array.Fill(_outcome, SaveOutcome.Pending);
     SetState(PairPhase.CollectHashes);
     Status = "Checking both candidate link contracts…";
     // Both begin, or neither goes on: a check that one modem cannot start ends the other's.
@@ -1234,18 +1248,15 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
       SetState(PairPhase.Saving);
       Status = "Peer contracts match. Saving the responder, then the manager…";
       if (!_editors[_first].CommitPrepared()) {
-        Fail($"Cannot commit the prepared responder. {_editors[_first].StatusText}");
+        Ended(_first, SaveOutcome.NotSaved,
+            $"Its commit could not start. {_editors[_first].StatusText}");
       }
     }
   }
 
   private void OnDurableSaved(int index) {
     if (_state == PairPhase.Saving && index == _first && !_secondStarted) {
-      _secondStarted = true;
-      if (!_editors[1 - _first].CommitPrepared()) {
-        Fail("Responder saved, but the manager could not start its commit. The pair may be "
-            + "partially configured; read both devices before retrying.");
-      }
+      CommitSecond();
     }
   }
 
@@ -1268,30 +1279,101 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
       }
       return;
     }
-    if (!Active || _complete[index]) {
+    if (_state != PairPhase.Saving || _outcome[index] != SaveOutcome.Pending) {
       return;
     }
     if (!success) {
-      Fail($"Modem {index + 1} did not confirm completion. The pair may be partially configured. "
-          + _editors[index].StatusText);
+      Ended(index, _committed[index] ? SaveOutcome.Unconfirmed : SaveOutcome.NotSaved,
+          _editors[index].StatusText);
       return;
     }
-    _complete[index] = true;
+    _outcome[index] = SaveOutcome.Saved;
     if (index == _first && !_secondStarted) {
-      _secondStarted = true;
-      if (!_editors[1 - _first].CommitPrepared()) {
-        Fail("The responder completed, but the manager could not start its commit. Read both "
-            + "devices before retrying.");
-        return;
+      CommitSecond();
+    }
+    Settle();
+  }
+
+  /// <summary>Commits the manager once the responder's save is durable.</summary>
+  private void CommitSecond() {
+    _secondStarted = true;
+    int second = 1 - _first;
+    if (!_editors[second].CommitPrepared()) {
+      Ended(second, SaveOutcome.NotSaved,
+          $"Its commit could not start. {_editors[second].StatusText}");
+    }
+  }
+
+  /// <summary>Records how one modem's part of a pair save ended.</summary>
+  private void Ended(int index, SaveOutcome outcome, string reason) {
+    if (_state != PairPhase.Saving || _outcome[index] != SaveOutcome.Pending) {
+      return;
+    }
+    _outcome[index] = outcome;
+    _outcomeReason[index] = reason;
+    Settle();
+  }
+
+  /// <summary>
+  /// Finishes a pair save once each modem's part has ended. After a failure a modem not yet
+  /// committed is not committed at all; one already committed is waited for, so the window never
+  /// closes while a committed save may still be confirmed.
+  /// </summary>
+  private void Settle() {
+    if (_state != PairPhase.Saving) {
+      return;
+    }
+    bool failed = _outcome.Any(outcome => outcome is SaveOutcome.Unconfirmed
+        or SaveOutcome.NotSaved);
+    for (int i = 0; i < 2 && failed; i++) {
+      if (_outcome[i] == SaveOutcome.Pending && !_committed[i]) {
+        _outcome[i] = SaveOutcome.NotSaved;
+        _outcomeReason[i] = "It was not committed after the other modem's save failed.";
+        _editors[i].Cancel("Not saved: the other modem's save failed before this one was "
+            + "committed.");
       }
     }
-    if (_complete[0] && _complete[1]) {
+    if (_outcome.Contains(SaveOutcome.Pending)) {
+      if (failed) {
+        Status = SaveReport();
+      }
+      return;
+    }
+    if (_outcome.All(outcome => outcome == SaveOutcome.Saved)) {
+      Array.Fill(_preSave, NoTexts);
       SetState(PairPhase.Done);
       Status = RangingEnabled
           ? "Both modems saved, restarted and verified. The range is shown on the measuring "
               + "modem; it is raw unless a calibration applies."
           : "Both modems saved, restarted and verified. Ranging is off on both.";
+      return;
     }
+    if (_committed[0] || _committed[1]) {
+      Array.Fill(_preSave, NoTexts);
+      SetState(PairPhase.Failed);
+      Status = "The pair may be partially configured; read both modems before trying again. "
+          + SaveReport();
+      return;
+    }
+    // Neither commit went out, so the modems still hold what was read.
+    PutBack();
+    SetState(PairPhase.Failed);
+    Status = "Neither modem was changed. " + SaveReport();
+  }
+
+  /// <summary>Each modem's part of the pair save so far.</summary>
+  private string SaveReport() {
+    var lines = new List<string>();
+    for (int i = 0; i < 2; i++) {
+      string line = _outcome[i] switch {
+        SaveOutcome.Saved => "saved, restarted and verified.",
+        SaveOutcome.Unconfirmed => $"did not confirm its save. {_outcomeReason[i]}",
+        SaveOutcome.NotSaved => $"not saved. {_outcomeReason[i]}",
+        _ => "waiting for its save to be confirmed…",
+      };
+      lines.Add($"{_names[i]}: {line.TrimEnd()}");
+    }
+    return string.Join(" ", lines);
   }
 
   /// <summary>

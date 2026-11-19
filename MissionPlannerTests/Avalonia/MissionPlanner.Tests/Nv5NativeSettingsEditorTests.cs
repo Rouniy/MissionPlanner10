@@ -803,6 +803,10 @@ internal sealed class Nv5FakeModem {
 
   internal int Validations { get; private set; }
   internal bool CommitModel { get; set; }
+
+  /// <summary>Refuses every commit as a storage failure.</summary>
+  internal bool FailCommit { get; set; }
+
   internal int RefuseReadBegins { get; set; }
   internal bool SingleReader { get; set; }
   internal int ReadBegins { get; private set; }
@@ -923,7 +927,9 @@ internal sealed class Nv5FakeModem {
         break;
       case Nv5ConfigOperations.Commit:
         Commits++;
-        if (CommitModel) {
+        if (FailCommit) {
+          reply.Result = Nv5ConfigResults.StorageFailed;
+        } else if (CommitModel) {
           foreach ((string stagedName, uint stagedRaw) in Staged) {
             Set(stagedName, stagedRaw);
           }

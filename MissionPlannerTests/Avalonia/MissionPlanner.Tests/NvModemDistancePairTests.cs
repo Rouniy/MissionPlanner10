@@ -790,6 +790,79 @@ public class NvModemDistancePairTests {
   }
 
   [Fact]
+  public void The_window_stays_open_until_both_committed_saves_have_an_outcome() {
+    var bench = new PairBench();
+    foreach (Nv5FakeModem modem in bench.Modems) {
+      modem.CommitModel = true;
+    }
+    NvModemDistancePairViewModel pair = bench.Open();
+    pair.RangingEnabled = true;
+    pair.Apply();
+    Assert.True(bench.Pump(() => pair.Editors.All(editor => editor.AwaitingReconnect
+        && editor.StatusText.Contains("Waiting for restart", StringComparison.Ordinal))),
+        pair.Status);
+
+    // The responder comes back holding a newer save than its own, so its save cannot be
+    // confirmed. The manager has committed as well and is not back yet.
+    Nv5FakeModem responder = bench.Modems[0];
+    responder.Commit("CH1_FREQ_HZ", 868100000);
+    responder.Reboot();
+    pair.Observe(responder.Peer with { TransportEpoch = responder.Peer.TransportEpoch + 1 }, 30);
+    Assert.True(bench.Pump(() => pair.Modem1Editor.Failed), pair.Modem1Editor.StatusText);
+    Assert.True(pair.Modem2Editor.AwaitingReconnect);
+    Assert.True(pair.Active);
+    Assert.StartsWith("Modem 1 · 10:10: did not confirm its save.", pair.Status,
+        StringComparison.Ordinal);
+    Assert.EndsWith("Modem 2 · 10:11: waiting for its save to be confirmed…", pair.Status,
+        StringComparison.Ordinal);
+    Assert.False(pair.TryClose());
+    Assert.Contains("Wait for both save outcomes", pair.Status, StringComparison.Ordinal);
+
+    Nv5FakeModem manager = bench.Modems[1];
+    manager.Reboot();
+    pair.Observe(manager.Peer with { TransportEpoch = manager.Peer.TransportEpoch + 1 }, 30);
+    Assert.True(bench.Pump(() => !pair.Active), pair.Status);
+    Assert.StartsWith("The pair may be partially configured", pair.Status,
+        StringComparison.Ordinal);
+    Assert.Contains("Modem 1 · 10:10: did not confirm its save.", pair.Status,
+        StringComparison.Ordinal);
+    Assert.EndsWith("Modem 2 · 10:11: saved, restarted and verified.", pair.Status,
+        StringComparison.Ordinal);
+    Assert.True(pair.TryClose());
+  }
+
+  [Fact]
+  public void A_responder_that_fails_before_the_manager_commits_leaves_the_manager_unsaved() {
+    var bench = new PairBench();
+    foreach (Nv5FakeModem modem in bench.Modems) {
+      modem.CommitModel = true;
+    }
+    // The responder refuses its commit, so the manager is never committed; its prepared
+    // transaction is aborted instead.
+    bench.Modems[0].FailCommit = true;
+    NvModemDistancePairViewModel pair = bench.Open();
+    pair.RangingEnabled = true;
+    pair.Apply();
+    Assert.True(bench.Pump(() => bench.Modems[0].Commits == 1), pair.Status);
+    Assert.True(bench.Pump(() => !pair.Active), pair.Status);
+    Assert.True(bench.Pump(() => !pair.Modem2Editor.Busy, steps: 100),
+        pair.Modem2Editor.StatusText);
+    Assert.Equal(0, bench.Modems[1].Commits);
+    Assert.Contains(bench.Modems[1].Seen, frame => frame.Payload is Nv5ConfigControlMessage {
+      Operation: Nv5ConfigOperations.Abort,
+    });
+    Assert.StartsWith("The pair may be partially configured", pair.Status,
+        StringComparison.Ordinal);
+    Assert.Contains("Modem 1 · 10:10: did not confirm its save. Storage failed;", pair.Status,
+        StringComparison.Ordinal);
+    Assert.EndsWith("Modem 2 · 10:11: not saved. It was not committed after the other modem's "
+        + "save failed.", pair.Status, StringComparison.Ordinal);
+    Assert.Equal("Not saved: the other modem's save failed before this one was committed.",
+        pair.Modem2Editor.StatusText);
+    Assert.True(pair.TryClose());
+  }
+
+  [Fact]
   public void A_modem_keeps_its_route_while_open_and_moves_once_that_route_closes() {
     var bench = new PairBench();
     foreach (Nv5FakeModem each in bench.Modems) {
