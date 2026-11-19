@@ -173,7 +173,8 @@ window cannot open now, for example while the modem is read or has unsaved edits
   transaction-capable modem that is online, and a modem heard later joins the list; the window
   opens on the one whose live radio roles and carrier look like the other end of a link. No modem
   outside the pair is read or written. While the window is open the page's own controls wait, and
-  the window's editors follow both modems through their restarts.
+  the window's editors follow both modems through their restarts. A modem also heard on a second
+  open link keeps the link the window uses; it moves only once that link closes.
 - **Form.** Radio, **Measured by** (`CHn_RNG_MGR`: the data receiver or the data transmitter;
   firmware without the setting always measures on the receiver, and two modems of which only one
   has it are not saved), **Measure distance on this radio link** (`CHn_RNG_EN`), period (a power of
@@ -189,10 +190,14 @@ window cannot open now, for example while the modem is read or has unsaved edits
   proof (`CHn_PEER_HASH`) and validates again. The answering modem commits first and the measuring
   one once the first save is durable; both restart and are read again, after which the pair can be
   changed again. Each modem commits atomically, but the pair is not one transaction: a partial or
-  uncertain outcome asks for both modems to be read before retrying. A check that fails before
-  either commit puts back only what the window staged; the form keeps its values. A modem's
-  refusal is named with the field and link hashes it reported. The measuring end of a running
-  pair changes only with ranging switched off first.
+  uncertain outcome names each modem's outcome and asks for both modems to be read before
+  retrying. Once a commit has gone out, the window stays open until every committed save is
+  confirmed or has failed; a modem not yet committed when the other one fails is not committed at
+  all. A check that fails before either commit aborts both transactions and gives each table back
+  what it showed before the save, edits made in its tab included; the form keeps its values. A
+  modem's refusal is named with the field and link hashes it reported. A modem whose settings
+  changed after it was read must be read again before either modem saves. The measuring end of a
+  running pair changes only with ranging switched off first.
 - **Switching off.** Clearing the box and saving switches ranging off on both modems. When ranging
   is on somewhere and the modems are not both read, one of them restarted within the last minute,
   or one of them lacks the margin setting, each modem that may range saves only `CHn_RNG_EN = 0`
