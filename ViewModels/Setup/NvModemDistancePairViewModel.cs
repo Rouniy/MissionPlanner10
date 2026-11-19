@@ -431,7 +431,7 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
       SwitchOff();
       return;
     }
-    if (Active || !_editors[0].Ready || !_editors[1].Ready) {
+    if (Active || !_editors[0].CanBeginSave || !_editors[1].CanBeginSave) {
       return;
     }
     _offAttempted = false;
@@ -511,8 +511,12 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     Array.Clear(_complete);
     SetState(PairPhase.CollectHashes);
     Status = "Checking both candidate link contracts…";
-    foreach (Nv5NativeSettingsEditor editor in _editors) {
-      editor.Prepare();
+    // Both begin, or neither goes on: a check that one modem cannot start ends the other's.
+    for (int i = 0; i < 2 && _state == PairPhase.CollectHashes; i++) {
+      if (!_editors[i].Prepare() && _state == PairPhase.CollectHashes) {
+        Fail($"{_names[i]} could not start its check, so neither modem was changed. "
+            + _editors[i].StatusText);
+      }
     }
   }
 
@@ -596,7 +600,7 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     string marginName = ChannelPrefix + "RNG_PAD_MS";
     bool marginSupported = _editors.All(editor => Supported(editor.ReadValues, marginName));
     if (Active || _peerSwitch || _state == PairPhase.Done || RangingEnabled
-        || (_editors[0].Ready && _editors[1].Ready && steady && marginSupported)) {
+        || (_editors[0].CanBeginSave && _editors[1].CanBeginSave && steady && marginSupported)) {
       return false;
     }
     int channel = SelectedChannelIndex;
@@ -712,7 +716,10 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
         && _editors[0].ValuesReadBack && _editors[1].ValuesReadBack) {
       SetState(PairPhase.Ready);
     }
-    bool ready = !Active && !_peerSwitch && _editors[0].Ready && _editors[1].Ready;
+    // A modem the device refused as out of date must be read again first, or a save would begin
+    // on the other modem alone.
+    bool ready = !Active && !_peerSwitch && _editors[0].CanBeginSave
+        && _editors[1].CanBeginSave;
     bool offOnly = SwitchOffOnly(out string offBlocked);
     CanApply = (ready || offOnly) && _state != PairPhase.Done;
     FormEnabled = !Active;
@@ -793,9 +800,12 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     // Why switching off goes modem by modem, or why switching on has to wait.
     var unread = new List<string>();
     var restarting = new List<string>();
+    var stale = new List<string>();
     for (int i = 0; i < 2; i++) {
       if (!_editors[i].Ready) {
         unread.Add(_names[i]);
+      } else if (!_editors[i].CanBeginSave && !(i == 1 && _peerSwitch)) {
+        stale.Add(_names[i]);
       }
       if (_editors[i].RestartedRecently) {
         restarting.Add(_names[i]);
@@ -816,6 +826,11 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
       aside = "Ranging can be switched off without timing-margin support: each modem saves it "
           + "off on its own and keeps its other settings. Update both modems before changing the "
           + "pair settings.";
+    } else if (stale.Count != 0 && !Active && _state != PairPhase.Done) {
+      aside = stale.Count == 2
+          ? $"{stale[0]} and {stale[1]} changed after they were read. Use Read settings in their "
+              + "tabs before saving."
+          : $"{stale[0]} changed after it was read. Use Read settings in its tab before saving.";
     } else if (!bothRead && ticked && !Active && _state != PairPhase.Done) {
       aside = "Ranging can be switched on once both modems are read.";
     }

@@ -234,6 +234,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   internal bool Ready =>
       !Busy && _values.Count != 0 && _client.Phase is Phase.Ready or Phase.Active;
 
+  /// <summary>A save can begin: the values are a confirmed readback that the device has not since
+  /// refused as out of date.</summary>
+  internal bool CanBeginSave => Ready && _readBack && !_refreshRequired;
+
   /// <summary>False while the values are a local merge after a save, before the device is read
   /// again.</summary>
   internal bool ValuesReadBack => _readBack;
@@ -457,8 +461,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   internal void Save() => StartSave(commit: true);
 
-  /// <summary>Prepares without committing, for peer-verified pair provisioning.</summary>
-  internal void Prepare() => StartSave(commit: false);
+  /// <summary>Prepares without committing, for peer-verified pair provisioning. False when no
+  /// transaction began; the status says why.</summary>
+  internal bool Prepare() => StartSave(commit: false);
 
   /// <summary>
   /// Ends a save that has not been committed and keeps the table as it is, as the pair window does
@@ -1394,18 +1399,18 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     ConfigurationFinished?.Invoke(false);
   }
 
-  private void StartSave(bool commit) {
+  private bool StartSave(bool commit) {
     if (Busy || (commit && !HasPendingChanges())) {
-      return;
+      return false;
     }
     if (_refreshRequired) {
       SetStatus("Settings changed on the device since they were read. Use Read settings and "
           + "review your changes before saving.");
-      return;
+      return false;
     }
     if (!_readBack) {
       SetStatus("The values shown are not a confirmed readback. Use Read settings before saving.");
-      return;
+      return false;
     }
     _autoCommit = commit;
     _commitRequested = false;
@@ -1419,7 +1424,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       }
       if (!Encode(value, row.ValueText, out byte[] bytes)) {
         Fail($"Invalid value for {name}.");
-        return;
+        return false;
       }
       if (!Same(bytes, value.Bytes)) {
         _writes.Add(value with { Bytes = bytes });
@@ -1442,11 +1447,12 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     // changed after they were read instead of applying these edits over that change.
     if (!_client.Begin(FreshNonce(), _valuesIdentity.Revision, Now())) {
       Fail("Refresh the device before starting a new transaction.");
-      return;
+      return false;
     }
     SetStep(Step.Begin);
     SetStatus("Validating and saving the complete configuration…");
     Service();
+    return true;
   }
 
   private void TryCommit() {

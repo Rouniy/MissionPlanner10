@@ -876,6 +876,34 @@ public class NvModemDistancePairTests {
     Assert.Equal(9, pair.Exchanges);
   }
 
+  [Fact]
+  public void A_modem_changed_since_its_read_is_read_again_before_either_modem_saves() {
+    var bench = new PairBench();
+    NvModemDistancePairViewModel pair = bench.Open();
+    // Someone else saves a change to modem 2 after the window read it.
+    bench.Modems[1].Commit("CH1_FREQ_HZ", 868100000);
+    pair.RangingEnabled = true;
+    pair.Apply();
+    Assert.True(bench.Pump(() => !pair.Active), pair.Status);
+    Assert.Contains("Settings changed on the device", pair.Status, StringComparison.Ordinal);
+    Assert.Equal(1, bench.Modems[0].Begins);
+    Assert.Equal(1, bench.Modems[1].Begins);
+
+    // Saving waits until that modem is read again, and says so; neither modem is asked.
+    Assert.False(bench.Pump(() => pair.CanApply, steps: 200), pair.SwitchHint);
+    Assert.Equal("Modem 2 · 10:11 changed after it was read. Use Read settings in its tab before "
+        + "saving.", pair.SwitchHint);
+    pair.Apply();
+    Assert.False(bench.Pump(() => pair.Active || bench.Begins != 2, steps: 200));
+
+    pair.Modem2Editor.RereadDevice();
+    Assert.True(bench.Pump(() => pair.CanApply), pair.Status);
+    Assert.Equal("868100000", bench.Row("CH1_FREQ_HZ")!.Second);
+    pair.Apply();
+    Assert.True(bench.Pump(() => bench.Modems[0].Begins == 2 && bench.Modems[1].Begins == 2),
+        pair.Status);
+  }
+
   /// <summary>
   /// With MP_NV5_CONFIG_FIXTURE set to the NV5 firmware's host nv5-configuration-fixture, two
   /// instances of the firmware's configuration core make the pair: the window turns the second
