@@ -100,7 +100,7 @@ public sealed class McpLayoutTests {
       Assert.DoesNotContain(window.GetVisualDescendants().OfType<TextBox>(), t => t.Text == "/fake/codex" || t.Text == "/fake/claude");
       Assert.DoesNotContain(window.GetVisualDescendants().OfType<ComboBox>(), c => c.Items.OfType<string>().Contains("Claude Code"));
       Assert.Contains("Do not analyze logs", AgentToolsWindow.DefaultTask);
-      // The initial task is an Advanced setting, like X-Office's panel keeps the main view to agents, sessions and the port.
+      // The initial task is an Advanced setting: the main view keeps to agents, sessions and the port.
       Assert.DoesNotContain(window.GetVisualDescendants().OfType<TextBox>(), t => t.Text == AgentToolsWindow.DefaultTask);
       window.GetVisualDescendants().OfType<Expander>().Single().IsExpanded = true; Dispatcher.UIThread.RunJobs();
       Assert.Equal(AgentToolsWindow.DefaultTask, window.GetVisualDescendants().OfType<TextBox>().Single(t => t.Text == AgentToolsWindow.DefaultTask).Text);

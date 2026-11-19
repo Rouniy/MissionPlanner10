@@ -4,7 +4,7 @@ Mission Planner embeds a Streamable HTTP MCP server in the existing Avalonia app
 Open **AI** in the navigation bar, or **AI diagnostics / MCP…** in the tools menu.
 The server is off until requested. No separate server installation is needed.
 
-The connection model follows X-Office: the window scans installed agents when it opens and
+In the connection model the window scans installed agents when it opens and
 offers **Launch** per agent. A terminal agent receives a free loopback port and a one-use
 bearer token and is fully allowed as soon as it connects. A desktop application is
 registered as an MCP client if needed, the fixed port (default 47183) opens without a
@@ -24,7 +24,7 @@ AUTOTUNE with evidence from logs.
 
 ## Use
 
-The AI window is one page modelled on X-Office's assistant panel: launch buttons, sessions,
+The AI window is one assistant page: launch buttons, sessions,
 the persistent port, an **Advanced** section and the activity log. It contains no log,
 parameter or mission selection of its own: an agent reaches logs, parameters, missions and
 every screen through the application itself, using whatever is loaded or connected.
@@ -143,8 +143,7 @@ TOML text/comments are preserved; JSON formatting may be normalized. The sidecar
 coordinates MP instances, not unrelated editors. Port conflicts fail explicitly with
 no silent fallback. Only one Mission Planner instance can own a given port.
 
-This connection workflow follows X-Office's `feature/mcp-http` implementation at
-`5b525b41360aedbc3e205012ff0d13014ca35e3e`. Validation uses the official MCP client,
+Validation uses the official MCP client,
 real local HTTP requests and fake CLI processes; it does not invoke paid models or
 change the developer's client registrations. Codex CLI arguments were checked against
 0.154.0; Claude support is implemented without invoking Claude during development.
@@ -153,11 +152,9 @@ change the developer's client registrations. Codex CLI arguments were checked ag
 
 The server now exposes **55 tools**: 29 diagnostics, 22 UI/draft/mission tools and 4
 vehicle tools (`write_parameters`, `vehicle_modes`, `vehicle_command`, `terrain_elevation`).
-The current X-Office `main` implementation was rechecked at `54b1ea3c` and its subsequent `176877f7` (GUI actions,
-inspection, operation journal and documentation resources). MP adopts connection-local
-receipts and snapshots while routing actions through explicit native adapters. X-Office
-also persists document/file journals at listener scope; MP UI receipts remain scoped
-to a connection and document this reconnect limitation explicitly.
+MP adopts connection-local receipts and snapshots while routing actions through explicit
+native adapters. UI receipts remain scoped to a connection, and this reconnect limitation
+is documented explicitly.
 
 Agents should read [AI_START](../docs/mcp/AI_START.md) and [UI_API](../docs/mcp/UI_API.md).
 The same versioned text is embedded in each binary and exposed through `resources/list`

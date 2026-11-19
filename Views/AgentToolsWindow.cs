@@ -16,7 +16,7 @@ using MissionPlanner.Services.Mcp;
 namespace MissionPlanner.Views;
 
 /// <summary>
-/// View over the application-wide <see cref="McpAgentHub"/>, laid out like X-Office's assistant panel:
+/// View over the application-wide <see cref="McpAgentHub"/>, laid out as one assistant panel:
 /// one row per installed agent (name, kind, location, Launch and desktop Register), the live sessions
 /// with Allow/Revoke/Disconnect, the persistent local port and a status line. Everything else (initial
 /// task, working directory, custom executable, session port, proposals, activity log) is under Advanced.
@@ -119,7 +119,7 @@ internal sealed class AgentToolsWindow : Window {
     _status.Text = $"Found {agents.Length} installed agent(s). Nothing was launched.";
   }
 
-  /// <summary>One row per installed agent, as in X-Office's panel: name, kind and location, then Launch (and Register for desktop apps). Agents that are not installed have no row.</summary>
+  /// <summary>One row per installed agent: name, kind and location, then Launch (and Register for desktop apps). Agents that are not installed have no row.</summary>
   private void RefreshAgents(McpAgent[]? agents = null) {
     agents ??= Hub.Agents;
     _agentRows.Children.Clear(); _agentButtons.Children.Clear();

@@ -15,7 +15,7 @@ namespace MissionPlanner.Services.Mcp;
 
 /// <summary>
 /// Application-wide owner of the MCP listeners, launches and sessions. The AI window is only a view of
-/// this hub: closing it keeps every agent connected, like hiding X-Office's assistant panel.
+/// this hub: closing it keeps every agent connected.
 /// </summary>
 internal sealed class McpAgentHub : IAsyncDisposable {
   internal static McpAgentHub? Current { get; private set; }

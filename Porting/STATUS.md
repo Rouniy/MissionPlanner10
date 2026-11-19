@@ -52,7 +52,7 @@ Updated: **2026-11-04**.
 ## Release 1.3.83.6 — DroneCAN, firmware catalogs, MCP DroneCAN tools, HUD — 2026-11-01
 
 - Merged on `origin/master` with merge commits, branch history kept: PR #46 (`3348d5014`,
-  DroneCAN over MAVLink CAN, X-Office-style agent window), PR #47 (`56b67bdfa`, DroneCAN and
+  DroneCAN over MAVLink CAN, single-panel agent window), PR #47 (`56b67bdfa`, DroneCAN and
   autopilot firmware catalogs, MCP DroneCAN tools, connect-dialog, Install Firmware and HUD
   fixes), PR #41 (`9fae128d1`, MCP session startup / Disconnect under load / access controls;
   its September macOS failure was a VLC download timeout, master was merged into the branch
@@ -137,8 +137,8 @@ Updated: **2026-11-04**.
 - Branch `fix/dronecan-mavlink-session` is based on `origin/master` at
   `bdf6a5ac5` ("fix: accept MAV_CMD ids in MCP mavlink_command"). Commits: `8c1d5c4a0`
   (SkiaSharp PNGs, ImageSharp removed), `d897bc770` (no CAN echo, one shared forwarding
-  session), `459d02026` (opt-in live CAN acceptance), `22df27980` (X-Office-style agent
-  rows, case-insensitive desktop discovery), `9f47848f7` (re-adopt the Codex desktop entry).
+  session), `459d02026` (opt-in live CAN acceptance), `22df27980` (one row per
+  agent, case-insensitive desktop discovery), `9f47848f7` (re-adopt the Codex desktop entry).
 - Hardware finding (CUAV X7 running ArduRover 4.7.0-dev `eb9a1b3c`, Matek L431 AP_Periph
   1.7 as node 125, autopilot node 10): the adapter is wired to **CAN2**. `@SYS/can0_stats.txt`
   showed zero successful transmissions and only timeouts, `can1_stats.txt` carried all
@@ -161,8 +161,8 @@ Updated: **2026-11-04**.
 - Restore had failed on NuGet audit NU1902/NU1903 for `SixLabors.ImageSharp` 2.1.12
   (2.1.13 and 3.1.12 are flagged too; 4.x needs a licence). Spectrogram and propagation
   PNGs are rendered with the already referenced SkiaSharp; ImageSharp is gone.
-- AI window (`Views/AgentToolsWindow.cs`): one row per installed agent as in X-Office's
-  assistant panel (name, kind, location, Launch, Register/Unregister), Find agents,
+- AI window (`Views/AgentToolsWindow.cs`): one row per installed agent
+  (name, kind, location, Launch, Register/Unregister), Find agents,
   sessions, persistent port; task text and activity moved under Advanced. Discovery
   finds `com.anthropic.Claude.desktop` on Linux (case-insensitive file match). Verified
   under Xvfb: Codex CLI, Claude Code, ChatGPT Desktop and Claude Desktop discovered.
@@ -269,16 +269,15 @@ Updated: **2026-11-04**.
 - The CRLF-normalisation differences in five `.bat` files that appear on checkout are excluded.
 - Next executable step: review and merge the PR, then rebuild the local application.
 
-## MCP / X-Office comparison and lifecycle fixes — 2026-09-20
+## MCP lifecycle fixes — 2026-09-20
 
 - Dedicated branch `fix/mcp-session-lifecycle` starts at fresh fork `origin/master`
   `c15c1948227fe06362d08fdbd4b0f0ee14bb2b92` (includes merged PR #40). Source fixes:
   `ea2fc5f3c` listener readiness/control capacity, `0f5141b42` fixed access toolbar;
-  comparison and retry documentation: `a68b965ed`. No master merge or release.
-- Compared X-Office `b534036d80d7baae86ca1917376f3fbadaef63eb` without modifying it.
-  Its unrelated user-owned CRM changes continued during this review and are untouched.
-  Detailed architecture/differences and deferred product features:
-  [MCP_XOFFICE_REVIEW.md](MCP_XOFFICE_REVIEW.md).
+  retry documentation: `a68b965ed`. No master merge or release.
+- AI_START and UI_API no longer promise receipts for every mutation: `write_parameters`
+  and `vehicle_command` need readback after an uncertain response and are never replayed
+  blindly.
 - Three new regression cases failed before the fixes: both hub open methods returned an
   unready listener, and DELETE returned HTTP 429 with four blocked tools. All now pass;
   two further cases cover parallel opens and refusing to restart a revoked listener.
@@ -433,7 +432,7 @@ Updated: **2026-11-04**.
   executable name (`McpAgentDiscovery.TerminalKind`, `codex*`/`claude*`), a mismatch is
   rejected before the terminal opens, and custom launches infer the kind. The tabs
   (Agent, Parameter proposals, Flight logs, Connections), the agent combo box, the kind
-  selector and the path field are gone. `Views/AgentToolsWindow.cs` is one X-Office-style
+  selector and the path field are gone. `Views/AgentToolsWindow.cs` is one assistant
   page: one **Launch <agent>** button per installed agent (absent agents have no button)
   plus **Find agents**, the initial task, sessions with Allow/Revoke/Disconnect/Allow all/
   Revoke all/Stop all connections, the persistent port, an **Advanced** expander (session
@@ -473,7 +472,7 @@ Updated: **2026-11-04**.
   window. Follow-ups unchanged: SITL/real-aircraft acceptance for `write_parameters`,
   `vehicle_command` and `mission_upload`.
 
-## X-Office-style full-access AI agent connection — 2026-09-17
+## Full-access AI agent connection — 2026-09-17
 
 - Continued `feat/mcp-flight-context` / PR #39 on top of `70813c26a`. Fixed the Linux
   "terminal flashes and closes" agent launch: Codex received
@@ -482,7 +481,7 @@ Updated: **2026-11-04**.
   only when the entry exists, and a failed agent start keeps the terminal open with the exit
   code. Verified with the real Codex CLI 0.154.0 in a pty (stays running) and Claude Code.
 - Moved listener/launch/session ownership out of the AI window into an application-wide
-  `McpAgentHub` (like X-Office's ApplicationController-owned McpController). Closing the
+  `McpAgentHub`. Closing the
   window keeps every port, launch and grant alive; **Stop all connections** or application
   exit ends them. The window is now a view over the hub and reopens with recent activity.
 - Main-window **AI** navigation button (robot icon) turns green while a session holds a
@@ -526,9 +525,7 @@ Updated: **2026-11-04**.
 ## MCP UI and mission draft API — 2026-09-17
 
 - Continued `feat/mcp-flight-context` / PR #39; fetched origin/master again and confirmed
-  `f1180f67293469a1002f1635bc8fc153e7b00c5d` is included. Rechecked X-Office main
-  snapshots `54b1ea3c` and `176877f7`, including GUI actions, inspection, receipts and
-  embedded documentation. Its unrelated worktree files were preserved.
+  `f1180f67293469a1002f1635bc8fc153e7b00c5d` is included.
 - Expanded from 29 to **46 MCP tools**: DATA/PLAN/HELP navigation, registered diagnostic
   widget inspection/actions, map centering and PNG map/plot captures, live tuning fields,
   catalogue-backed log windows/graphs, and local Mission draft get/schema/validation/
@@ -555,12 +552,11 @@ Updated: **2026-11-04**.
 - Commit, package paths and subsequent multi-platform CI outcomes are recorded in the
   workspace's newest MONOREPO_MIGRATION_HANDOFF.md checkpoint after completion.
 
-## X-Office-compatible MCP connections — 2026-09-17
+## MCP connections for launched agents — 2026-09-17
 
 - Continued the existing `feat/mcp-flight-context` / [PR #39](https://github.com/Rouniy/MissionPlanner10/pull/39).
   Fetched the fork and verified current master `f1180f67293469a1002f1635bc8fc153e7b00c5d`
   is already an ancestor; no rebase, history replacement or master merge was needed.
-  Reference: X-Office `feature/mcp-http` snapshot `5b525b41360aedbc3e205012ff0d13014ca35e3e`.
 - Replaced the UI's headless CLI launch with an external interactive terminal. Login,
   model and normal client settings persist; process-only MCP overrides, a private
   one-use handoff and session-bound launch tokens connect it to Mission Planner.
