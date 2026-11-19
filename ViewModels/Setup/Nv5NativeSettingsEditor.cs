@@ -153,6 +153,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   private bool _rebuilding;
   private bool _reloadPending;
 
+  // Set when a save that was not committed is cancelled while a request is in flight: the abort
+  // goes out once that request is answered.
+  private bool _cancelPending;
+
   // Set when the device refused a save because its settings changed after they were read: the
   // edits were made to values that are no longer current, so only a new read may lift it.
   private bool _refreshRequired;
@@ -455,6 +459,49 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   /// <summary>Prepares without committing, for peer-verified pair provisioning.</summary>
   internal void Prepare() => StartSave(commit: false);
+
+  /// <summary>
+  /// Ends a save that has not been committed and keeps the table as it is, as the pair window does
+  /// when the other modem's check fails. A request still in flight is answered before the abort
+  /// goes out. Raises no <see cref="ConfigurationFinished"/>: the caller ended the save.
+  /// </summary>
+  internal void Cancel(string reason) {
+    if (!Busy || _commitSent || Reading() || _quickWrite || _step == Step.Aborting) {
+      return;
+    }
+    _writes.Clear();
+    _commitRequested = false;
+    SetStatus(reason);
+    if (_client.Pending) {
+      _cancelPending = true;
+      return;
+    }
+    AbortCancelled();
+  }
+
+  /// <summary>What the table shows for these settings, edits included.</summary>
+  internal IReadOnlyDictionary<string, string> TableTexts(IEnumerable<string> names) {
+    var texts = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (string name in names) {
+      if (_rows.TryGetValue(name, out Nv5NativeSettingRow? row)) {
+        texts[name] = row.ValueText;
+      }
+    }
+    return texts;
+  }
+
+  /// <summary>Puts back texts taken by <see cref="TableTexts"/> after a save that staged over
+  /// them ended before its commit, so the device still holds what was read.</summary>
+  internal void RestoreTableTexts(IReadOnlyDictionary<string, string> texts) {
+    if (_commitSent) {
+      return;
+    }
+    foreach ((string name, string text) in texts) {
+      if (_rows.TryGetValue(name, out Nv5NativeSettingRow? row)) {
+        row.ValueText = text;
+      }
+    }
+  }
 
   internal bool ContinuePreparation(IReadOnlyDictionary<string, string> values) {
     if (_step != Step.Prepared || _client.Pending) {
@@ -923,7 +970,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _known.Clear();
     _kept = 0;
     _readIndex = 0;
-    _retryPending = _waitingForReader = false;
+    _retryPending = _waitingForReader = _cancelPending = false;
     if (!_client.Discover(_target!, Now())) {
       Fail("Cannot start configuration discovery.");
       return;
@@ -1057,6 +1104,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (_step == Step.Aborting) {
       _started = false;
       SetStep(Step.Failed);
+      return;
+    }
+    if (_cancelPending) {
+      AbortCancelled();
       return;
     }
     if (_client.Phase == Phase.Error) {
@@ -1314,13 +1365,25 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     return true;
   }
 
+  /// <summary>Aborts the transaction a <see cref="Cancel"/> ended; one the device never opened
+  /// needs no abort.</summary>
+  private void AbortCancelled() {
+    _cancelPending = false;
+    if (_client.Abort(Now())) {
+      SetStep(Step.Aborting);
+    } else {
+      _started = false;
+      SetStep(Step.Failed);
+    }
+  }
+
   private void Fail(string reason, bool uncertain = false) {
     // A read given up frees the device's read session at once instead of after its lease.
     if (Reading()) {
       EndReadSession();
     }
     ReleaseReader();
-    _retryPending = _waitingForReader = _quickWrite = false;
+    _retryPending = _waitingForReader = _quickWrite = _cancelPending = false;
     SetStatus(reason);
     _writes.Clear();
     if (!uncertain && _started && !_client.Pending && _client.Abort(Now())) {
@@ -1347,6 +1410,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _autoCommit = commit;
     _commitRequested = false;
     _durableEmitted = false;
+    _cancelPending = false;
     _writes.Clear();
     foreach ((string name, Nv5NativeSettingRow row) in _rows) {
       Value value = _values[name];

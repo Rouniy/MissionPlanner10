@@ -839,6 +839,43 @@ public class NvModemDistancePairTests {
     Assert.True(bench.Pump(() => pair.Modem2Editor.Ready && pair.CanApply), pair.Status);
   }
 
+  [Fact]
+  public void A_busy_modem_ends_the_check_without_losing_the_edits_in_either_tab() {
+    var bench = new PairBench();
+    bench.Modems[1].BusyBegin = true;
+    NvModemDistancePairViewModel pair = bench.Open();
+    Nv5NativeSettingsEditor first = pair.Modem1Editor;
+    Nv5NativeSettingsEditor second = pair.Modem2Editor;
+    Assert.True(second.SetValue("CH1_PWR_DBM", "12"));
+    // A tab edit of a setting that the form writes as well is the tab's again afterwards.
+    Assert.True(second.SetValue("CH1_RNG_PWR", "5"));
+    pair.RangingEnabled = true;
+    pair.Exchanges = 9;
+    pair.Apply();
+    // Modem 1's BEGIN is still unanswered when modem 2 refuses its own.
+    bench.HoldFirst = true;
+    Assert.True(bench.Pump(() => !pair.Active), pair.Status);
+    Assert.StartsWith("Modem 2 · 10:11 could not check its candidate, so neither modem was "
+        + "changed. Device busy", pair.Status, StringComparison.Ordinal);
+    Assert.True(first.Busy);
+    Assert.Equal("Not saved: pair setup stopped before saving.", first.StatusText);
+
+    // Modem 1's transaction is aborted as soon as that request is answered.
+    bench.Release();
+    Assert.True(bench.Pump(() => !first.Busy, steps: 100), first.StatusText);
+    Assert.Equal(0, bench.Modems[0].Commits + bench.Modems[1].Commits);
+    Assert.Contains(bench.Modems[0].Seen, frame => frame.Payload is Nv5ConfigControlMessage {
+      Operation: Nv5ConfigOperations.Abort,
+    });
+    Assert.Equal(12u, PairBench.Candidate(second, "CH1_PWR_DBM"));
+    Assert.Equal(5u, PairBench.Candidate(second, "CH1_RNG_PWR"));
+    Assert.Equal(1u, PairBench.Candidate(second, "CH1_RNG_N"));
+    Assert.Equal(0u, PairBench.Candidate(second, "CH1_RNG_EN"));
+    Assert.Equal(1u, PairBench.Candidate(first, "CH1_RNG_N"));
+    Assert.False(first.HasPendingChanges());
+    Assert.Equal(9, pair.Exchanges);
+  }
+
   /// <summary>
   /// With MP_NV5_CONFIG_FIXTURE set to the NV5 firmware's host nv5-configuration-fixture, two
   /// instances of the firmware's configuration core make the pair: the window turns the second
@@ -1015,6 +1052,9 @@ public class NvModemDistancePairTests {
     /// <summary>While set, requests to the second modem wait in <see cref="Held"/>.</summary>
     internal bool HoldSecond { get; set; }
 
+    /// <summary>While set, requests to the first modem wait in <see cref="Held"/>.</summary>
+    internal bool HoldFirst { get; set; }
+
     internal List<Action> Held { get; } = [];
     internal int Begins => Modems[0].Begins + Modems[1].Begins;
 
@@ -1048,7 +1088,7 @@ public class NvModemDistancePairTests {
     }
 
     internal void Release() {
-      HoldSecond = false;
+      HoldFirst = HoldSecond = false;
       foreach (Action answer in Held.ToList()) {
         answer();
       }
@@ -1066,7 +1106,7 @@ public class NvModemDistancePairTests {
               Pair!.Receive(reply, modem.Peer.Route);
             }
           }
-          if (HoldSecond && modem == Modems[1]) {
+          if ((HoldSecond && modem == Modems[1]) || (HoldFirst && modem == Modems[0])) {
             Held.Add(Answer);
           } else {
             Answer();

@@ -112,6 +112,9 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   private static readonly IReadOnlyDictionary<string, Value> NoValues =
       new Dictionary<string, Value>(StringComparer.Ordinal);
 
+  private static readonly IReadOnlyDictionary<string, string> NoTexts =
+      new Dictionary<string, string>(StringComparer.Ordinal);
+
   private readonly Nv5NativeSettingsEditor[] _editors;
   private readonly string[] _names = new string[2];
   private readonly Dictionary<string, Peer> _peers = new(StringComparer.Ordinal);
@@ -123,9 +126,12 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   private readonly bool[] _complete = new bool[2];
   private readonly int[] _offOutcome = new int[2];
   private readonly string[] _offReason = ["", ""];
+
+  // What each table showed for the settings a save stages, edits included: put back when the
+  // save ends before any commit.
+  private readonly IReadOnlyDictionary<string, string>[] _preSave = [NoTexts, NoTexts];
   private string _peerUid;
   private PairPhase _state = PairPhase.Ready;
-  private string _stagedPrefix = "";
   private string _comparisonShown = "";
   private int _first;
   private int _measuring = -1;
@@ -134,7 +140,6 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   private bool _secondStarted;
   private bool _loaded;
   private bool _marginSupported;
-  private bool _unstage;
   private bool _peerSwitch;
   private bool _announceRead;
   private bool _offAttempted;
@@ -430,6 +435,7 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
       return;
     }
     _offAttempted = false;
+    Array.Fill(_preSave, NoTexts);
     if (!AddressValue(out uint address)) {
       Refuse("Enter a nonzero ranging address of up to eight hexadecimal digits.");
       return;
@@ -486,6 +492,9 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     if (choosers == 2) {
       fields.Add(("MGR", Text(side)));
     }
+    for (int i = 0; i < 2; i++) {
+      _preSave[i] = _editors[i].TableTexts(StagedSuffixes.Select(suffix => prefix + suffix));
+    }
     foreach (Nv5NativeSettingsEditor editor in _editors) {
       foreach ((string suffix, string text) in fields) {
         if (!editor.SetValue(prefix + "RNG_" + suffix, text)) {
@@ -497,8 +506,6 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     // The end that answers saves first. That is the transmitter unless it is the one measuring.
     int transmitter = firstRole == 1 ? 0 : 1;
     _first = side == 1 ? 1 - transmitter : transmitter;
-    _stagedPrefix = prefix;
-    _unstage = false;
     _secondStarted = false;
     Array.Clear(_prepared);
     Array.Clear(_complete);
@@ -694,19 +701,6 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   }
 
   private void RefreshNow() {
-    if (_unstage && !_editors[0].Busy && !_editors[1].Busy) {
-      // The failed attempt never reached a commit, so the modems still hold what was read. Put
-      // back only what this window staged; edits made in the modem tabs stay.
-      _unstage = false;
-      foreach (Nv5NativeSettingsEditor editor in _editors) {
-        foreach (string suffix in StagedSuffixes) {
-          string name = _stagedPrefix + suffix;
-          if (editor.ReadValues.TryGetValue(name, out Value? held)) {
-            editor.SetValue(name, Nv5NativeSettingsEditor.Display(held));
-          }
-        }
-      }
-    }
     // A read in progress is left to finish; cutting it off would fail the editor instead. One
     // that only waits to be tried again has nothing to lose, so the switch need not wait for it.
     if (_peerSwitch && !Active && (!_editors[1].Busy || _editors[1].Retrying)) {
@@ -1251,6 +1245,14 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
       }
       return;
     }
+    if (_state is PairPhase.CollectHashes or PairPhase.VerifyProof) {
+      // Nothing is committed while the candidates are checked, so nothing has changed yet.
+      if (!success) {
+        Fail($"{_names[index]} could not check its candidate, so neither modem was changed. "
+            + _editors[index].StatusText);
+      }
+      return;
+    }
     if (!Active || _complete[index]) {
       return;
     }
@@ -1277,13 +1279,24 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     }
   }
 
+  /// <summary>
+  /// Ends a pair save that cannot go on. A transaction not yet committed is aborted, and each table
+  /// whose modem was not committed gets back what it showed before the save, edits made in its tab
+  /// included.
+  /// </summary>
   private void Fail(string reason) {
-    // Before the first commit nothing has reached a modem, so this attempt's staging can go.
-    _unstage = _state is PairPhase.CollectHashes or PairPhase.VerifyProof;
     SetState(PairPhase.Failed);
     Status = reason;
     foreach (Nv5NativeSettingsEditor editor in _editors) {
-      editor.Discard();
+      editor.Cancel("Not saved: pair setup stopped before saving.");
+    }
+    PutBack();
+  }
+
+  private void PutBack() {
+    for (int i = 0; i < 2; i++) {
+      _editors[i].RestoreTableTexts(_preSave[i]);
+      _preSave[i] = NoTexts;
     }
   }
 

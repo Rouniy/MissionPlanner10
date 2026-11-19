@@ -162,7 +162,7 @@ public sealed partial class Nv5NativeSettingsEditor {
     _started = _commitSent = false;
     _autoCommit = true;
     _commitRequested = _durableEmitted = false;
-    _retryPending = _waitingForReader = false;
+    _retryPending = _waitingForReader = _cancelPending = false;
     _writes.Clear();
     _writes.AddRange(_quickWrites);
     if (!_client.Discover(_target!, Now())) {
