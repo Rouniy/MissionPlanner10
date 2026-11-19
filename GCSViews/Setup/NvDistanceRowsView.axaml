@@ -1,0 +1,35 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlanner.ViewModels.Setup"
+  x:Class="MissionPlanner.Views.Setup.NvDistanceRowsView"
+>
+  <!-- Laid out like Live radio status: a bold name, then plain values. Only a failure is red, and
+       a cell too long for a narrow window is cut short; its tip has the whole row. -->
+  <DataGrid x:Name="DistanceGrid" x:DataType="vm:NvDistanceRow" AutoGenerateColumns="False"
+            IsReadOnly="True" GridLinesVisibility="All" CanUserResizeColumns="True"
+            CanUserSortColumns="False" MinHeight="84">
+    <DataGrid.Styles>
+      <Style Selector="DataGridCell" x:DataType="vm:NvDistanceRow">
+        <Setter Property="ToolTip.Tip" Value="{Binding Text}" />
+      </Style>
+    </DataGrid.Styles>
+    <DataGrid.Columns>
+      <DataGridTextColumn Header="" Binding="{Binding Name}" FontWeight="SemiBold" Width="80" />
+      <DataGridTextColumn Header="Ranging" Binding="{Binding Mode}" Width="170" />
+      <DataGridTemplateColumn Header="Reading" Width="2*">
+        <DataGridTemplateColumn.CellTemplate>
+          <DataTemplate x:DataType="vm:NvDistanceRow">
+            <TextBlock x:Name="DistanceReading" Margin="4,0" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis">
+              <Run Text="{Binding Reading}" />
+              <Run Text="{Binding AlertSeparator}" />
+              <Run Text="{Binding Alert}" Foreground="#FF7777" FontWeight="SemiBold" />
+            </TextBlock>
+          </DataTemplate>
+        </DataGridTemplateColumn.CellTemplate>
+      </DataGridTemplateColumn>
+      <DataGridTextColumn Header="Last burst" Binding="{Binding Burst}" Width="*" />
+    </DataGrid.Columns>
+  </DataGrid>
+</UserControl>

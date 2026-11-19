@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using MissionPlanner.Services;
 using Phase = MissionPlanner.Services.Nv5ConfigurationClient.ClientPhase;
 using Target = MissionPlanner.Services.Nv5ConfigurationClient.Target;
@@ -347,21 +348,15 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       if (result.Result > Nv5ConfigResults.Accepted && !_autoCommit && _step == Step.Validate
           && result.CommittedKnown != 0 && result.State == Nv5ConfigStates.Staged
           && result.Operation is Nv5ConfigOperations.Validate or Nv5ConfigOperations.Status) {
+        // The pair window decides what follows; the refusal stays in view for it to name.
         SetStep(Step.Prepared);
+        SetStatus(RefusalReason(result));
         Prepared?.Invoke(false, result.Channel1LinkHash, result.Channel2LinkHash);
         return true;
       }
       if (result.Result > Nv5ConfigResults.Accepted && !endedAnyway && _step != Step.Recovery
           && _step != Step.Aborting) {
-        string reason = ResultName(result.Result);
-        string field = NameOf(result.ErrorName);
-        if (field.Length != 0) {
-          reason += $" Field: {field}.";
-        }
-        if (result.Operation is Nv5ConfigOperations.Validate or Nv5ConfigOperations.Status) {
-          reason += $" Candidate link hashes: radio 1 = {result.Channel1LinkHash}, radio 2 = "
-              + $"{result.Channel2LinkHash}. Compare with the peer before setting CHn_PEER_HASH.";
-        }
+        string reason = RefusalReason(result);
         if (result.Result == Nv5ConfigResults.StaleRevision && !Reading()) {
           _refreshRequired = true;
         }
@@ -426,6 +421,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _retries = 0;
     StartRead();
   }
+
+  /// <summary>Read settings, for a table shown outside the settings page.</summary>
+  [RelayCommand]
+  private void ReadSettings() => RereadDevice();
 
   /// <summary>Reads every setting from the device, whatever the store holds.</summary>
   internal void RereadDevice() {
@@ -853,6 +852,21 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     data = new byte[4];
     BinaryPrimitives.WriteUInt32LittleEndian(data, raw);
     return true;
+  }
+
+  /// <summary>Why the device refused an operation, naming the field it refused, and for a
+  /// candidate the link hashes it computed.</summary>
+  private static string RefusalReason(Nv5ConfigResultMessage result) {
+    string reason = ResultName(result.Result);
+    string field = NameOf(result.ErrorName);
+    if (field.Length != 0) {
+      reason += $" Field: {field}.";
+    }
+    if (result.Operation is Nv5ConfigOperations.Validate or Nv5ConfigOperations.Status) {
+      reason += $" Candidate link hashes: radio 1 = {result.Channel1LinkHash}, radio 2 = "
+          + $"{result.Channel2LinkHash}. Compare with the peer before setting CHn_PEER_HASH.";
+    }
+    return reason;
   }
 
   internal static string ResultName(byte result) => result switch {

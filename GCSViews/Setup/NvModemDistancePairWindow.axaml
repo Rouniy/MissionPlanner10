@@ -1,0 +1,211 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlanner.ViewModels.Setup"
+  xmlns:setup="using:MissionPlanner.Views.Setup"
+  x:Class="MissionPlanner.Views.Setup.NvModemDistancePairWindow"
+  x:DataType="vm:NvModemDistancePairViewModel"
+  Title="Configure distance between two modems"
+  Width="1060" Height="820" MinWidth="900" MinHeight="640"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Window.DataTemplates>
+    <DataTemplate DataType="vm:Nv5NativeSettingsEditor">
+      <setup:Nv5NativeSettingsTable />
+    </DataTemplate>
+  </Window.DataTemplates>
+  <Window.Styles>
+    <!-- The red the settings pages use for errors: only a problem is coloured. -->
+    <Style Selector="TextBlock.problem">
+      <Setter Property="Foreground" Value="#FF7777" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Grid.field > TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- The same amber and red the settings tables use for changed and invalid values; other rows
+         keep the theme's colours. -->
+    <Style Selector="DataGrid#PairComparison DataGridRow.marked">
+      <Setter Property="Background" Value="#FFC107" />
+    </Style>
+    <Style Selector="DataGrid#PairComparison DataGridRow.problem">
+      <Setter Property="Background" Value="#FF5252" />
+    </Style>
+    <Style Selector="DataGrid#PairComparison DataGridRow.marked DataGridCell">
+      <Setter Property="Foreground" Value="#202020" />
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="12" RowSpacing="8">
+    <TextBlock Grid.Row="0" Classes="fieldlbl" Text="{Binding Explanation}" TextWrapping="Wrap" />
+
+    <!-- Setup on the left, review on the right: the tables keep the full height of the window. -->
+    <Grid Grid.Row="1" ColumnDefinitions="380,*" ColumnSpacing="12">
+      <ScrollViewer Grid.Column="0" x:Name="PairSetup" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="6" Margin="0,0,14,0">
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Modem 1" />
+            <TextBlock Grid.Column="1" x:Name="PairModem1" Text="{Binding FixedName}"
+                       TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FixedName}" />
+          </Grid>
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Modem 2" />
+            <ComboBox Grid.Column="1" x:Name="PairPeer" ItemsSource="{Binding Peers}"
+                      SelectedItem="{Binding SelectedPeer, Mode=TwoWay}"
+                      IsEnabled="{Binding PeerEnabled}" HorizontalAlignment="Stretch"
+                      ToolTip.Tip="The other end of the link. Every other verified modem that is online is listed.">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:NvPairPeerChoice">
+                  <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </Grid>
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Radio" />
+            <ComboBox Grid.Column="1" x:Name="PairChannel" ItemsSource="{Binding Channels}"
+                      SelectedIndex="{Binding SelectedChannelIndex, Mode=TwoWay}"
+                      IsEnabled="{Binding FormEnabled}" HorizontalAlignment="Stretch" />
+          </Grid>
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Measured by" />
+            <ComboBox Grid.Column="1" x:Name="PairManager" ItemsSource="{Binding ManagerChoices}"
+                      SelectedIndex="{Binding SelectedManagerIndex, Mode=TwoWay}"
+                      IsEnabled="{Binding ManagerEnabled}" HorizontalAlignment="Stretch"
+                      ToolTip.Tip="The modem that sends the ranging requests and reports the distance: the receiver or the transmitter of data on this radio. The other one answers. Both modems store this choice.">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:NvPairManagerChoice">
+                  <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </Grid>
+          <TextBlock x:Name="PairRoles" Text="{Binding RolesText}" TextWrapping="Wrap"
+                     Classes.problem="{Binding RolesProblem}" />
+          <CheckBox x:Name="PairEnabled" Content="Measure distance on this radio link"
+                    IsChecked="{Binding RangingEnabled, Mode=TwoWay}"
+                    IsEnabled="{Binding FormEnabled}"
+                    ToolTip.Tip="Ticked: saving switches ranging on at both modems. The measuring modem then measures the distance once per period and the other one answers, with a short pause in data for each burst. Cleared: saving switches ranging off at both modems." />
+          <!-- What the modems do now and what saving will change, so on and off need no guessing. -->
+          <TextBlock x:Name="PairSwitchHint" Text="{Binding SwitchHint}" TextWrapping="Wrap"
+                     IsVisible="{Binding SwitchHintVisible}" />
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Period (data packets)" />
+            <ComboBox Grid.Column="1" x:Name="PairPeriod" ItemsSource="{Binding Periods}"
+                      SelectedItem="{Binding SelectedPeriod, Mode=TwoWay}"
+                      IsEnabled="{Binding FormEnabled}" HorizontalAlignment="Stretch"
+                      ToolTip.Tip="Data packets between ranging bursts. The modem accepts powers of two." />
+          </Grid>
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Exchanges per burst" />
+            <NumericUpDown Grid.Column="1" x:Name="PairExchanges"
+                           Value="{Binding Exchanges, Mode=TwoWay}" Minimum="1" Maximum="29"
+                           Increment="1" FormatString="0" IsEnabled="{Binding FormEnabled}" />
+          </Grid>
+          <TextBlock x:Name="PairPause" Classes="fieldlbl" Text="{Binding PauseText}"
+                     TextWrapping="Wrap" />
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Additional margin (ms)" />
+            <NumericUpDown Grid.Column="1" x:Name="PairMargin"
+                           Value="{Binding MarginMs, Mode=TwoWay}" Minimum="0" Maximum="40"
+                           Increment="1" FormatString="0" IsEnabled="{Binding MarginEnabled}"
+                           ToolTip.Tip="Extra time for restoring the data link after ranging. Both modems store the same value. More margin means a longer data pause." />
+          </Grid>
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Hop span (kHz)" />
+            <NumericUpDown Grid.Column="1" x:Name="PairSpan"
+                           Value="{Binding SpanKhz, Mode=TwoWay}" Minimum="0"
+                           Maximum="4294967.295" Increment="100" FormatString="0.000"
+                           IsEnabled="{Binding SpanEnabled}"
+                           ToolTip.Tip="Total carrier span of a burst, centred on the link frequency. A single exchange always stays on the link carrier." />
+          </Grid>
+          <TextBlock x:Name="PairSpanHint" Classes="fieldlbl" Text="Not used with one exchange."
+                     IsVisible="{Binding SpanHintVisible}" />
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Ranging TX power (dBm)" />
+            <NumericUpDown Grid.Column="1" x:Name="PairPower"
+                           Value="{Binding PowerDbm, Mode=TwoWay}" Minimum="-19" Maximum="22"
+                           Increment="1" FormatString="0" IsEnabled="{Binding FormEnabled}"
+                           ToolTip.Tip="The modem checks the power against the radio's limits for the band." />
+          </Grid>
+          <TextBlock x:Name="PairLpsHint" Text="{Binding LpsHint}" TextWrapping="Wrap"
+                     IsVisible="{Binding LpsHintVisible}" />
+          <Grid Classes="field" ColumnDefinitions="168,*">
+            <TextBlock Text="Ranging address (hex)" />
+            <TextBox Grid.Column="1" x:Name="PairAddress" Text="{Binding AddressText, Mode=TwoWay}"
+                     IsEnabled="{Binding FormEnabled}"
+                     ToolTip.Tip="Nonzero 32-bit address in hexadecimal. Both modems get the same one." />
+          </Grid>
+          <Expander x:Name="PairAdvanced" Header="Advanced"
+                    IsExpanded="{Binding AdvancedShown, Mode=TwoWay}">
+            <StackPanel Spacing="4">
+              <Grid Classes="field" ColumnDefinitions="152,*">
+                <TextBlock Text="Phase (data packets)" />
+                <NumericUpDown Grid.Column="1" x:Name="PairPhase"
+                               Value="{Binding PhasePackets, Mode=TwoWay}" Minimum="0"
+                               Maximum="8388607" Increment="1" FormatString="0"
+                               IsEnabled="{Binding FormEnabled}"
+                               ToolTip.Tip="Offset of the burst within the period. It must stay below the period and on the radio's FEC and hop-dwell group boundaries." />
+              </Grid>
+              <TextBlock x:Name="PairPhaseHint" Text="{Binding PhaseHint}" TextWrapping="Wrap"
+                         Classes.problem="{Binding PhaseProblem}" />
+            </StackPanel>
+          </Expander>
+          <TextBlock x:Name="PairDifferences" Text="{Binding PeerDifferences}" TextWrapping="Wrap"
+                     IsVisible="{Binding PeerDifferencesVisible}" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <TabControl Grid.Column="1" x:Name="PairTabs">
+        <TabItem Header="Compare">
+          <Grid RowDefinitions="Auto,Auto,*" Margin="6" RowSpacing="6">
+            <TextBlock x:Name="PairComparisonSummary" Text="{Binding ComparisonSummary}"
+                       TextWrapping="Wrap" />
+            <CheckBox Grid.Row="1" x:Name="PairDifferencesOnly" Content="Differences only"
+                      IsChecked="{Binding DifferencesOnly, Mode=TwoWay}" />
+            <DataGrid Grid.Row="2" x:Name="PairComparison" ItemsSource="{Binding ComparisonRows}"
+                      AutoGenerateColumns="False" IsReadOnly="True" GridLinesVisibility="All"
+                      CanUserResizeColumns="True">
+              <DataGrid.Styles>
+                <Style Selector="DataGridCell" x:DataType="vm:NvPairComparisonRow">
+                  <Setter Property="ToolTip.Tip" Value="{Binding TipText}" />
+                </Style>
+              </DataGrid.Styles>
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Setting" Binding="{Binding Name}" Width="160" />
+                <DataGridTextColumn Header="Modem 1" Binding="{Binding First}" Width="130" />
+                <DataGridTextColumn Header="Modem 2" Binding="{Binding Second}" Width="130" />
+                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*" />
+              </DataGrid.Columns>
+            </DataGrid>
+          </Grid>
+        </TabItem>
+        <TabItem x:Name="PairModem1Tab" Header="{Binding Modem1TabName}">
+          <ContentControl Content="{Binding Modem1Editor}" />
+        </TabItem>
+        <TabItem x:Name="PairModem2Tab" Header="{Binding Modem2TabName}">
+          <ContentControl Content="{Binding Modem2Editor}" />
+        </TabItem>
+      </TabControl>
+    </Grid>
+
+    <!-- The Distance group of the modem settings, here with one row per modem. -->
+    <Border Grid.Row="2" x:Name="PairDistanceGroup" BorderBrush="{DynamicResource MpBorderBrush}"
+            BorderThickness="1" CornerRadius="2" Padding="8">
+      <StackPanel Spacing="4">
+        <TextBlock x:Name="PairDistanceTitle" Text="{Binding DistanceTitle}" FontWeight="SemiBold" />
+        <setup:NvDistanceRowsView x:Name="PairDistanceRows" Rows="{Binding DistanceRows}" />
+      </StackPanel>
+    </Border>
+
+    <!-- One fixed place for progress and outcomes; the save stays in view beside Close. -->
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" x:Name="PairStatus" Text="{Binding Status}" TextWrapping="Wrap"
+                 VerticalAlignment="Center" />
+      <Button Grid.Column="1" x:Name="PairApply" Content="{Binding ApplyText}"
+              IsEnabled="{Binding CanApply}" VerticalAlignment="Center" />
+      <Button Grid.Column="2" x:Name="PairClose" Content="Close" VerticalAlignment="Center" />
+    </Grid>
+  </Grid>
+</Window>

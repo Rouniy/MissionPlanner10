@@ -796,6 +796,12 @@ internal sealed class Nv5FakeModem {
 
   internal bool BusyBegin { get; set; }
   internal bool RejectValidate { get; set; }
+
+  /// <summary>Validations accepted before every later one is refused, as when the peer proof
+  /// staged after the first one does not hold.</summary>
+  internal int AcceptedValidations { get; set; } = int.MaxValue;
+
+  internal int Validations { get; private set; }
   internal bool CommitModel { get; set; }
   internal int RefuseReadBegins { get; set; }
   internal bool SingleReader { get; set; }
@@ -906,7 +912,7 @@ internal sealed class Nv5FakeModem {
       case Nv5ConfigOperations.Validate:
         reply.TransactionRevision = Revision;
         Array.Fill(reply.TransactionDigest, (byte)0xab);
-        if (RejectValidate) {
+        if (RejectValidate || ++Validations > AcceptedValidations) {
           reply.State = Nv5ConfigStates.Staged;
           reply.Result = Nv5ConfigResults.InvalidConfiguration;
           reply.Channel1LinkHash = 12345678;

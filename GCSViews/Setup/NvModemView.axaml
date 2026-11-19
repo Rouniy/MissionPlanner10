@@ -4,6 +4,7 @@
   xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:vm="using:MissionPlanner.ViewModels.Setup"
+  xmlns:setup="using:MissionPlanner.Views.Setup"
   mc:Ignorable="d"
   d:DesignWidth="980"
   d:DesignHeight="760"
@@ -59,6 +60,25 @@
           </DataGrid>
         </Expander>
 
+        <Expander x:Name="DistanceGroup" Header="Distance" IsExpanded="True"
+                  IsVisible="{Binding UsesNativeSettings}">
+          <!-- Ranging is always switched for both ends of a link, so the group has no per-modem
+               switch: it shows each radio's state, and pair setup changes it. -->
+          <Grid RowDefinitions="Auto,Auto" Margin="8">
+            <setup:NvDistanceRowsView Grid.Row="0" x:Name="DistanceRows"
+                                      Rows="{Binding NativeSettings.DistanceRows}" />
+            <!-- The line beside the button says what it does, or why it is unavailable now. -->
+            <DockPanel Grid.Row="1" Margin="0,8,0,0">
+              <Button DockPanel.Dock="Left" x:Name="ConfigureDistancePairButton"
+                      Content="Configure distance pair…"
+                      IsEnabled="{Binding CanConfigureDistancePair}" VerticalAlignment="Center" />
+              <TextBlock x:Name="DistancePairHint" Classes="fieldlbl"
+                         Text="{Binding DistancePairHint}" TextWrapping="Wrap"
+                         VerticalAlignment="Center" Margin="10,0,0,0" />
+            </DockPanel>
+          </Grid>
+        </Expander>
+
         <Expander x:Name="NativeSettingsGroup" Header="Modem settings" IsExpanded="True"
                   IsVisible="{Binding UsesNativeSettings}">
           <Grid RowDefinitions="Auto,Auto,Auto,Auto,360" Margin="8">
@@ -74,6 +94,9 @@
                       ToolTip.Tip="Stage the values of a settings snapshot as edits. Nothing is sent to the modem." />
               <Button x:Name="ExportNativeSnapshotButton" Content="Export snapshot…"
                       IsEnabled="{Binding NativeSettings.CanExport}" Margin="0,0,16,4" />
+              <Button x:Name="DistanceSettingsFilterButton" Content="Distance settings"
+                      Command="{Binding ShowDistanceSettingsCommand}" Margin="0,0,16,4"
+                      ToolTip.Tip="Show only the pair ranging settings of both radios." />
               <Button Content="Discard edits" Command="{Binding DiscardNativeSettingsCommand}"
                       IsEnabled="{Binding NativeSettings.CanSave}" Margin="0,0,8,4" />
               <Button x:Name="SaveNativeSettingsButton" Content="Save and restart"
