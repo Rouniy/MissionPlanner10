@@ -39,7 +39,7 @@ public static class AppState {
     Services.AppPaths.Initialize();
 
     // Private NV5 status can arrive as soon as a UDP/TCP/serial reader starts. Register the
-    // SkyComm dialect before constructing any shared MAVLink interface so those early packets are
+    // NV modem dialect before constructing any shared MAVLink interface so those early packets are
     // validated and cached even when the NV Modem setup page has not been opened yet.
     Services.NvModemMavlinkDialect.Register();
 

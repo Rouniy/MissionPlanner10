@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia.Controls;
@@ -9,9 +10,9 @@ using MissionPlanner.Views.Setup;
 
 namespace MissionPlanner.Tests;
 
-public class NvModemTests {
+public partial class NvModemTests {
   [Fact]
-  public void Registers_exact_skycomm_message_layouts_and_crc_extras() {
+  public void Registers_exact_nv_modem_message_layouts_and_crc_extras() {
     NvModemMavlinkDialect.Register();
 
     Assert.Equal(28, Marshal.SizeOf<NvRxStatMessage>());
@@ -34,6 +35,142 @@ public class NvModemTests {
         typeof(NvEncryptionKeysSetMessage));
     AssertMessage(NvModemMessageIds.NvEncryptionKeysAck, 61, 19, 19,
         typeof(NvEncryptionKeysAckMessage));
+  }
+
+  [Fact]
+  public void Registers_nv5_ranging_lps_configuration_and_calibration_messages() {
+    NvModemMavlinkDialect.Register();
+
+    // CRC extras and lengths of the NV5 firmware's message definitions.
+    AssertLayout(NvModemMessageIds.Nv5Distance, 90, 47, 97, typeof(Nv5DistanceMessage));
+    AssertLayout(NvModemMessageIds.Nv5ConfigControl, 193, 75, 75,
+        typeof(Nv5ConfigControlMessage));
+    AssertLayout(NvModemMessageIds.Nv5ConfigItem, 75, 101, 101, typeof(Nv5ConfigItemMessage));
+    AssertLayout(NvModemMessageIds.Nv5ConfigResult, 0, 251, 251,
+        typeof(Nv5ConfigResultMessage));
+    AssertLayout(NvModemMessageIds.Nv5ConfigValue, 241, 121, 121,
+        typeof(Nv5ConfigValueMessage));
+    AssertLayout(NvModemMessageIds.Nv5CalControl, 233, 75, 75, typeof(Nv5CalControlMessage));
+    AssertLayout(NvModemMessageIds.Nv5CalItem, 219, 101, 101, typeof(Nv5CalItemMessage));
+    AssertLayout(NvModemMessageIds.Nv5CalResult, 126, 243, 243, typeof(Nv5CalResultMessage));
+    AssertLayout(NvModemMessageIds.Nv5CalValue, 73, 121, 121, typeof(Nv5CalValueMessage));
+    AssertLayout(NvModemMessageIds.Nv5LpsStatus, 199, 165, 167, typeof(Nv5LpsStatusMessage));
+    AssertLayout(NvModemMessageIds.Nv5LpsBeacon, 108, 127, 167, typeof(Nv5LpsBeaconMessage));
+    AssertLayout(NvModemMessageIds.Nv5RangingCapture, 181, 25, 25,
+        typeof(Nv5RangingCaptureMessage));
+    AssertLayout(NvModemMessageIds.Nv5RangingCaptureData, 53, 229, 229,
+        typeof(Nv5RangingCaptureDataMessage));
+    Assert.Equal(16384UL, NvModemCapabilities.ConfigurationTransactions);
+    Assert.Equal(32768UL, NvModemCapabilities.CalibrationTransactions);
+  }
+
+  [Fact]
+  public void Every_nv_modem_struct_reproduces_its_wire_crc_extra() {
+    NvModemMavlinkDialect.Register();
+    uint[] ids = [
+      NvModemMessageIds.NvRxStat, NvModemMessageIds.Nv5LinkStatus,
+      NvModemMessageIds.Nv5RtspConfig, NvModemMessageIds.Nv5RtspConfigAck,
+      NvModemMessageIds.NvModemInfo, NvModemMessageIds.NvEncryptionKeysSet,
+      NvModemMessageIds.NvEncryptionKeysAck, NvModemMessageIds.Nv5Distance,
+      NvModemMessageIds.Nv5ConfigControl, NvModemMessageIds.Nv5ConfigItem,
+      NvModemMessageIds.Nv5ConfigResult, NvModemMessageIds.Nv5ConfigValue,
+      NvModemMessageIds.Nv5CalControl, NvModemMessageIds.Nv5CalItem,
+      NvModemMessageIds.Nv5CalResult, NvModemMessageIds.Nv5CalValue,
+      NvModemMessageIds.Nv5LpsStatus, NvModemMessageIds.Nv5LpsBeacon,
+      NvModemMessageIds.Nv5RangingCapture, NvModemMessageIds.Nv5RangingCaptureData,
+    ];
+
+    foreach (uint id in ids) {
+      MAVLink.message_info info = Assert.Single(MAVLink.MAVLINK_MESSAGE_INFOS,
+          candidate => candidate.msgid == id);
+      Assert.True(WireCrcExtra(info) == info.crc,
+          $"{info.name}: struct fields give CRC extra {WireCrcExtra(info)}, wire uses {info.crc}");
+    }
+  }
+
+  [Fact]
+  public void Decodes_distance_from_firmware_without_calibration_extensions() {
+    var older = new Nv5DistanceMessage {
+      TimeBootUs = 12_345_678,
+      CycleUs = 1_000_000,
+      CenterHz = 2_440_000_000,
+      AgeMs = 120,
+      WindowUs = 80_000,
+      DistanceCm = -42,
+      Channel = 2,
+      ValidCount = 1,
+      Status = 2,
+      Calibration = 1,
+      Flags = 0x02,
+      CalibrationId = new byte[16],
+    };
+
+    MAVLink.MAVLinkMessage packet = Packet(
+        NvModemMessageIds.Nv5Distance, older, systemId: 10, componentId: 11);
+    Nv5DistanceMessage actual = packet.ToStructure<Nv5DistanceMessage>();
+
+    Assert.True(packet.payloadlength <= 47, $"payload {packet.payloadlength} kept extensions");
+    Assert.Equal(-42, actual.DistanceCm);
+    Assert.Equal(2_440_000_000u, actual.CenterHz);
+    Assert.Equal(2, actual.Channel);
+    Assert.Equal(2, actual.Status);
+    Assert.Equal(0UL, actual.BankRevision);
+    Assert.Equal(0f, actual.RawMetres);
+    Assert.Equal(0, actual.CalibrationStatus);
+
+    var current = older;
+    current.CalibrationId = Enumerable.Range(1, 16).Select(value => (byte)value).ToArray();
+    current.BankRevision = 7;
+    current.RawMetres = -0.42f;
+    current.CorrectedMetres = float.NaN;
+    current.CalibrationStatus = 2;
+    current.ReferenceScope = 1;
+
+    actual = Packet(NvModemMessageIds.Nv5Distance, current, systemId: 10, componentId: 11)
+        .ToStructure<Nv5DistanceMessage>();
+
+    Assert.Equal(7UL, actual.BankRevision);
+    Assert.Equal(current.CalibrationId, actual.CalibrationId);
+    Assert.Equal(-0.42f, actual.RawMetres);
+    Assert.True(float.IsNaN(actual.CorrectedMetres));
+    Assert.Equal(2, actual.CalibrationStatus);
+    Assert.Equal(1, actual.ReferenceScope);
+  }
+
+  [Fact]
+  public void Decodes_lps_status_pose_arrays_through_the_shared_parser() {
+    var expected = new Nv5LpsStatusMessage {
+      BootNonce = 0x0123_4567_89ab_cdefUL,
+      RuntimeEpoch = 3,
+      SnapshotSeq = 99,
+      Challenge = 0xfeed_beefUL,
+      FieldGeneration = 4,
+      PoseValidForUs = 400_000,
+      PositionEnu = [12.5f, -3.25f, 1.125f],
+      VelocityEn = [0.5f, -0.25f],
+      CovarianceEnu = [0.04f, 0.001f, 0.002f, 0.05f, 0.003f, 0.09f],
+      Uid = Enumerable.Range(0x20, 18).Select(value => (byte)value).ToArray(),
+      Role = 1,
+      Channel = 2,
+      Status = 13,
+      OwnerFlags = 1,
+      BeaconMask = 0x0f,
+      CalibrationStatus = 1,
+      CalibratedMask = 0x05,
+    };
+
+    Nv5LpsStatusMessage actual = Packet(
+            NvModemMessageIds.Nv5LpsStatus, expected, systemId: 10, componentId: 11)
+        .ToStructure<Nv5LpsStatusMessage>();
+
+    Assert.Equal(expected.BootNonce, actual.BootNonce);
+    Assert.Equal(expected.Challenge, actual.Challenge);
+    Assert.Equal(expected.PositionEnu, actual.PositionEnu);
+    Assert.Equal(expected.VelocityEn, actual.VelocityEn);
+    Assert.Equal(expected.CovarianceEnu, actual.CovarianceEnu);
+    Assert.Equal(expected.Uid, actual.Uid);
+    Assert.Equal(13, actual.Status);
+    Assert.Equal(0x05, actual.CalibratedMask);
   }
 
   [Fact]
@@ -156,7 +293,7 @@ public class NvModemTests {
   }
 
   [Fact]
-  public void Carries_nv5settings_descriptions_and_nv4_refresh_compatibility() {
+  public void Carries_reference_descriptions_and_nv4_refresh_compatibility() {
     Assert.True(NvModemCatalog.IsNv4Signature("REFRESH_SETTING"));
     Assert.True(NvModemCatalog.IsNv4Signature("REFRESH_SETTINGS"));
     Assert.True(NvModemCatalog.IsReadOnly("REFRESH_SETTING"));
@@ -402,10 +539,10 @@ public class NvModemTests {
   }
 
   [Fact]
-  public void Nv4_detection_uses_strict_gtu_can_node_signature_at_any_id() {
+  public void Nv4_detection_uses_the_strict_can_node_signature_at_any_id() {
     var transport = new FakeTransport();
-    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
-        startTimer: false);
+    DateTime now = DateTime.UtcNow;
+    using var viewModel = new NvModemViewModel(transport, () => now, startTimer: false);
     var source = new NvModemLink(new MAVLinkInterface(), "shared TCP");
 
     viewModel.HandlePacket(source, NodeInfoPacket("camera.node", 41, 212));
@@ -418,30 +555,41 @@ public class NvModemTests {
 
     NvModemDeviceChoice modem = Assert.Single(viewModel.Devices);
     Assert.Contains("NV4 199:254", modem.Label, StringComparison.Ordinal);
-    Assert.Contains(transport.Sent, sent => sent.SystemId == 199 && sent.ComponentId == 254
-        && sent.Packet is MAVLink.mavlink_param_request_list_t);
+    AssertParameterListAfterPassportWait(viewModel, transport, ref now, 199, 254);
+  }
+
+  // A modem first seen without its passport is read as a PARAM list only once the page has waited
+  // for the passport, which could show that it is configured through native transactions.
+  private static void AssertParameterListAfterPassportWait(NvModemViewModel viewModel,
+      FakeTransport transport, ref DateTime now, byte systemId, byte componentId) {
+    bool Requested(FakeTransport.SentPacket sent) => sent.SystemId == systemId
+        && sent.ComponentId == componentId
+        && sent.Packet is MAVLink.mavlink_param_request_list_t;
+    Assert.DoesNotContain(transport.Sent, Requested);
+    now += TimeSpan.FromSeconds(3);
+    viewModel.ServiceTransactions();
+    Assert.Single(transport.Sent, Requested);
   }
 
   [Theory]
   [InlineData("NV_TX", "TX")]
   [InlineData("nv_rx_433", "RX")]
-  public void Nv4_rfm_detection_uses_legacy_gtu_nvstat_node_signature(
+  public void Nv4_rfm_detection_uses_the_legacy_node_signature(
       string nodeName, string expectedRole) {
     var transport = new FakeTransport();
-    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
-        startTimer: false);
+    DateTime now = DateTime.UtcNow;
+    using var viewModel = new NvModemViewModel(transport, () => now, startTimer: false);
     var source = new NvModemLink(new MAVLinkInterface(), "shared UDP");
 
-    // Legacy RFM builds did not reliably report version major 4. GTU NVStat
-    // therefore identifies these nodes by the case-insensitive NV_TX/NV_RX prefix.
+    // Legacy RFM builds did not reliably report version major 4. The legacy status
+    // check therefore identifies these nodes by the case-insensitive NV_TX/NV_RX prefix.
     viewModel.HandlePacket(source, NodeInfoPacket(
         nodeName, 231, 249, hardwareMajor: 0, softwareMajor: 0));
 
     NvModemDeviceChoice modem = Assert.Single(viewModel.Devices);
     Assert.Contains("NV4 231:249", modem.Label, StringComparison.Ordinal);
     Assert.Contains(expectedRole, modem.Label, StringComparison.Ordinal);
-    Assert.Contains(transport.Sent, sent => sent.SystemId == 231 && sent.ComponentId == 249
-        && sent.Packet is MAVLink.mavlink_param_request_list_t);
+    AssertParameterListAfterPassportWait(viewModel, transport, ref now, 231, 249);
   }
 
   [Fact]
@@ -606,6 +754,9 @@ public class NvModemTests {
     viewModel.HandlePacket(first, ParameterPacket("MODEM_PROFILE", 7, 1, 2, 1, 68));
     Assert.Single(viewModel.Parameters);
     viewModel.HandlePacket(second, Packet(NvModemMessageIds.Nv5LinkStatus, status, 2, 68));
+    // Neither modem sent a passport, so their first reads go out once the page stops waiting.
+    now += TimeSpan.FromSeconds(3);
+    viewModel.ServiceTransactions();
 
     transport.Sent.Clear();
     viewModel.SelectedDevice = viewModel.Devices.Single(item =>
@@ -759,7 +910,7 @@ public class NvModemTests {
     Assert.Contains("exactly 32 hexadecimal digits", viewModel.Status,
         StringComparison.OrdinalIgnoreCase);
 
-    // GTU accepts lower- or uppercase hex input and normalizes the editor to uppercase.
+    // Lower- or uppercase hex input is accepted, and the editor normalizes it to uppercase.
     viewModel.KeyText = "ffeeddccbbaa99887766554433221100";
     viewModel.SetKeyCommand.Execute(null);
 
@@ -1047,6 +1198,10 @@ public class NvModemTests {
     var source = new NvModemLink(new MAVLinkInterface(), "UDP silent modem");
     var status = new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 0 };
     viewModel.HandlePacket(source, Packet(NvModemMessageIds.Nv5LinkStatus, status, 5, 68));
+    // Without a passport the first read goes out once the page stops waiting for one.
+    now += TimeSpan.FromSeconds(3);
+    viewModel.ServiceTransactions();
+    Assert.Single(transport.Sent, sent => sent.Packet is MAVLink.mavlink_param_request_list_t);
     transport.Sent.Clear();
 
     for (int retry = 0; retry < 6; retry++) {
@@ -1071,6 +1226,9 @@ public class NvModemTests {
     var source = new NvModemLink(new MAVLinkInterface(), "UDP slow NV5");
     viewModel.HandlePacket(source, Packet(NvModemMessageIds.Nv5LinkStatus,
         new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 0 }, 18, 68));
+    // Without a passport the first read goes out once the page stops waiting for one.
+    now += TimeSpan.FromSeconds(3);
+    viewModel.ServiceTransactions();
     viewModel.HandlePacket(source, ParameterPacket("MODEM_PROFILE", 7,
         (byte)MAVLink.MAV_PARAM_TYPE.UINT32, 3, 18, 68));
     transport.Sent.Clear();
@@ -1087,7 +1245,7 @@ public class NvModemTests {
   }
 
   [Fact]
-  public void Factory_preset_is_staged_locally_with_the_nv5settings_lr2021_defaults() {
+  public void Factory_preset_is_staged_locally_with_the_reference_lr2021_defaults() {
     var transport = new FakeTransport();
     using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
         startTimer: false);
@@ -1118,7 +1276,7 @@ public class NvModemTests {
   }
 
   [Fact]
-  public void Factory_lora_preset_uses_the_current_nv5settings_acquisition_values() {
+  public void Factory_lora_preset_uses_the_current_reference_acquisition_values() {
     var transport = new FakeTransport();
     using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
         startTimer: false);
@@ -1345,6 +1503,60 @@ public class NvModemTests {
     Assert.Equal(minimum, info.minlength);
     Assert.Equal(length, info.length);
     Assert.Equal(type, info.type);
+  }
+
+  private static void AssertLayout(uint id, byte crc, uint minimum, uint length, Type type) {
+    Assert.Equal((int)length, Marshal.SizeOf(type));
+    AssertMessage(id, crc, minimum, length, type);
+  }
+
+  // MAVLink's CRC extra hashes the message name and every non-extension field's type, name and
+  // array length in wire order, so it pins a hand-written layout to the dialect XML.
+  private static byte WireCrcExtra(MAVLink.message_info info) {
+    ushort crc = 0xffff;
+    void Accumulate(IEnumerable<byte> bytes) {
+      foreach (byte value in bytes) {
+        byte tmp = (byte)(value ^ (byte)(crc & 0xff));
+        tmp ^= (byte)(tmp << 4);
+        crc = (ushort)((crc >> 8) ^ (tmp << 8) ^ (tmp << 3) ^ (tmp >> 4));
+      }
+    }
+
+    Accumulate(Encoding.ASCII.GetBytes(info.name + " "));
+    var fields = info.type
+        .GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+        .OrderBy(field => Marshal.OffsetOf(info.type, field.Name).ToInt32());
+    foreach (var field in fields) {
+      if (Marshal.OffsetOf(info.type, field.Name).ToInt32() >= info.minlength) {
+        break;
+      }
+      string name = string.Concat(field.Name.Select((letter, index) =>
+          index > 0 && char.IsUpper(letter) && !char.IsUpper(field.Name[index - 1])
+              ? "_" + char.ToLowerInvariant(letter)
+              : char.ToLowerInvariant(letter).ToString()));
+      Type element = field.FieldType.IsArray ? field.FieldType.GetElementType()! : field.FieldType;
+      bool text = name is "path" or "name" or "error_name";
+      string wireType = text ? "char" : Type.GetTypeCode(element) switch {
+        TypeCode.Byte => "uint8_t",
+        TypeCode.SByte => "int8_t",
+        TypeCode.UInt16 => "uint16_t",
+        TypeCode.Int16 => "int16_t",
+        TypeCode.UInt32 => "uint32_t",
+        TypeCode.Int32 => "int32_t",
+        TypeCode.UInt64 => "uint64_t",
+        TypeCode.Int64 => "int64_t",
+        TypeCode.Single => "float",
+        TypeCode.Double => "double",
+        _ => throw new InvalidOperationException($"{info.name}.{field.Name}: {element}"),
+      };
+      Accumulate(Encoding.ASCII.GetBytes(wireType + " " + name + " "));
+      if (field.FieldType.IsArray) {
+        var marshal = (MarshalAsAttribute)Attribute.GetCustomAttribute(
+            field, typeof(MarshalAsAttribute))!;
+        Accumulate([(byte)marshal.SizeConst]);
+      }
+    }
+    return (byte)((crc & 0xff) ^ (crc >> 8));
   }
 
   private static void DeliverNv5KeyWords(

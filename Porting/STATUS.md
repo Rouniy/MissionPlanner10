@@ -52,7 +52,7 @@ Updated: **2026-11-04**.
 ## Release 1.3.83.6 — DroneCAN, firmware catalogs, MCP DroneCAN tools, HUD — 2026-11-01
 
 - Merged on `origin/master` with merge commits, branch history kept: PR #46 (`3348d5014`,
-  DroneCAN over MAVLink CAN, X-Office-style agent window), PR #47 (`56b67bdfa`, DroneCAN and
+  DroneCAN over MAVLink CAN, single-panel agent window), PR #47 (`56b67bdfa`, DroneCAN and
   autopilot firmware catalogs, MCP DroneCAN tools, connect-dialog, Install Firmware and HUD
   fixes), PR #41 (`9fae128d1`, MCP session startup / Disconnect under load / access controls;
   its September macOS failure was a VLC download timeout, master was merged into the branch
@@ -137,8 +137,8 @@ Updated: **2026-11-04**.
 - Branch `fix/dronecan-mavlink-session` is based on `origin/master` at
   `bdf6a5ac5` ("fix: accept MAV_CMD ids in MCP mavlink_command"). Commits: `8c1d5c4a0`
   (SkiaSharp PNGs, ImageSharp removed), `d897bc770` (no CAN echo, one shared forwarding
-  session), `459d02026` (opt-in live CAN acceptance), `22df27980` (X-Office-style agent
-  rows, case-insensitive desktop discovery), `9f47848f7` (re-adopt the Codex desktop entry).
+  session), `459d02026` (opt-in live CAN acceptance), `22df27980` (one row per
+  agent, case-insensitive desktop discovery), `9f47848f7` (re-adopt the Codex desktop entry).
 - Hardware finding (CUAV X7 running ArduRover 4.7.0-dev `eb9a1b3c`, Matek L431 AP_Periph
   1.7 as node 125, autopilot node 10): the adapter is wired to **CAN2**. `@SYS/can0_stats.txt`
   showed zero successful transmissions and only timeouts, `can1_stats.txt` carried all
@@ -161,8 +161,8 @@ Updated: **2026-11-04**.
 - Restore had failed on NuGet audit NU1902/NU1903 for `SixLabors.ImageSharp` 2.1.12
   (2.1.13 and 3.1.12 are flagged too; 4.x needs a licence). Spectrogram and propagation
   PNGs are rendered with the already referenced SkiaSharp; ImageSharp is gone.
-- AI window (`Views/AgentToolsWindow.cs`): one row per installed agent as in X-Office's
-  assistant panel (name, kind, location, Launch, Register/Unregister), Find agents,
+- AI window (`Views/AgentToolsWindow.cs`): one row per installed agent
+  (name, kind, location, Launch, Register/Unregister), Find agents,
   sessions, persistent port; task text and activity moved under Advanced. Discovery
   finds `com.anthropic.Claude.desktop` on Linux (case-insensitive file match). Verified
   under Xvfb: Codex CLI, Claude Code, ChatGPT Desktop and Claude Desktop discovered.
@@ -209,7 +209,7 @@ Updated: **2026-11-04**.
   **352.7° -> 89.9°**. `MAV_CMD_CONDITION_YAW` with `p1=180` reached **178.9°**.
   MCP then landed; final telemetry showed **disarmed**, altitude 0.037 m. The test
   session, application, SITL and Xvfb were stopped. DO_SET_ROI has parser coverage;
-  its vehicle effect was not live-tested. No hardware qualification or hermes-sim changes.
+  its vehicle effect was not live-tested. No hardware qualification or simulator changes.
 - Hosted CI/package and CodeQL checks passed at `d91c5ea11b4cb694738d0189d47b1010dad45f06`,
   before the precision follow-up. Checks for the follow-up remain pending.
 - The primary checkout remains on `master` at `6da955d27`, with its six original modified
@@ -269,16 +269,15 @@ Updated: **2026-11-04**.
 - The CRLF-normalisation differences in five `.bat` files that appear on checkout are excluded.
 - Next executable step: review and merge the PR, then rebuild the local application.
 
-## MCP / X-Office comparison and lifecycle fixes — 2026-09-20
+## MCP lifecycle fixes — 2026-09-20
 
 - Dedicated branch `fix/mcp-session-lifecycle` starts at fresh fork `origin/master`
   `c15c1948227fe06362d08fdbd4b0f0ee14bb2b92` (includes merged PR #40). Source fixes:
   `ea2fc5f3c` listener readiness/control capacity, `0f5141b42` fixed access toolbar;
-  comparison and retry documentation: `a68b965ed`. No master merge or release.
-- Compared X-Office `b534036d80d7baae86ca1917376f3fbadaef63eb` without modifying it.
-  Its unrelated user-owned CRM changes continued during this review and are untouched.
-  Detailed architecture/differences and deferred product features:
-  [MCP_XOFFICE_REVIEW.md](MCP_XOFFICE_REVIEW.md).
+  retry documentation: `a68b965ed`. No master merge or release.
+- AI_START and UI_API no longer promise receipts for every mutation: `write_parameters`
+  and `vehicle_command` need readback after an uncertain response and are never replayed
+  blindly.
 - Three new regression cases failed before the fixes: both hub open methods returned an
   unready listener, and DELETE returned HTTP 429 with four blocked tools. All now pass;
   two further cases cover parallel opens and refusing to restart a revoked listener.
@@ -310,11 +309,11 @@ Updated: **2026-11-04**.
   The original `dotnet build MissionPlanner.csproj --no-restore -m:1` passed with
   **0 warnings / 0 errors**.
 - Live Linux verification used Obriy's coupled ArduCopter on TCP 5760, Mission Planner's TCP Host
-  mirror on 14550 with write-back enabled, and Hermes 3.9.14 as the mirror client. Before the fix,
+  mirror on 14550 with write-back enabled, and a ground-station mirror client. Before the fix,
   the Mission Planner receive queue grew while mirror Rx stayed at zero. With the fix, mirror Tx/Rx
   counters both advance, the Mission Planner receive queue stays drained, and SITL reports neutral
   `RC_CHANNELS` values `1500,1500,1000,1500` with RSSI 255. Physical stick deflection still needs a
-  separate Hermes mapping check; the vendor `RXLOSS` overlay alone is not transport evidence.
+  separate client mapping check; the vendor `RXLOSS` overlay alone is not transport evidence.
 - Pre-existing user changes in five driver/MAVLink graph `.bat` files are deliberately preserved
   outside this change. No vehicle parameters, Mission Planner joystick settings, Obriy files, or
   licence data are modified by this fix.
@@ -433,7 +432,7 @@ Updated: **2026-11-04**.
   executable name (`McpAgentDiscovery.TerminalKind`, `codex*`/`claude*`), a mismatch is
   rejected before the terminal opens, and custom launches infer the kind. The tabs
   (Agent, Parameter proposals, Flight logs, Connections), the agent combo box, the kind
-  selector and the path field are gone. `Views/AgentToolsWindow.cs` is one X-Office-style
+  selector and the path field are gone. `Views/AgentToolsWindow.cs` is one assistant
   page: one **Launch <agent>** button per installed agent (absent agents have no button)
   plus **Find agents**, the initial task, sessions with Allow/Revoke/Disconnect/Allow all/
   Revoke all/Stop all connections, the persistent port, an **Advanced** expander (session
@@ -473,7 +472,7 @@ Updated: **2026-11-04**.
   window. Follow-ups unchanged: SITL/real-aircraft acceptance for `write_parameters`,
   `vehicle_command` and `mission_upload`.
 
-## X-Office-style full-access AI agent connection — 2026-09-17
+## Full-access AI agent connection — 2026-09-17
 
 - Continued `feat/mcp-flight-context` / PR #39 on top of `70813c26a`. Fixed the Linux
   "terminal flashes and closes" agent launch: Codex received
@@ -482,7 +481,7 @@ Updated: **2026-11-04**.
   only when the entry exists, and a failed agent start keeps the terminal open with the exit
   code. Verified with the real Codex CLI 0.154.0 in a pty (stays running) and Claude Code.
 - Moved listener/launch/session ownership out of the AI window into an application-wide
-  `McpAgentHub` (like X-Office's ApplicationController-owned McpController). Closing the
+  `McpAgentHub`. Closing the
   window keeps every port, launch and grant alive; **Stop all connections** or application
   exit ends them. The window is now a view over the hub and reopens with recent activity.
 - Main-window **AI** navigation button (robot icon) turns green while a session holds a
@@ -526,9 +525,7 @@ Updated: **2026-11-04**.
 ## MCP UI and mission draft API — 2026-09-17
 
 - Continued `feat/mcp-flight-context` / PR #39; fetched origin/master again and confirmed
-  `f1180f67293469a1002f1635bc8fc153e7b00c5d` is included. Rechecked X-Office main
-  snapshots `54b1ea3c` and `176877f7`, including GUI actions, inspection, receipts and
-  embedded documentation. Its unrelated worktree files were preserved.
+  `f1180f67293469a1002f1635bc8fc153e7b00c5d` is included.
 - Expanded from 29 to **46 MCP tools**: DATA/PLAN/HELP navigation, registered diagnostic
   widget inspection/actions, map centering and PNG map/plot captures, live tuning fields,
   catalogue-backed log windows/graphs, and local Mission draft get/schema/validation/
@@ -555,12 +552,11 @@ Updated: **2026-11-04**.
 - Commit, package paths and subsequent multi-platform CI outcomes are recorded in the
   workspace's newest MONOREPO_MIGRATION_HANDOFF.md checkpoint after completion.
 
-## X-Office-compatible MCP connections — 2026-09-17
+## MCP connections for launched agents — 2026-09-17
 
 - Continued the existing `feat/mcp-flight-context` / [PR #39](https://github.com/Rouniy/MissionPlanner10/pull/39).
   Fetched the fork and verified current master `f1180f67293469a1002f1635bc8fc153e7b00c5d`
   is already an ancestor; no rebase, history replacement or master merge was needed.
-  Reference: X-Office `feature/mcp-http` snapshot `5b525b41360aedbc3e205012ff0d13014ca35e3e`.
 - Replaced the UI's headless CLI launch with an external interactive terminal. Login,
   model and normal client settings persist; process-only MCP overrides, a private
   one-use handoff and session-bound launch tokens connect it to Mission Planner.
@@ -1665,11 +1661,8 @@ Updated: **2026-11-04**.
 
 ## NV4 parameter-catalog synchronization and Debian handoff
 
-- The Hermes source checkpoint is clean GTU `master == origin/master`
-  `3eebb35d6d35be5b5fb4c1a753017baff107b082` (`Support legacy NV4 refresh parameter`). Its exact
-  change from `310ca309` in the three `NV5Settings` source/test files has SHA-256
-  `8cb610d33eebeac454c336eafec77fd7b374fb7c85ab61561a7c9b8cb0d22d66`; Mission Planner did not
-  modify the GTU tree. The canonical 56-name NV4 sketch catalog and its parameter-specific
+- The reference ground station's NV4 refresh-parameter change is synchronized. The canonical
+  56-name NV4 sketch catalog and its parameter-specific
   descriptions are now pinned locally, including the real automatic-watchdog, SBUS routing,
   network-octet, RF-statistics, radio-role and currently unused legacy-field semantics.
 - Both firmware apply spellings are supported end to end. `REFRESH_SETTING` and the older
@@ -1698,8 +1691,9 @@ Updated: **2026-11-04**.
   `.7202` packages are superseded test artifacts and were never tagged or released.
 - The only change after the published code/package checkpoint is this status/provenance record.
   After its push, `HEAD == origin/master` and the worktree is clean. Remaining acceptance boundary:
-  exercise both refresh spellings on representative physical NV4 hardware; GTU's per-endpoint
-  direct/HUB failover remains a separate parity item because Mission Planner's shared parser does
+  exercise both refresh spellings on representative physical NV4 hardware; the reference
+  per-endpoint direct/HUB failover remains a separate parity item because Mission Planner's shared
+  parser does
   not expose sender/listener metadata. GitHub CI/package run `33326289139` and CodeQL run
   `33326289105` both pass on `69886aeab`; the code-scanning API reports zero open alerts. Manual
   cross-platform release build `33326726258` also passes on that exact commit and retains four
@@ -2072,14 +2066,12 @@ Updated: **2026-11-04**.
   partial files and bounds KML/KMZ document/resource decompression. `e9df0be66` passes Linux/macOS
   external-open targets as one literal argument and releases every short-lived launcher process
   handle, including updater helpers.
-- Fresh GTU `master` and `origin/master` at `bfb03b24f3180fdcba91ac7f114e7287b7b2b359`
-  were compared with the previously synchronized `ab6422d4` checkpoint. Its only new production
-  NV5Settings delta is mirrored here: RX/TX role presets are disabled when already selected, and
-  ENABLE/SUPPRESS TX follows the live `tx_state` instead of offering a redundant command. Manual
-  staged role edits refresh both controls immediately, and direct command invocation cannot bypass
-  the same-state guard. The two firmware reference repositories named by GTU are not available in
-  the local AgroSky workspace, so this synchronization is intentionally based on the clean fetched
-  GTU repository itself.
+- A newer reference ground-station checkpoint was compared with the previously synchronized one.
+  Its only new production settings delta is mirrored here: RX/TX role presets are disabled when
+  already selected, and ENABLE/SUPPRESS TX follows the live `tx_state` instead of offering a
+  redundant command. Manual staged role edits refresh both controls immediately, and direct
+  command invocation cannot bypass the same-state guard. The firmware reference repositories were
+  not available locally, so this synchronization is based on the reference ground station itself.
 - The active application graph was also checked for TLS validation bypasses, unsafe
   deserialization, archive/path traversal, unbounded HTTP ownership, SSH trust-all behavior,
   process/socket lifetime and primary native GDAL/SimpleBLE/libVLC ownership. No certificate
@@ -2100,10 +2092,10 @@ Updated: **2026-11-04**.
 ## Current state
 
 - The complete in-place Avalonia migration and audited cleanup were merged to `master` through
-  PR #1 at merge commit `eb6cfe28f`. The later GTU `NV5Settings` synchronization was merged through
+  PR #1 at merge commit `eb6cfe28f`. The later NV modem settings synchronization was merged through
   PR #2, the independent diversity-radio key correction through PR #4, and the clean CI identity
-  correction through PR #5 at master checkpoint `d273ca8aa`. PR #6 carries the final GTU
-  `NV5Settings` refinement (`639a19acc`), focused CodeQL/AES follow-up (`c3265e3e8`) and explicit
+  correction through PR #5 at master checkpoint `d273ca8aa`. PR #6 carries the final NV
+  modem settings refinement (`639a19acc`), focused CodeQL/AES follow-up (`c3265e3e8`) and explicit
   secure dependency declarations (`2e26a52a3`). PR #8 removes the obsolete MetadataExtractor build
   graph and resolves the remaining CodeQL findings, while PR #9 adds verified macOS DMG packaging;
   the resulting release checkpoint is `9ed911535`. Native baseline `67a3c4f` remains the immutable
@@ -2153,8 +2145,8 @@ Updated: **2026-11-04**.
 - Stable and beta auto-updates now select signed manifests directly from this fork's GitHub
   Releases. The matching Ed25519 private key is present only as the repository secret
   `UPDATE_SIGNING_KEY`; the committed public key is verified again during release.
-- NV key handling is synchronized through GTU `NV5Settings` commit `77af510a` on clean GTU
-  checkpoint `6c2a4b04`. NV5 accepts exactly 32 hexadecimal
+- NV key handling is synchronized with the reference ground station. NV5 accepts exactly 32
+  hexadecimal
   digits, displays uppercase, and maps the 16 raw bytes to four big-endian MAVLink `INT32` words.
   Ordinary Save writes edited words as exact typed `PARAM_SET` operations; explicit SET KEY uses
   the idempotent post-persistence `NV_ENCRYPTION_KEYS_SET`/`NV_ENCRYPTION_KEYS_ACK` transaction.
@@ -2184,7 +2176,7 @@ Updated: **2026-11-04**.
 - Post-merge master CI run `32713804092` passed the complete build/test graph, Linux DEB/TAR with
   lintian and extracted-payload smoke, Windows ZIP/MSI with real install/file validation/uninstall,
   and both macOS archives. Master CodeQL run `32713804084` also passed; the five open results are
-  the same fully triaged findings recorded before merge, with no new NV5Settings finding.
+  the same fully triaged findings recorded before merge, with no new NV modem settings finding.
 - NV5 diversity hotfix master CI run `32716876527` and CodeQL run `32716876412` both passed, but the
   CI package run was superseded for distribution because runner-local state leaked `.dirty` into
   its Linux and Windows filenames. The clean-CI identity gate above is the corrective action; those
@@ -2316,7 +2308,7 @@ Updated: **2026-11-04**.
   #2986 is also already represented by separate ISBH instance slots `0/1/3/4`, with an additional
   bounds guard absent from the legacy viewer; the issue's two old Dropbox links now return HTML
   rather than the logs, so no unverified spectral rewrite was made.
-- A release-time GTU comparison found newer clean checkpoint `f196ea689`. Its NV5 signal semantics
+- A release-time reference comparison found a newer checkpoint. Its NV5 signal semantics
   are now mirrored: an unlocked receiver displays current channel RSSI and suppresses stale packet
   RSSI/SNR; a locked receiver prefers packet RSSI and safely falls back to channel RSSI. SX127x and
   LR11xx cases plus locked fallback are covered by regression tests.
@@ -2328,24 +2320,21 @@ Updated: **2026-11-04**.
   12-second Xvfb smoke test. Native Windows and macOS packaging plus CodeQL remain mandatory CI
   gates before merge and release.
 
-## GTU synchronization checkpoint
+## Reference ground-station synchronization checkpoint
 
-- NV modem behavior was most recently compared with a clean GTU checkout,
-  `master == origin/master` at `3eebb35d6d35be5b5fb4c1a753017baff107b082`.
-  Earlier checkpoints remain represented: `77af510a` keeps key targeting independent of
-  `DIVERSITY` and supplies **Revert selected**; `f196ea689` supplies unlocked-channel RSSI
-  semantics; and changes through `d74f4308` supply acquisition presets, frame validation, typed
-  rejection diagnostics, attached-modem management and UID2 identity migration.
-- GTU `263218e8` adds redundant per-endpoint management routes and pre-write identity/IP collision
-  checks without changing the parameter catalog. Mission Planner continues to use the exact
-  observed `MAVLinkInterface` as its route boundary because its shared parser does not expose GTU's
-  per-datagram sender/listener metadata. The later `3eebb35d` NV4 catalog, descriptions and both
+- NV modem behavior was most recently compared with the reference ground station. Earlier
+  checkpoints remain represented: independent key targeting with **Revert selected**,
+  unlocked-channel RSSI semantics, acquisition presets, frame validation, typed rejection
+  diagnostics, attached-modem management and UID2 identity migration.
+- The reference adds redundant per-endpoint management routes and pre-write identity/IP
+  collision checks without changing the parameter catalog. Mission Planner continues to use the
+  exact observed `MAVLinkInterface` as its route boundary because its shared parser does not
+  expose per-datagram sender/listener metadata. The later NV4 catalog, descriptions and both
   advertised refresh spellings are synchronized and verified as recorded in the current handoff
   above. NV5 key words remain signed `INT32` values preserving the same raw bytes.
-- Before each later NV modem change and before a release, recheck both committed and uncommitted
-  GTU changes with `git status`, then compare every newer change to `hermes-gui/include/nv5settings.h`,
-  `hermes-gui/src/nv5settings.cpp` and `hermes-gui/test/testnv5settings.cpp`. Update this commit and
-  the NV regression tests whenever the source behavior advances.
+- Before each later NV modem change and before a release, compare newer reference ground-station
+  changes with the NV Modem page, and update the NV regression tests whenever the reference
+  behavior advances.
 
 ## Cleanup audit
 
@@ -2360,8 +2349,8 @@ Updated: **2026-11-04**.
 - `MissionPlanner.slnx` now names the complete active transitive graph. Its Release build has zero
   warnings/errors, analyzer verification has zero diagnostics (the .NET 10 workspace-loader notices
   are documented separately), NuGet reports no vulnerable packages, the native manifest has zero
-  blockers and all 1263 tests pass after cleanup plus the later NV5Settings and security regression
-  coverage.
+  blockers and all 1263 tests pass after cleanup plus the later NV modem settings and security
+  regression coverage.
 - Clean-commit Linux TAR/DEB and Windows ZIP packaging succeeds after cleanup. The DEB passes
   `lintian`, payload assertions and a 12-second Xvfb launch; the Windows archive contains the
   expected self-contained `win-x64` application. CI run `32688021866` also passes Windows ZIP/MSI
@@ -2378,7 +2367,7 @@ Updated: **2026-11-04**.
   `wont_fix`, not falsely marked revoked; the audit comments preserve the origin and the decision
   not to rewrite published upstream-derived history.
 - Every inbound UDP listener now enables address sharing/reuse before bind. This lets one modem
-  broadcast reach Mission Planner and GTU/Hermes listeners bound to the same local port; a
+  broadcast reach Mission Planner and another ground station bound to the same local port; a
   regression test opens two real sockets and proves that both receive the same datagram. Ordinary
   unicast fan-out remains explicitly unsupported without separate ports or a MAVLink router.
 - `Scripts/`, localization RESX, NoFly data, the X-Plane/HIL bridge and independently meaningful
@@ -2394,8 +2383,8 @@ actual master merge commit. Only after the master checks and zero-alert API audi
 master commit be tagged and its full 19-asset release verified. The remaining hardware acceptance
 work still requires
 representative physical NV4/NV5 hardware: repeat UDP/TCP/UART switching, disconnect and
-key-programming checks, and recheck GTU `NV5Settings` changes newer than clean checkpoint
-`f196ea689` before declaring hardware acceptance complete.
+key-programming checks, and recheck newer reference ground-station changes before declaring
+hardware acceptance complete.
 
 ## Acceptance baseline
 

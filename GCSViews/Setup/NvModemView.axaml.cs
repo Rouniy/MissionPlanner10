@@ -17,6 +17,10 @@ public partial class NvModemView : UserControl {
     Patterns = ["*.param", "*.parm", "*.txt"],
   };
 
+  private static readonly FilePickerFileType NativeSnapshotFiles = new("NV5 configuration") {
+    Patterns = ["*.json"],
+  };
+
   public NvModemView() {
     InitializeComponent();
     this.FindControl<Button>("LoadParametersButton")!.Click += LoadParameters;
@@ -24,6 +28,13 @@ public partial class NvModemView : UserControl {
     this.FindControl<Button>("CopyRadioSettingsButton")!.Click += CopyRadioSettings;
     this.FindControl<DataGrid>("ParametersGrid")!.BeginningEdit += (_, args) => {
       if (args.Row.DataContext is NvModemParameterRow { IsReadOnly: true }) {
+        args.Cancel = true;
+      }
+    };
+    this.FindControl<Button>("LoadNativeSnapshotButton")!.Click += LoadNativeSnapshot;
+    this.FindControl<Button>("ExportNativeSnapshotButton")!.Click += ExportNativeSnapshot;
+    this.FindControl<DataGrid>("NativeSettingsGrid")!.BeginningEdit += (_, args) => {
+      if (args.Row.DataContext is Nv5NativeSettingRow { IsEditable: false }) {
         args.Cancel = true;
       }
     };
@@ -102,6 +113,53 @@ public partial class NvModemView : UserControl {
     if (await ParamCompareWindow.ShowAsync(
             owner, rows, title, proposedHeader, instructions)) {
       ViewModel?.ApplyParameterComparison(comparison);
+    }
+  }
+
+  private async void LoadNativeSnapshot(object? sender, RoutedEventArgs e) {
+    TopLevel? top = TopLevel.GetTopLevel(this);
+    if (top == null || ViewModel == null) {
+      return;
+    }
+    var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions {
+      Title = "Load native configuration snapshot",
+      AllowMultiple = false,
+      FileTypeFilter = [NativeSnapshotFiles],
+    });
+    string? path = files.FirstOrDefault()?.TryGetLocalPath();
+    if (path == null) {
+      return;
+    }
+    try {
+      ViewModel.NativeSettings.LoadSnapshot(path);
+    } catch (Exception ex) {
+      await Dialogs.Alert("Load native configuration snapshot", ex.Message);
+    }
+  }
+
+  private async void ExportNativeSnapshot(object? sender, RoutedEventArgs e) {
+    TopLevel? top = TopLevel.GetTopLevel(this);
+    if (top == null || ViewModel == null) {
+      return;
+    }
+    var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions {
+      Title = "Export committed configuration",
+      SuggestedFileName = ViewModel.NativeSettings.SuggestedSnapshotName(),
+      DefaultExtension = "json",
+      FileTypeChoices = [NativeSnapshotFiles],
+    });
+    string? path = file?.TryGetLocalPath();
+    if (path == null || !await Dialogs.ConfirmDangerous(
+            "Export NV modem configuration",
+            "The export includes readable encryption key words and network settings. "
+            + "Save it only to a trusted location and review it before sharing.",
+            "EXPORT CONFIGURATION")) {
+      return;
+    }
+    try {
+      ViewModel.NativeSettings.ExportSnapshot(path);
+    } catch (Exception ex) {
+      await Dialogs.Alert("Export NV modem configuration", ex.Message);
     }
   }
 

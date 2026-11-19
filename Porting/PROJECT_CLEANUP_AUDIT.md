@@ -204,8 +204,8 @@ make windows-zip
 ```
 
 The latest local audit passes all six structural gates, a zero-warning Release build, analyzer
-verification, the no-vulnerable-package query and all 1263 tests after the NV5Settings/security
-follow-up.
+verification, the no-vulnerable-package query and all 1263 tests after the NV modem
+settings/security follow-up.
 Linux TAR/DEB and Windows ZIP also build from the dirty review tree; the DEB passes `lintian` and
 both archives pass integrity checks. WiX deliberately remains a Windows-runner gate: on Linux it
 emits its documented Windows-only warning before undefined path validation. Published review CI

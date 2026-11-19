@@ -94,6 +94,7 @@
     <Compile Include="Services/LocalizationService.cs" />
     <Compile Include="Services/LocalKmlServer.cs" />
     <Compile Include="Services/MavlinkSerialControlPort.cs" />
+    <Compile Include="Services/Nv5ConfigurationClient.cs" />
     <Compile Include="Services/OsdTuningSlotService.cs" />
     <Compile Include="Services/PythonScriptHost.cs" />
     <Compile Include="Services/SikRadioFirmwareService.cs" />
@@ -104,6 +105,7 @@
     <Compile Include="Services/TcpSerialHostListener.cs" />
     <Compile Include="ViewModels/ExternalGuidedViewModel.cs" />
     <Compile Include="ViewModels/MavlinkCanTransport.cs" />
+    <Compile Include="ViewModels/Setup/Nv5NativeSettingsEditor.cs" />
     <Compile Include="Views/DroneCanFieldGraphWindow.cs" />
     <Compile Include="Views/DroneCanSubscriberWindow.cs" />
     <Compile Include="Views/ExternalGuidedView.axaml.cs" />

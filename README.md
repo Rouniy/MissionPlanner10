@@ -107,15 +107,16 @@ and arm64 macOS dylibs are fetched from the official SimpleBLE release during pu
 with the corresponding artifact. Discovery, connection and I/O are cancellable and bounded;
 end-to-end traffic with representative BLE modems remains a native-platform acceptance item.
 
-Setup > NV Modem is a native port of AgroSky GTU's `NV5Settings` for NV4/NV5 radio modems. It
-discovers modems and performs parameter, key, RTSP and maintenance operations through the UDP/TCP/
-UART MAVLink connections already open in Mission Planner; it never opens a second port. Parameter
-values are session-only and cleared on refresh or device change, while the copied parameter
-descriptions remain available in the tab. See [NV Modem](Porting/NV_MODEM.md).
+Setup > NV Modem configures NV4/NV5 radio modems. It discovers modems and performs parameter, key,
+RTSP and maintenance operations through the UDP/TCP/UART MAVLink connections already open in
+Mission Planner; it never opens a second port. NV5 firmware that advertises configuration
+transactions is read and saved through them instead of PARAM_SET. Parameter values are
+session-only and cleared on refresh or device change, while the parameter descriptions remain
+available in the tab. See [NV Modem](Porting/NV_MODEM.md).
 
 Inbound UDP listeners use shared-address binding before opening the port. Broadcast or multicast
-telemetry can therefore be received by Mission Planner and another local application such as GTU
-Hermes at the same time. This does not promise duplicate delivery for ordinary unicast traffic;
+telemetry can therefore be received by Mission Planner and another local ground-station application
+at the same time. This does not promise duplicate delivery for ordinary unicast traffic;
 use distinct destination ports or a MAVLink router for that case.
 
 ## Linux prerequisites
@@ -249,10 +250,10 @@ Map tiles are the deliberate exception to the renamed application paths: they re
 official Mission Planner cache (`$XDG_CACHE_HOME/MissionPlanner/map-tiles` on Linux,
 `%LOCALAPPDATA%\MissionPlanner\cache\map-tiles` on Windows and
 `~/Library/Caches/MissionPlanner/map-tiles` on macOS). They use
-`<provider>/<z>/<x>/<y>.tile`; no SQLite tile database is used. GTU/Hermes uses these same platform
-paths and provider identifiers
-for compatible Google Satellite, Google Hybrid, Bing Satellite and OpenStreetMap tiles, allowing
-both applications to reuse downloaded tiles without changing either application's other data.
+`<provider>/<z>/<x>/<y>.tile`; no SQLite tile database is used. A ground station that uses these
+same platform paths and provider identifiers for Google Satellite, Google Hybrid, Bing Satellite
+and OpenStreetMap tiles can reuse the downloaded tiles without changing either application's other
+data.
 
 Portable plugin DLLs live under the user-data `plugins` directory and can be managed from
 **Tools > Plugin Manager** (`Ctrl+P`). They run as trusted in-process code with full application

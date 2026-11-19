@@ -33,8 +33,8 @@ normal change set above native history without vendoring or retaining an externa
 The old port had a prior green baseline of 1139 tests, Release build with zero warnings/errors,
 cross-builds for Ubuntu/Windows/macOS and zero open CodeQL alerts. A local rerun on 2026-08-24
 produced 1138 passes and one environment collision: the transport-construction test tried to bind
-fixed UDP port 14550 while the user's `hermes2` process legitimately owned it. The failure was
-`SocketException: Address already in use`, not a product-code regression. The test must use an
+fixed UDP port 14550 while another local ground-station process legitimately owned it. The failure
+was `SocketException: Address already in use`, not a product-code regression. The test must use an
 ephemeral port when it is imported into the fork.
 
 ## Immutable safety rules
