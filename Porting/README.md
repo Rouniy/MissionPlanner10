@@ -81,8 +81,10 @@ Import the pinned historical audits needed to verify the migration with:
 ./build/porting/import-reference-docs.sh /home/alex/src/MP/MissionPlanner-Avalonia
 ```
 
-These files live in `Porting/Reference`, remain byte-identical to their recorded source blobs and
-are evidence for the in-place migration rather than a second source tree.
+These files live in `Porting/Reference` and are evidence for the in-place migration rather than a
+second source tree. They remain byte-identical to their recorded source blobs, except
+`NV_MODEM.md` and `PORT_STATUS.md`: private product names were removed after import, so
+`PORT_SOURCE_RESOLUTION.tsv` records them as merged into those files.
 
 Later corrections and implementation advances belong in the live `FEATURE_AUDIT.md`,
 `NV_MODEM.md` and `TEMP_HANDLER_AUDIT.md` files. The matching names below `Reference/` are the
