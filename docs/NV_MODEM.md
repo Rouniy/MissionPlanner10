@@ -108,7 +108,8 @@ settings through the NV5 native configuration protocol (`NV5_CONFIG_CONTROL`, `N
 groups and the PARAM save buttons give way to **Modem settings**; maintenance controls and reboot
 stay. NV4 modems and NV5 firmware without the bit keep the PARAM page described above, unchanged.
 The firmware's ranging, LPS, calibration and capture messages (53020, 53025–53028, 53030–53033)
-are registered with the shared parser for the features that use them.
+are registered with the shared parser; the Distance group below shows the ranging telemetry
+(`NV5_DISTANCE`, 53020).
 
 Capability is known only from the passport. A modem first heard through other telemetry has its
 PARAM read deferred while the page requests the passport: the read is skipped if the passport
@@ -146,17 +147,76 @@ a modem command awaits its acknowledgement.
   is invalid.
 - **Transport.** Frames go out on the Mission Planner link where the modem was seen, from the
   application's GCS system id and component 190. Retries resend the identical payload; the
-  firmware matches them by transaction nonce, token and sequence. Each modem UID has a transport
-  epoch that advances when the passport uptime goes back, so a restart ends the old boot's session.
-  While a save is in progress the selected modem cannot be changed.
+  firmware matches them by transaction nonce, token and sequence. Each request goes out as soon as
+  the previous one is answered, so a read takes round trips rather than service intervals. Each
+  modem UID has a transport epoch that advances when the passport uptime goes back, so a restart
+  ends the old boot's session. While a save is in progress the selected modem cannot be changed.
+- **Distance settings** shows only the pair ranging settings (`CH?_RNG_*`) of both radios; the
+  `LPS_RNG_` settings belong to the LPS field.
+
+## Distance between two modems
+
+The **Distance** group of a transaction-capable modem lists, for each radio, whether ranging is on
+and whether this modem measures or answers, the reading and the latest burst, laid out like Live
+radio status. It has no per-modem switch, because ranging is always switched for both ends of a
+link: **Configure distance pair…** opens the pair window, and the line beside it says why the
+window cannot open now, for example while the modem is read or has unsaved edits.
+
+- **Readings.** The measuring modem reports `NV5_DISTANCE`. A reading has signed metres, its
+  validity and its age in whole seconds; a reading that stops arriving turns STALE, and missing
+  telemetry is named only once it is overdue. A correction is shown only when the modem proves it
+  applied one (restored bank, applied status, epoch, revision, identifier, finite values); the raw
+  range stays beside it, and a raw reading says why a stored correction does not apply. Only a
+  failure is red. The counts belong to the latest burst: the measuring modem shows how many of its
+  exchanges were valid, timed out or late, the answering modem how many it answered.
+- **Pair window.** The selected modem is Modem 1. Modem 2 is chosen from every other verified,
+  transaction-capable modem that is online, and a modem heard later joins the list; the window
+  opens on the one whose live radio roles and carrier look like the other end of a link. No modem
+  outside the pair is read or written. While the window is open the page's own controls wait, and
+  the window's editors follow both modems through their restarts.
+- **Form.** Radio, **Measured by** (`CHn_RNG_MGR`: the data receiver or the data transmitter;
+  firmware without the setting always measures on the receiver, and two modems of which only one
+  has it are not saved), **Measure distance on this radio link** (`CHn_RNG_EN`), period (a power of
+  two from 2 to 8388608 data packets; a stored value outside that list is shown, not replaced),
+  exchanges per burst (1–29), additional margin (0–40 ms, `CHn_RNG_PAD_MS`), hop span in kHz
+  (unused with one exchange), ranging power (−19 to 22 dBm), a nonzero hexadecimal address, and
+  under **Advanced** the phase, which must stay below the period and is flagged rather than
+  rewritten when the period shrinks. The line under the exchanges previews the data pause each
+  burst takes. Enter in a field only ends the edit, and the mouse wheel changes only the field with
+  the keyboard focus.
+- **Saving.** The two radios need opposite TX/RX roles. Both modems stage the same values and
+  validate; their candidate link hashes must match. Each then stages the other's hash as its peer
+  proof (`CHn_PEER_HASH`) and validates again. The answering modem commits first and the measuring
+  one once the first save is durable; both restart and are read again, after which the pair can be
+  changed again. Each modem commits atomically, but the pair is not one transaction: a partial or
+  uncertain outcome asks for both modems to be read before retrying. A check that fails before
+  either commit puts back only what the window staged; the form keeps its values. A modem's
+  refusal is named with the field and link hashes it reported. The measuring end of a running
+  pair changes only with ranging switched off first.
+- **Switching off.** Clearing the box and saving switches ranging off on both modems. When ranging
+  is on somewhere and the modems are not both read, one of them restarted within the last minute,
+  or one of them lacks the margin setting, each modem that may range saves only `CHn_RNG_EN = 0`
+  and `CHn_PEER_HASH = 0` on its own, without a read or a peer check; a restart before its commit
+  begins it again on the next boot, for up to two minutes. A modem whose read settings at the
+  committed revision say ranging is off, with no telemetry saying it is on, is left alone.
+- **Compare.** The selected radio's settings of both modems side by side: differing shared link
+  settings are highlighted, settings the two ends may set differently and those pair setup writes
+  are listed without a highlight, roles stay on top, and key words are compared without showing
+  them. The summary says whether the link fingerprints match and what to change when they do not.
+  The modem tabs hold the complete tables, keys included; edits made there are saved with the pair.
+  When a modem uses the radio for LPS, the form says so: the LPS burst takes the same exchanges,
+  span and power, and pair ranging cannot run on that radio meanwhile.
 
 Automated tests cover the protocol client, the editor against an in-process modem with a commit
-model, the page's capability switch for NV4 and NV5, and the layout at narrow widths. With
-`MP_NV5_CONFIG_FIXTURE` set to the NV5 firmware's host `nv5-configuration-fixture`, two further
-tests exchange real frames with the firmware's configuration core: one drives the client through
-commit, restart, recovery and readback, the other reads the real catalogue through the editor,
-saves a change, restarts the fixture and reads the change back. They do not cover flash
-interruption, physical restart timing or radio behavior.
+model, the page's capability switch for NV4 and NV5, the Distance group and the pair window
+against in-process modems, and the layout at narrow widths. With `MP_NV5_CONFIG_FIXTURE` set to
+the NV5 firmware's host `nv5-configuration-fixture`, further tests exchange real frames with the
+firmware's configuration core: one drives the client through commit, restart, recovery and
+readback; one reads the real catalogue through the editor, saves a change, restarts the fixture
+and reads the change back; one switches ranging off without a read; and one pairs two fixture
+instances through the window, including the peer proof. The host fixture has no LR2021 radio, on
+which alone the firmware allows ranging on, so that pair is saved with ranging off. The tests do
+not cover flash interruption, physical restart timing or radio behavior.
 
 ## Acceptance boundary
 
@@ -164,8 +224,8 @@ The shared Mission Planner parser, custom CRC/layouts, multi-link and HUB target
 passport validation, UID2 address migration and conflict guards, NV4 apply transaction, both NV5
 key-write paths, exact typed echoes and rejection diagnostics, independent diversity key targeting,
 RTSP dirty-state handling, current preset staging, parameter-file roundtrip and slow/silent-device
-handling are covered by automated tests. NV4 coverage additionally pins the complete sketch
-catalog, parameter-specific descriptions and both apply-trigger spellings. A representative
-physical NV4 and NV5
-modem on UDP/TCP/UART still require an operator acceptance run, including reboot/reappearance and
-real RF/RTSP behavior.
+handling are covered by automated tests. Distance pair setup with ranging on, real distance
+readings and their burst timing need two modems with LR2021 radios and an operator run. NV4 coverage
+additionally pins the complete sketch catalog, parameter-specific descriptions and both
+apply-trigger spellings. A representative physical NV4 and NV5 modem on UDP/TCP/UART still require
+an operator acceptance run, including reboot/reappearance and real RF/RTSP behavior.
