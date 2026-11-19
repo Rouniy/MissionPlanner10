@@ -37,7 +37,7 @@ official Mission Planner usage questions belong in the ArduPilot documentation a
 
 The in-place migration started from native Mission Planner commit
 `67a3c4f22bd1b38ac499f9756902e04fa4ed8444`. Source provenance and the remaining native surface are
-audited under [`Porting/`](Porting/README.md); upstream updates can now be merged into this same tree.
+audited under [`docs/migration/`](docs/migration/README.md); upstream updates can now be merged into this same tree.
 The hardware-free acceptance workflow is documented in the [SITL checklist](SITL-TESTING.md).
 
 The application version combines the upstream value from `Properties/AssemblyInfo.cs`, the tracked
@@ -54,9 +54,9 @@ Signed beta tags append `-beta` or `-beta.N`; they are published as GitHub prere
 discovered by the enabled Beta Updates preference; stable and beta channels both read only signed
 manifests attached to this repository's GitHub Releases.
 
-See the live [port status](Porting/STATUS.md) and the pinned
-[feature audit](Porting/FEATURE_AUDIT.md) for the support matrix and remaining work. The
-native [portable plugin host](Porting/Reference/PLUGINS.md) documents the official-style lifecycle,
+See the live [port status](docs/STATUS.md) and the pinned
+[feature audit](docs/migration/FEATURE_AUDIT.md) for the support matrix and remaining work. The
+native [portable plugin host](docs/migration/Reference/PLUGINS.md) documents the official-style lifecycle,
 installation paths, Avalonia extension API, binary compatibility for non-visual legacy plugins and
 the explicit source-adaptation boundary for legacy plugins that embed WinForms controls. The
 application itself has no WinForms source, project, runtime dependency or submodule.
@@ -71,7 +71,7 @@ DataFlash and TLOG flight logs, inspect warnings/events, compare flight-time par
 read compact signal trends. They can download onboard BIN logs and open them in the graphical
 analyzer, calculate DataFlash vibration spectra and rate-response metrics, and submit
 parameter proposals for review and application in Mission Planner. See the
-[operating instructions and tool reference](Porting/MCP_DIAGNOSTICS.md).
+[operating instructions and tool reference](docs/mcp/DIAGNOSTICS.md).
 
 ## Platform targets
 
@@ -111,7 +111,7 @@ Setup > NV Modem is a native port of AgroSky GTU's `NV5Settings` for NV4/NV5 rad
 discovers modems and performs parameter, key, RTSP and maintenance operations through the UDP/TCP/
 UART MAVLink connections already open in Mission Planner; it never opens a second port. Parameter
 values are session-only and cleared on refresh or device change, while the copied parameter
-descriptions remain available in the tab. See [NV Modem](Porting/NV_MODEM.md).
+descriptions remain available in the tab. See [NV Modem](docs/NV_MODEM.md).
 
 Inbound UDP listeners use shared-address binding before opening the port. Broadcast or multicast
 telemetry can therefore be received by Mission Planner and another local application such as GTU
@@ -197,7 +197,7 @@ the port under `Program Files/MissionPlanner10` and uses a separate upgrade iden
 shortcuts, so it does not overwrite an installed official WinForms Mission Planner. It does not
 install the official serial-driver certificate or vendor drivers. The complete artifact matrix,
 release-tag format, updater assets and optional signing secrets are documented in
-[`Porting/RELEASE.md`](Porting/RELEASE.md).
+[`docs/RELEASE.md`](docs/RELEASE.md).
 
 ## Linux packages
 
@@ -257,7 +257,7 @@ both applications to reuse downloaded tiles without changing either application'
 Portable plugin DLLs live under the user-data `plugins` directory and can be managed from
 **Tools > Plugin Manager** (`Ctrl+P`). They run as trusted in-process code with full application
 access; install only plugins you trust. See
-[portable plugins](Porting/Reference/PLUGINS.md) for the API and
+[portable plugins](docs/migration/Reference/PLUGINS.md) for the API and
 platform paths.
 
 The official TerrainMakerPlugin is built into Flight Planner as **Make Terrain DAT…**. It creates
@@ -311,9 +311,9 @@ dotnet test MissionPlannerTests/Avalonia/MissionPlanner.Tests/MissionPlanner.Tes
 ```
 
 The clean solution build is expected to report zero warnings and zero errors. The current warning
-audit and exact reproduction commands are in [`Porting/WARNING_AUDIT.md`](Porting/WARNING_AUDIT.md).
+audit and exact reproduction commands are in [`docs/migration/WARNING_AUDIT.md`](docs/migration/WARNING_AUDIT.md).
 The conservative file/directory/build-system classification is recorded in
-[`Porting/PROJECT_CLEANUP_AUDIT.md`](Porting/PROJECT_CLEANUP_AUDIT.md); do not delete excluded native
+[`docs/migration/PROJECT_CLEANUP_AUDIT.md`](docs/migration/PROJECT_CLEANUP_AUDIT.md); do not delete excluded native
 files merely because they are not yet in the transitional Avalonia compile list.
 
 ## License

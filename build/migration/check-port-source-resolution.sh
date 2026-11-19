@@ -22,17 +22,17 @@ require_header() {
   [[ "$actual" == "$expected" ]] || fail "$file has an unexpected header"
 }
 
-require_header Porting/IMPORTED_APPLICATION.tsv $'source_path\tnative_path\tsource_blob\tnamespace_migration'
-require_header Porting/IMPORTED_TESTS.tsv $'source_path\tnative_path\tsource_blob\tnamespace_migration'
-require_header Porting/IMPORTED_REFERENCE.tsv $'source_path\tnative_path\tsource_blob'
-require_header Porting/PORT_SOURCE_RESOLUTION.tsv $'source_path\tsource_blob\tresolution\tnative_evidence\tnotes'
+require_header docs/migration/IMPORTED_APPLICATION.tsv $'source_path\tnative_path\tsource_blob\tnamespace_migration'
+require_header docs/migration/IMPORTED_TESTS.tsv $'source_path\tnative_path\tsource_blob\tnamespace_migration'
+require_header docs/migration/IMPORTED_REFERENCE.tsv $'source_path\tnative_path\tsource_blob'
+require_header docs/migration/PORT_SOURCE_RESOLUTION.tsv $'source_path\tsource_blob\tresolution\tnative_evidence\tnotes'
 
 canonical=$(
   {
-    awk -F '\t' 'NR > 1 { print $1 "\t" $3 }' Porting/IMPORTED_APPLICATION.tsv
-    awk -F '\t' 'NR > 1 { print $1 "\t" $3 }' Porting/IMPORTED_TESTS.tsv
-    awk -F '\t' 'NR > 1 { print $1 "\t" $3 }' Porting/IMPORTED_REFERENCE.tsv
-    awk -F '\t' 'NR > 1 { print $1 "\t" $2 }' Porting/PORT_SOURCE_RESOLUTION.tsv
+    awk -F '\t' 'NR > 1 { print $1 "\t" $3 }' docs/migration/IMPORTED_APPLICATION.tsv
+    awk -F '\t' 'NR > 1 { print $1 "\t" $3 }' docs/migration/IMPORTED_TESTS.tsv
+    awk -F '\t' 'NR > 1 { print $1 "\t" $3 }' docs/migration/IMPORTED_REFERENCE.tsv
+    awk -F '\t' 'NR > 1 { print $1 "\t" $2 }' docs/migration/PORT_SOURCE_RESOLUTION.tsv
   } | LC_ALL=C sort
 )
 
@@ -50,7 +50,7 @@ actual_digest=$(printf '%s\n' "$canonical" | sha256sum | cut -d ' ' -f 1)
 [[ "$actual_digest" == "$source_digest" ]] ||
   fail "pinned source path/blob digest changed: $actual_digest"
 
-planned_paths=$(awk -F '\t' 'NR > 1 { print $1 }' Porting/PORT_SOURCE_IMPORT.tsv | LC_ALL=C sort)
+planned_paths=$(awk -F '\t' 'NR > 1 { print $1 }' docs/migration/PORT_SOURCE_IMPORT.tsv | LC_ALL=C sort)
 covered_paths=$(printf '%s\n' "$canonical" | cut -f 1)
 if [[ "$planned_paths" != "$covered_paths" ]]; then
   diff -u <(printf '%s\n' "$planned_paths") <(printf '%s\n' "$covered_paths") || true
@@ -61,20 +61,20 @@ while IFS=$'\t' read -r source_path native_path source_blob namespace_migration;
   [[ -n "$source_path" && -n "$native_path" && "$source_blob" =~ ^[0-9a-f]{40}$ ]] ||
     fail "invalid imported application row for $source_path"
   [[ -f "$native_path" ]] || fail "missing imported application target: $native_path"
-done < <(tail -n +2 Porting/IMPORTED_APPLICATION.tsv)
+done < <(tail -n +2 docs/migration/IMPORTED_APPLICATION.tsv)
 
 while IFS=$'\t' read -r source_path native_path source_blob namespace_migration; do
   [[ -n "$source_path" && -n "$native_path" && "$source_blob" =~ ^[0-9a-f]{40}$ ]] ||
     fail "invalid imported test row for $source_path"
   [[ -f "$native_path" ]] || fail "missing imported test target: $native_path"
-done < <(tail -n +2 Porting/IMPORTED_TESTS.tsv)
+done < <(tail -n +2 docs/migration/IMPORTED_TESTS.tsv)
 
 while IFS=$'\t' read -r source_path native_path source_blob; do
   [[ -f "$native_path" ]] || fail "missing imported reference target: $native_path"
   actual_blob=$(git hash-object "$native_path")
   [[ "$actual_blob" == "$source_blob" ]] ||
     fail "reference target is no longer byte-identical: $native_path"
-done < <(tail -n +2 Porting/IMPORTED_REFERENCE.tsv)
+done < <(tail -n +2 docs/migration/IMPORTED_REFERENCE.tsv)
 
 while IFS=$'\t' read -r source_path source_blob resolution native_evidence notes; do
   case "$resolution" in
@@ -96,7 +96,7 @@ while IFS=$'\t' read -r source_path source_blob resolution native_evidence notes
     [[ "$actual_blob" == "$source_blob" ]] ||
       fail "exact target ${evidence_paths[0]} changed for $source_path"
   fi
-done < <(tail -n +2 Porting/PORT_SOURCE_RESOLUTION.tsv)
+done < <(tail -n +2 docs/migration/PORT_SOURCE_RESOLUTION.tsv)
 
 if [[ $# -gt 1 ]]; then
   fail "usage: $0 [path-to-MissionPlanner-Avalonia]"

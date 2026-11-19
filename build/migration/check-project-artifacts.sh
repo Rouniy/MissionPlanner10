@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-audit="$repo_root/Porting/PROJECT_ARTIFACT_AUDIT.tsv"
+audit="$repo_root/docs/migration/PROJECT_ARTIFACT_AUDIT.tsv"
 
 fail() {
   echo "project artifact audit: $*" >&2

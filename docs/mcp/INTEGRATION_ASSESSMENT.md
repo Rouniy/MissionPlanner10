@@ -4,8 +4,8 @@ Assessed 2026-09-16 against product commit
 `512d9f7104ccf6e211a698eaa4cf31af78b6a64d` (audit HEAD before this document:
 `37b6876add2aa6852e069407a1b2171bcd904292`). This is a design assessment, not an
 implemented or runtime-validated feature at that checkpoint. The subsequent implementation
-and operating instructions are in [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md); current validation
-is recorded in [STATUS.md](STATUS.md).
+and operating instructions are in [DIAGNOSTICS.md](DIAGNOSTICS.md); current validation
+is recorded in [STATUS.md](../STATUS.md).
 
 ## Finding
 

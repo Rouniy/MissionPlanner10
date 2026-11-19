@@ -42,6 +42,6 @@ Mission Planner entry points: `Services/Mcp/McpAgentHub.cs`,
   follows actual schemas: `write_parameters` and `vehicle_command` need readback
   after uncertain responses and must not be blindly replayed.
 
-See the current entry in `Porting/STATUS.md` for final validation and Git state.
+See the current entry in `docs/STATUS.md` for final validation and Git state.
 No new dependency, model-provider configuration, account login, flight action or
 client registration is needed for these fixes.

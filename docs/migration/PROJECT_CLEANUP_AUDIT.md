@@ -187,12 +187,12 @@ targets.
 ## Reproduction gates
 
 ```bash
-./build/porting/check-native-surface.sh
-./build/porting/check-port-source-resolution.sh
-./build/porting/check-no-winforms.sh
-./build/porting/check-project-artifacts.sh
-./build/porting/check-binary-artifacts.sh
-./build/porting/check-key-artifacts.sh
+./build/migration/check-native-surface.sh
+./build/migration/check-port-source-resolution.sh
+./build/migration/check-no-winforms.sh
+./build/migration/check-project-artifacts.sh
+./build/migration/check-binary-artifacts.sh
+./build/migration/check-key-artifacts.sh
 dotnet restore MissionPlanner.slnx --force --nologo
 dotnet build MissionPlanner.slnx -c Release -m:1 --nologo
 dotnet format MissionPlanner.slnx analyzers --verify-no-changes --no-restore

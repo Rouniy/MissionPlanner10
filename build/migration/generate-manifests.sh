@@ -7,7 +7,7 @@ readonly source_port_commit="8ed19081c972a80a8b6996ed817581bc59cbcb4b"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "$script_dir/../.." && pwd -P)"
 source_port="${1:-$repo_root/../MissionPlanner-Avalonia}"
-output_dir="$repo_root/Porting"
+output_dir="$repo_root/docs/migration"
 
 if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "Native Mission Planner repository not found: $repo_root" >&2
@@ -102,20 +102,20 @@ declare -A native_replacement_by_logical_path=(
   ["SikRadio/Terminal.Designer"]="GCSViews/Setup/SikRadioView.axaml"
   ["SikRadio/ThemeManager"]="Theme/MpTheme.axaml;Services/ThemeService.cs"
   ["Script"]="Services/PythonScriptHost.cs;GCSViews/FlightDataView.axaml;ViewModels/FlightDataViewModel.cs;ViewModels/MainWindowViewModel.cs;MissionPlannerTests/Avalonia/MissionPlanner.Tests/PythonScriptHostTests.cs"
-  ["temp"]="Views/ActionPageView.axaml;ViewModels/GCSViews/ConfigurationView/ConfigDeveloperToolsViewModel.cs;Porting/Reference/TEMP_HANDLER_AUDIT.md"
+  ["temp"]="Views/ActionPageView.axaml;ViewModels/GCSViews/ConfigurationView/ConfigDeveloperToolsViewModel.cs;docs/migration/Reference/TEMP_HANDLER_AUDIT.md"
   ["Utilities/BoardDetect"]="Services/LegacyFirmwareUploader.cs;GCSViews/Setup/InstallFirmwareView.axaml.cs;ViewModels/Setup/InstallFirmwareViewModel.cs"
   ["Utilities/Firmware"]="Services/LegacyFirmwareUploader.cs;ViewModels/Setup/InstallFirmwareViewModel.cs;ViewModels/GCSViews/ConfigurationView/ConfigFirmwareLegacyViewModel.cs"
   ["Utilities/httpserver"]="Services/LocalKmlServer.cs;GCSViews/FlightPlannerView.axaml;ViewModels/FlightPlannerViewModel.cs;ViewModels/GeoRefViewModel.cs;MissionPlannerTests/Avalonia/MissionPlanner.Tests/LocalKmlServerTests.cs"
-  ["wix/Drivers"]="build/windows/msi/Package.wxs;build/windows/package.sh;README.md;Porting/RELEASE.md"
+  ["wix/Drivers"]="build/windows/msi/Package.wxs;build/windows/package.sh;README.md;docs/RELEASE.md"
   ["wix/Program"]="build/windows/msi/Package.wxs;build/windows/msi/MissionPlanner.Installer.wixproj;build/windows/package.sh;build/version.sh;.github/workflows/ci.yml;.github/workflows/release.yml"
   ["wix/Properties/AssemblyInfo"]="MissionPlanner.csproj;build/version.sh"
   ["test/FirmwareSelection.xaml"]="GCSViews/ConfigurationView/ConfigFirmwareLegacyView.axaml;ViewModels/GCSViews/ConfigurationView/ConfigFirmwareLegacyViewModel.cs"
   ["Plugin/Plugin"]="Plugin/LegacyCompatibility/PluginCompatibility.cs;Plugin/PortableApi/Plugin.cs;Plugin/PortableApi/PluginHost.cs"
   ["Plugin/PluginLoader"]="Services/PluginRuntime.cs;Services/PluginService.cs"
   ["Plugin/PluginUI"]="Views/PluginManagerWindow.axaml;ViewModels/PluginManagerViewModel.cs"
-  ["plugins/Dowding/DowdingPlugin"]="Porting/Reference/DOWDING_AUDIT.md;Controls/MapView.cs;Services/PluginRuntime.cs;Services/PluginService.cs"
-  ["plugins/Dowding/DowdingUI"]="Porting/Reference/DOWDING_AUDIT.md;Views/AntennaTrackerUIView.axaml;ViewModels/AntennaTrackerUIViewModel.cs;Views/SerialOutputCotView.axaml;ViewModels/SerialOutputCotViewModel.cs"
-  ["plugins/Dowding/DowdingUI.Designer"]="Porting/Reference/DOWDING_AUDIT.md;Views/AntennaTrackerUIView.axaml;Views/SerialOutputCotView.axaml"
+  ["plugins/Dowding/DowdingPlugin"]="docs/migration/Reference/DOWDING_AUDIT.md;Controls/MapView.cs;Services/PluginRuntime.cs;Services/PluginService.cs"
+  ["plugins/Dowding/DowdingUI"]="docs/migration/Reference/DOWDING_AUDIT.md;Views/AntennaTrackerUIView.axaml;ViewModels/AntennaTrackerUIViewModel.cs;Views/SerialOutputCotView.axaml;ViewModels/SerialOutputCotViewModel.cs"
+  ["plugins/Dowding/DowdingUI.Designer"]="docs/migration/Reference/DOWDING_AUDIT.md;Views/AntennaTrackerUIView.axaml;Views/SerialOutputCotView.axaml"
   ["Plugins/AnonymizeBinlogPlugin"]="Services/DataFlashLogAnonymizer.cs;ViewModels/GCSViews/ConfigurationView/ConfigAdvancedViewModel.cs"
   ["GCSViews/ConfigurationView/ConfigAC_Fence"]="GCSViews/ConfigurationView/ConfigAC_FenceView.axaml;ViewModels/GCSViews/ConfigurationView/ConfigAC_FenceViewModel.cs"
   ["GCSViews/ConfigurationView/ConfigADSB"]="GCSViews/ConfigurationView/ConfigADSBView.axaml;ViewModels/GCSViews/ConfigurationView/ConfigADSBViewModel.cs"
@@ -340,10 +340,10 @@ while IFS= read -r native_path; do
       if [[ -v 'native_replacement_by_logical_path[$logical_path]' ]]; then
         status="replace"
         candidates="${native_replacement_by_logical_path[$logical_path]}"
-        evidence="Mapped to the listed native Avalonia artifacts; feature-level parity and deliberate safety differences are recorded in Porting/Reference/PORT_STATUS.md."
+        evidence="Mapped to the listed native Avalonia artifacts; feature-level parity and deliberate safety differences are recorded in docs/migration/Reference/PORT_STATUS.md."
       elif [[ -v 'native_removal_by_logical_path[$logical_path]' ]]; then
         status="remove"
-        candidates="Porting/Reference/PORT_STATUS.md"
+        candidates="docs/migration/Reference/PORT_STATUS.md"
         evidence="${native_removal_by_logical_path[$logical_path]}"
       elif [[ "$logical_path" == Plugins/OpenDroneID2/* ]]; then
         status="replace"
@@ -367,8 +367,8 @@ while IFS= read -r native_path; do
         evidence="The legacy loose-source calculator is superseded by the newer native Initial Parameters page with reviewable, selected existing-parameter writes."
       elif [[ "$logical_path" == Plugins/example* || "$logical_path" == plugins/example* || "$logical_path" == plugins/generator ]]; then
         status="remove"
-        candidates="Porting/Reference/PLUGINS.md"
-        evidence="This is a development/plugin-SDK sample rather than a shipped operator workflow. The portable plugin lifecycle, API, trust model and buildable source pattern are documented in Porting/Reference/PLUGINS.md; runtime compilation of loose trusted C# is deliberately not shipped."
+        candidates="docs/migration/Reference/PLUGINS.md"
+        evidence="This is a development/plugin-SDK sample rather than a shipped operator workflow. The portable plugin lifecycle, API, trust model and buildable source pattern are documented in docs/migration/Reference/PLUGINS.md; runtime compilation of loose trusted C# is deliberately not shipped."
       elif [[ "$logical_path" == "Antenna/TrackerGeneric" ]]; then
         status="replace"
         candidates="Services/AntennaTrackerOutputs.cs;ViewModels/AntennaTrackerUIViewModel.cs"
@@ -376,15 +376,15 @@ while IFS= read -r native_path; do
       elif [[ "$logical_path" == "Antenna/TrackerUI" ]]; then
         status="replace"
         candidates="Views/AntennaTrackerUIView.axaml;ViewModels/AntennaTrackerUIViewModel.cs;Services/AntennaTrackerOutputs.cs"
-        evidence="The native Avalonia tracker view ports live target tracking and all official output interfaces; see Porting/Reference/PORT_STATUS.md."
+        evidence="The native Avalonia tracker view ports live target tracking and all official output interfaces; see docs/migration/Reference/PORT_STATUS.md."
       elif [[ "$logical_path" == Grid/* ]]; then
         status="replace"
         candidates="Views/GridUIView.axaml;ViewModels/GridUIViewModel.cs;ViewModels/SurveyMissionBuilder.cs;Services/SurveyGridSupport.cs"
-        evidence="Survey Grid UI, mission generation, split flights, camera profiles and grid persistence are ported and regression-tested; see Porting/Reference/PORT_STATUS.md."
+        evidence="Survey Grid UI, mission generation, split flights, camera profiles and grid persistence are ported and regression-tested; see docs/migration/Reference/PORT_STATUS.md."
       elif [[ "$logical_path" == Joystick/* ]]; then
         status="replace"
         candidates="GCSViews/ConfigurationView/ConfigJoystickView.axaml;ViewModels/GCSViews/ConfigurationView/ConfigJoystickViewModel.cs;Services/JoystickControl.cs;Services/JoystickInput.cs"
-        evidence="Joystick setup/actions and the application-level sender have native Linux, Windows and macOS backends with lifecycle/mapping tests; see Porting/Reference/PORT_STATUS.md."
+        evidence="Joystick setup/actions and the application-level sender have native Linux, Windows and macOS backends with lifecycle/mapping tests; see docs/migration/Reference/PORT_STATUS.md."
       elif [[ "$logical_path" == Controls/Icon/* ]]; then
         status="replace"
         candidates="Theme/MpTheme.axaml;GCSViews/FlightPlannerView.axaml;Controls/FlightPlannerMap.cs"
@@ -392,23 +392,23 @@ while IFS= read -r native_path; do
       elif [[ "$logical_path" == Controls/PreFlight/* ]]; then
         status="replace"
         candidates="Services/PreflightChecklist.cs;GCSViews/FlightDataView.axaml;ViewModels/FlightDataViewModel.cs"
-        evidence="The checklist schema, evaluator, manual checks and native editor are ported and tested; see Porting/Reference/PORT_STATUS.md."
+        evidence="The checklist schema, evaluator, manual checks and native editor are ported and tested; see docs/migration/Reference/PORT_STATUS.md."
       elif [[ "$logical_path" == Log/* ]]; then
         status="replace"
         candidates="Views/LogBrowseView.axaml;ViewModels/LogBrowseViewModel.cs;Views/MavlinkLogWindow.axaml;ViewModels/MavlinkLogConvertViewModel.cs;Services/TlogExportService.cs"
-        evidence="DataFlash browsing, download/index and telemetry-log conversion/export workflows are implemented by native Avalonia views/services and tested; see Porting/Reference/PORT_STATUS.md."
+        evidence="DataFlash browsing, download/index and telemetry-log conversion/export workflows are implemented by native Avalonia views/services and tested; see docs/migration/Reference/PORT_STATUS.md."
       elif [[ "$logical_path" == GeoRef/* ]]; then
         status="replace"
         candidates="Views/GeoRefView.axaml;ViewModels/GeoRefViewModel.cs"
-        evidence="The GeoRef workflow, matching modes, reports and EXIF output are ported and tested; see Porting/Reference/PORT_STATUS.md."
+        evidence="The GeoRef workflow, matching modes, reports and EXIF output are ported and tested; see docs/migration/Reference/PORT_STATUS.md."
       elif [[ "$logical_path" == "MagCalib" ]]; then
         status="replace"
         candidates="Views/OfflineMagFitWindow.axaml;ViewModels/OfflineMagFitViewModel.cs;Services/OfflineMagFitService.cs"
-        evidence="Offline magnetometer calibration for tlog/bin/log is implemented and tested; see Porting/Reference/PORT_STATUS.md."
+        evidence="Offline magnetometer calibration for tlog/bin/log is implemented and tested; see docs/migration/Reference/PORT_STATUS.md."
       elif [[ "$logical_path" == Swarm/* ]]; then
         status="replace"
         candidates="Views/FormationControlWindow.axaml;ViewModels/FormationControlViewModel.cs;Views/SwarmFollowPathWindow.axaml;ViewModels/SwarmFollowPathViewModel.cs;Views/SwarmFollowLeaderWindow.axaml;ViewModels/SwarmFollowLeaderViewModel.cs;Views/SwarmWaypointLeaderWindow.axaml;ViewModels/SwarmWaypointLeaderViewModel.cs;Views/SwarmSequenceWindow.axaml;ViewModels/SwarmSequenceViewModel.cs"
-        evidence="Formation, Follow Path, Follow Leader, Waypoint Leader and Sequence workflows are ported with exact-link safety and controller tests; see Porting/Reference/PORT_STATUS.md."
+        evidence="Formation, Follow Path, Follow Leader, Waypoint Leader and Sequence workflows are ported with exact-link safety and controller tests; see docs/migration/Reference/PORT_STATUS.md."
       else
         candidates="$(find_candidates "$native_path")"
       fi
@@ -495,7 +495,7 @@ while IFS= read -r source_path; do
       notes="Preserve all port regression coverage while unifying the test graph."
       ;;
     docs/*)
-      target_path="Porting/Reference/${source_path#docs/}"
+      target_path="docs/migration/Reference/${source_path#docs/}"
       action="import"
       notes="Historical/reference documentation; reconcile current facts into native docs/README later."
       ;;

@@ -5,7 +5,7 @@ namespace MissionPlanner.Tests;
 public sealed class TempHandlerAuditTests {
   [Fact]
   public void Every_pinned_temp_click_handler_has_one_closed_classification() {
-    string auditPath = FindRepositoryFile("Porting/TEMP_HANDLER_AUDIT.md");
+    string auditPath = FindRepositoryFile("docs/migration/TEMP_HANDLER_AUDIT.md");
     string audit = File.ReadAllText(auditPath);
 
     MatchCollection rows = Regex.Matches(
@@ -19,7 +19,7 @@ public sealed class TempHandlerAuditTests {
 
     // The original WinForms source is deliberately no longer kept in the active tree. The
     // live corrected audit is its reviewable migration record. The byte-identical 67-row source
-    // snapshot remains separately preserved below Porting/Reference for provenance.
+    // snapshot remains separately preserved below docs/migration/Reference for provenance.
     Assert.Equal(68, documented.Length);
     Assert.Equal(documented.Length, documented.Distinct(StringComparer.Ordinal).Count());
     Assert.All(rows.Cast<Match>(), row =>

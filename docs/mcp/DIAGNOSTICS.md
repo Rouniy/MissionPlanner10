@@ -159,7 +159,7 @@ receipts and snapshots while routing actions through explicit native adapters. X
 also persists document/file journals at listener scope; MP UI receipts remain scoped
 to a connection and document this reconnect limitation explicitly.
 
-Agents should read [AI_START](../docs/mcp/AI_START.md) and [UI_API](../docs/mcp/UI_API.md).
+Agents should read [AI_START](AI_START.md) and [UI_API](UI_API.md).
 The same versioned text is embedded in each binary and exposed through `resources/list`
 and `resources/read` at `missionplanner://documentation/AI_START.md`, `UI_API.md` and
 `DIAGNOSTICS.md`. Initialize instructions point to the starting resource. Unknown URIs
@@ -377,7 +377,7 @@ certification. Representative aircraft, simulator and flight acceptance remain n
 No model invocation or physical-vehicle write was performed during automated validation.
 Tests use the official MCP client against real loopback Kestrel, synthetic DataFlash logs,
 known signals, injected MAVLink exchanges and Avalonia layout at the minimum window size.
-See [STATUS.md](STATUS.md) for exact results and packaging limitations.
+See [STATUS.md](../STATUS.md) for exact results and packaging limitations.
 
 The DataFlash parser is the existing managed DFLogBuffer. Initial indexing is synchronous on a
 worker thread and cannot be interrupted mid-constructor; very large logs can delay shutdown.

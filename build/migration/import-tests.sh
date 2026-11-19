@@ -60,5 +60,5 @@ while IFS= read -r source_path; do
     'MissionPlannerAvalonia->MissionPlanner' >> "$record"
 done < <(git -C "$source_port" ls-files 'tests/**')
 
-mv "$record" "$repo_root/Porting/IMPORTED_TESTS.tsv"
+mv "$record" "$repo_root/docs/migration/IMPORTED_TESTS.tsv"
 echo "Imported $imported test files; $skipped already matched."

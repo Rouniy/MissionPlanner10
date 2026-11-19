@@ -45,12 +45,12 @@ build/make-update-bundle.py	build/make-update-bundle.py	import	Cross-platform bu
 build/simpleble/fetch-macos.sh	build/simpleble/fetch-macos.sh	import	Cross-platform build/package/runtime support.
 build/version.sh	build/version.sh	import	Cross-platform build/package/runtime support.
 build/vlc/fetch-macos.sh	build/vlc/fetch-macos.sh	import	Cross-platform build/package/runtime support.
-docs/CODEQL_TRIAGE.md	Porting/Reference/CODEQL_TRIAGE.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
-docs/NV_MODEM.md	Porting/Reference/NV_MODEM.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
-docs/PLUGINS.md	Porting/Reference/PLUGINS.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
-docs/PORT_STATUS.md	Porting/Reference/PORT_STATUS.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
-docs/TEMP_HANDLER_AUDIT.md	Porting/Reference/TEMP_HANDLER_AUDIT.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
-docs/theme-proposals.html	Porting/Reference/theme-proposals.html	import	Historical/reference documentation; reconcile current facts into native docs/README later.
+docs/CODEQL_TRIAGE.md	docs/migration/Reference/CODEQL_TRIAGE.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
+docs/NV_MODEM.md	docs/migration/Reference/NV_MODEM.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
+docs/PLUGINS.md	docs/migration/Reference/PLUGINS.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
+docs/PORT_STATUS.md	docs/migration/Reference/PORT_STATUS.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
+docs/TEMP_HANDLER_AUDIT.md	docs/migration/Reference/TEMP_HANDLER_AUDIT.md	import	Historical/reference documentation; reconcile current facts into native docs/README later.
+docs/theme-proposals.html	docs/migration/Reference/theme-proposals.html	import	Historical/reference documentation; reconcile current facts into native docs/README later.
 external/Directory.Build.props		remove	Old submodule shielding is unnecessary in the in-place layout; scope root build policy explicitly instead.
 external/Directory.Packages.props		remove	Old submodule shielding is unnecessary in the in-place layout; scope root build policy explicitly instead.
 external/MissionPlanner		remove	Never import the old Mission Planner gitlink; native source already is the repository root.

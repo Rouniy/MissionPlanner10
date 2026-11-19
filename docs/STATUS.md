@@ -8,7 +8,7 @@ Updated: **2026-11-04**.
   serial reads), `9862e933c` (DroneCAN swapped-frame reassembly, bootloader verdict, page
   status), `082e2e6dd` (opt-in live firmware trace). Full Release tests **1920/1920**, none
   skipped; `MissionPlanner.slnx` Release build **0 warnings / 0 errors**; six
-  `build/porting/check-*.sh` audits and `git diff --check` pass.
+  `build/migration/check-*.sh` audits and `git diff --check` pass.
 - User report: the Matek L431 on the X7's CAN2 would not take a firmware update ("nothing
   happens"). Found on the bench: the first attempt had erased the node's application and left
   it in the bootloader (NodeStatus MAINTENANCE, vendor code 10 = NO_APP_SIG); later attempts
@@ -66,7 +66,7 @@ Updated: **2026-11-04**.
   https://github.com/Rouniy/MissionPlanner10/releases/tag/v1.3.83.6-7a445a82 has 19 assets
   (eight human packages, two updater ZIPs, four manifests, four signatures, `SHA256SUMS`).
 - Local verification on `65d028a19` before the bump: `MissionPlanner.slnx` Release build
-  0 errors; full Release tests **1909/1909**, none skipped; six `build/porting/check-*.sh`
+  0 errors; full Release tests **1909/1909**, none skipped; six `build/migration/check-*.sh`
   audits pass; `out/packages/missionplanner10_1.3.83.5-65d028a1_amd64.deb` built locally
   (needed a user-local rustup for `libdflog_ffi.so`), `lintian` clean, extracted payload
   complete, 12 s Xvfb launch without exceptions.
@@ -97,7 +97,7 @@ Updated: **2026-11-04**.
   its request when the library's ten-second sweep coincided with the test; the sweep now skips
   nodes whose info is known.
 - Verification: full Release tests **1871/1871**, no skipped; `MissionPlanner.slnx` Release
-  build **0 warnings / 0 errors**; six `build/porting/check-*.sh` audits and `git diff --check`
+  build **0 warnings / 0 errors**; six `build/migration/check-*.sh` audits and `git diff --check`
   pass. Builds ran with `-m:1`.
 - Not claimed: hosted CI for this branch; flashing a node through the new dialog on hardware
   (the download and the updater call are the same code path the live test and the existing
@@ -170,7 +170,7 @@ Updated: **2026-11-04**.
   block into a bare table that Mission Planner refused forever; such a table (only the
   keys Mission Planner writes plus a loopback `/mcp` url) is re-adopted now.
 - Verification: full Release tests **1849/1849**, no skipped; `MissionPlanner.slnx`
-  Release build **0 warnings / 0 errors**; six `build/porting/check-*.sh` audits and
+  Release build **0 warnings / 0 errors**; six `build/migration/check-*.sh` audits and
   `git diff --check` pass. Builds ran with `-m:1` because the machine was loaded.
 - Not claimed: hosted CI, packages, CodeQL for this branch; Windows/macOS GUI checks;
   launching a real agent from the new rows (the launch code is unchanged).
@@ -238,7 +238,7 @@ Updated: **2026-11-04**.
   manifests, four signatures and `SHA256SUMS` (18 entries). No local application
   build or GUI, simulator or hardware qualification was run during this release operation.
 - The primary checkout was left on local
-  `master` at `f65fc96e8` with its uncommitted `Porting/STATUS.md` addition and five
+  `master` at `f65fc96e8` with its uncommitted `docs/STATUS.md` addition and five
   `.bat` line-ending differences preserved; it was not used to build or tag the release.
   This release record is a post-tag documentation commit, so it does not change released
   binaries. Remaining release blocker: none. Next executable step: reconcile those local
@@ -278,7 +278,7 @@ Updated: **2026-11-04**.
 - Compared X-Office `b534036d80d7baae86ca1917376f3fbadaef63eb` without modifying it.
   Its unrelated user-owned CRM changes continued during this review and are untouched.
   Detailed architecture/differences and deferred product features:
-  [MCP_XOFFICE_REVIEW.md](MCP_XOFFICE_REVIEW.md).
+  [MCP_XOFFICE_REVIEW.md](migration/MCP_XOFFICE_REVIEW.md).
 - Three new regression cases failed before the fixes: both hub open methods returned an
   unready listener, and DELETE returned HTTP 429 with four blocked tools. All now pass;
   two further cases cover parallel opens and refusing to restart a revoked listener.
@@ -413,7 +413,7 @@ Updated: **2026-11-04**.
   (build-test-linux, package-windows, package-macos x64 and arm64 all succeeded on the first
   attempt) and CodeQL https://github.com/Rouniy/MissionPlanner10/actions/runs/35253846468
   passed; open code-scanning alerts: **0**.
-- `Porting/MCP_DIAGNOSTICS.md` documents Register/Unregister, Open at startup, the exit fix
+- `docs/mcp/DIAGNOSTICS.md` documents Register/Unregister, Open at startup, the exit fix
   and the robot indicator. Follow-ups: acceptance with the real ChatGPT Desktop after its
   restart; SITL/real-aircraft acceptance unchanged.
 
@@ -469,7 +469,7 @@ Updated: **2026-11-04**.
   and CodeQL https://github.com/Rouniy/MissionPlanner10/actions/runs/35250447683 —
   all five platform jobs (Linux 1688/1688 with 0 warnings, Windows ZIP/MSI, macOS x64 and arm64) and
   CodeQL passed on the first attempt; open code-scanning alerts: **0**.
-- `Porting/MCP_DIAGNOSTICS.md` "Use" and log-workflow sections were rewritten for the new
+- `docs/mcp/DIAGNOSTICS.md` "Use" and log-workflow sections were rewritten for the new
   window. Follow-ups unchanged: SITL/real-aircraft acceptance for `write_parameters`,
   `vehicle_command` and `mission_upload`.
 
@@ -538,7 +538,7 @@ Updated: **2026-11-04**.
   and draft revision checks, and cancellation before pending UI dispatch. Unknown tools
   require Allow by default. UI permissions are explained in Connections before granting.
   File reloads invalidate log snapshots; captures reject stale/replaced log views.
-- Added embedded [AI_START](../docs/mcp/AI_START.md), [UI_API](../docs/mcp/UI_API.md) and
+- Added embedded [AI_START](mcp/AI_START.md), [UI_API](mcp/UI_API.md) and
   diagnostic resources through resources/list/read; initialize instructions direct agents
   to the guide. Resource URIs are fixed, no arbitrary file reads. Reconnect limitations
   and structural-validation limits are documented explicitly.
@@ -586,7 +586,7 @@ Updated: **2026-11-04**.
   No real model, Claude delegation, aircraft operation or user client-config edit occurred.
 - Platform packages and CI are being produced for this branch. Actual provider login,
   model sessions and installed Windows/macOS client activation remain manual acceptance.
-  See [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md) for the revised workflow and access semantics.
+  See [mcp/DIAGNOSTICS.md](mcp/DIAGNOSTICS.md) for the revised workflow and access semantics.
 - The first CI attempt exposed a headless dispatcher failure in `ShellSmokeTests`.
   MCP window fixtures now await their asynchronous close/catalogue teardown before
   Avalonia resets the per-test dispatcher. The full **1669-test** local suite passed
@@ -621,7 +621,7 @@ Updated: **2026-11-04**.
   recorded checks above are local; platform packaging and CodeQL results are linked
   on the PR. Real aircraft messages, flight-log corpus acceptance and model-backed sessions remain
   manual checks; no aircraft writes, inference or Claude delegation occurred.
-  See [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md) for the gap analysis and usage.
+  See [mcp/DIAGNOSTICS.md](mcp/DIAGNOSTICS.md) for the gap analysis and usage.
 
 ## Published AI agent connections — 2026-09-16
 
@@ -646,7 +646,7 @@ Updated: **2026-11-04**.
 - Remaining acceptance: actual authenticated model sessions, installed desktop
   activation on supported operating systems and physical-aircraft log download.
   No real agent inference, global client registration, release/tag, archival or
-  Claude delegation was performed. See [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md).
+  Claude delegation was performed. See [mcp/DIAGNOSTICS.md](mcp/DIAGNOSTICS.md).
 
 ## Agent discovery and desktop MCP implementation — 2026-09-16
 
@@ -679,7 +679,7 @@ Updated: **2026-11-04**.
 - Next: publish branch and verify platform/CodeQL PR gates before integration. Desktop login,
   installed-app activation and actual paid model sessions remain manual acceptance; no real
   Codex/Claude inference or global desktop registration was performed. Claude was not used
-  for delegation. See [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md) for the new connection paths.
+  for delegation. See [mcp/DIAGNOSTICS.md](mcp/DIAGNOSTICS.md) for the new connection paths.
 
 ## Published BIN/TLOG workflow — 2026-09-16
 
@@ -698,7 +698,7 @@ Updated: **2026-11-04**.
 - BIN downloads and local BIN/LOG/TLOG inspection are available in **AI → Flight logs**;
   MCP exposes 23 tools, including opening the analyzer. TLOG source/time/encoding
   distinctions and DataFlash-only FFT limits are documented in
-  [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md). The detailed local checkpoint is below.
+  [mcp/DIAGNOSTICS.md](mcp/DIAGNOSTICS.md). The detailed local checkpoint is below.
 - No remaining implementation/CI blocker. Next executable acceptance: connect a
   representative disarmed aircraft, list/download a BIN, open it, then attach a
   completed TLOG and exercise graphs and MCP reports. Physical downloads, SITL flight
@@ -735,7 +735,7 @@ Updated: **2026-11-04**.
 - Next: publish this branch, verify platform/CodeQL PR gates, then integrate the
   requested master/port branches. No physical log download, SITL flight or model-backed
   session was tested; representative-aircraft acceptance remains. Claude stays disabled.
-  See [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md) for the complete UI/MCP workflow.
+  See [mcp/DIAGNOSTICS.md](mcp/DIAGNOSTICS.md) for the complete UI/MCP workflow.
 
 ## Published MCP integration — 2026-09-16
 
@@ -789,7 +789,7 @@ Updated: **2026-11-04**.
   integration to `port/avalonia-in-place`, run the normal PR platform/CodeQL gates and
   merge the verified history into master as requested. No new tag/release is requested.
   Physical aircraft writes, SITL and a paid model-backed agent session were not run.
-  Claude remains disabled. See [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md) for usage.
+  Claude remains disabled. See [mcp/DIAGNOSTICS.md](mcp/DIAGNOSTICS.md) for usage.
 
 ## Retained standalone Linux launcher — 2026-09-16
 
@@ -822,7 +822,7 @@ Updated: **2026-11-04**.
   server, Codex launcher, log attachment and parameter proposal review. The 18 tools expose
   connected targets, telemetry, parameter metadata/refresh, mission draft, onboard/local
   DataFlash logs, field statistics, Welch spectra, raw IMU batches and target/actual lag.
-  Operating instructions and limitations: [MCP_DIAGNOSTICS.md](MCP_DIAGNOSTICS.md).
+  Operating instructions and limitations: [mcp/DIAGNOSTICS.md](mcp/DIAGNOSTICS.md).
 - SDK: `ModelContextProtocol.AspNetCore` 2.2.0 with `Microsoft.AspNetCore.App`. No second
   application or source dependency was introduced. Per-session tokens, Host/Origin checks,
   loopback-only binding, bounded requests and revocation are covered by real HTTP tests.
@@ -889,7 +889,7 @@ Updated: **2026-11-04**.
 
 - Assessed embedded MCP hosting and locally launched external agents; findings, concrete
   integration points, source links, proposed workflow and effort estimates are in
-  [MCP_INTEGRATION_ASSESSMENT.md](MCP_INTEGRATION_ASSESSMENT.md). The transport is a small
+  [mcp/INTEGRATION_ASSESSMENT.md](mcp/INTEGRATION_ASSESSMENT.md). The transport is a small
   integration; shared UI/MCP operation ownership and vehicle identity are the main work.
 - Verified official C# SDK v2.2.0's net10/ASP.NET Core graph and current Codex HTTP MCP
   configuration documentation. Local `codex --version` reports `0.154.0`; `exec --help`
@@ -2131,7 +2131,7 @@ Updated: **2026-11-04**.
   `MissionPlannerTests/Avalonia`; their five adapted projects reference the root application and
   native libraries directly. The UDP transport fixture uses an ephemeral listener port instead of
   colliding with a live modem on 14550.
-- Six pinned historical audits are preserved in `Porting/Reference` with a blob manifest. They are
+- Six pinned historical audits are preserved in `docs/migration/Reference` with a blob manifest. They are
   migration evidence, not a copied source tree.
 - A clean Release build of the complete test graph succeeds with zero warnings and zero errors
   after resolving all 156 inherited `ExtLibs` diagnostics without a repository-wide `NoWarn`; the

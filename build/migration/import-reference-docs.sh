@@ -6,7 +6,7 @@ readonly expected_source_commit="8ed19081c972a80a8b6996ed817581bc59cbcb4b"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "$script_dir/../.." && pwd -P)"
 source_port="${1:-$repo_root/../MissionPlanner-Avalonia}"
-source_manifest="$repo_root/Porting/PORT_SOURCE_IMPORT.tsv"
+source_manifest="$repo_root/docs/migration/PORT_SOURCE_IMPORT.tsv"
 
 if [[ "$(git -C "$source_port" rev-parse HEAD)" != "$expected_source_commit" ]]; then
   echo "The Avalonia reference source is not at $expected_source_commit." >&2
@@ -31,7 +31,7 @@ skipped=0
 while IFS=$'\t' read -r source_path target_path action notes; do
   [[ "$source_path" == "source_path" ]] && continue
   [[ "$source_path" == docs/* ]] || continue
-  [[ "$target_path" == Porting/Reference/* ]] || continue
+  [[ "$target_path" == docs/migration/Reference/* ]] || continue
   [[ "$action" == "import" ]] || continue
 
   if [[ "$target_path" == /* || "$target_path" == *".."* ]]; then
@@ -59,5 +59,5 @@ while IFS=$'\t' read -r source_path target_path action notes; do
   printf '%s\t%s\t%s\n' "$source_path" "$target_path" "$source_blob" >> "$record"
 done < "$source_manifest"
 
-mv "$record" "$repo_root/Porting/IMPORTED_REFERENCE.tsv"
+mv "$record" "$repo_root/docs/migration/IMPORTED_REFERENCE.tsv"
 echo "Imported $imported reference documents; $skipped already matched."

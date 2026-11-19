@@ -5,7 +5,7 @@
     <RuntimeIdentifiers>linux-x64;win-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
     <StartupObject>MissionPlanner.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AppConfig>Porting/net10.app.config</AppConfig>
+    <AppConfig>build/net10.app.config</AppConfig>
     <ApplicationIcon Condition="$([MSBuild]::IsOSPlatform('Windows')) Or
                                 '$(RuntimeIdentifier)' == 'win-x64'">Assets/appicon.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
@@ -78,7 +78,7 @@
     <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
   </PropertyGroup>
 
-  <Import Project="Porting/ImportedApplicationItems.props" />
+  <Import Project="build/ImportedApplicationItems.props" />
 
   <ItemGroup>
     <Compile Include="Plugin/LegacyCompatibility/MainV2Compatibility.cs" />
@@ -127,7 +127,7 @@
     <AvaloniaResource Include="Assets/**" />
     <EmbeddedResource Include="docs/mcp/AI_START.md" LogicalName="MissionPlanner.McpDocs.AI_START.md" />
     <EmbeddedResource Include="docs/mcp/UI_API.md" LogicalName="MissionPlanner.McpDocs.UI_API.md" />
-    <EmbeddedResource Include="Porting/MCP_DIAGNOSTICS.md" LogicalName="MissionPlanner.McpDocs.DIAGNOSTICS.md" />
+    <EmbeddedResource Include="docs/mcp/DIAGNOSTICS.md" LogicalName="MissionPlanner.McpDocs.DIAGNOSTICS.md" />
   </ItemGroup>
 
   <ItemGroup>

@@ -32,7 +32,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Validate frozen native surface manifest
-        run: ./build/porting/check-native-surface.sh
+        run: ./build/migration/check-native-surface.sh
 
       - name: Build complete solution graph
         run: dotnet build MissionPlanner.slnx -c Release -m:1 --nologo

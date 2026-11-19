@@ -1,0 +1,7 @@
+source_path	native_path	source_blob
+docs/CODEQL_TRIAGE.md	docs/migration/Reference/CODEQL_TRIAGE.md	333a416ba1ab1b7573c23e2ee9faeeecdb226cd2
+docs/NV_MODEM.md	docs/migration/Reference/NV_MODEM.md	8a29bc6353586cd8080f4fc7a6a46556ec6c1328
+docs/PLUGINS.md	docs/migration/Reference/PLUGINS.md	ecfb6a9ef5bfa844b937ab62d41b4c8277c609b1
+docs/PORT_STATUS.md	docs/migration/Reference/PORT_STATUS.md	ddc34b888fec56810d0a2a66c4b11e4cf1798a78
+docs/TEMP_HANDLER_AUDIT.md	docs/migration/Reference/TEMP_HANDLER_AUDIT.md	a44e255a83d9544c98d4df84bd4b05022cebd1f6
+docs/theme-proposals.html	docs/migration/Reference/theme-proposals.html	f9e2da420a77fe6d64e67e4b2d678b959f41cf93

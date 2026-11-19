@@ -1,6 +1,6 @@
 retired_path	baseline_role	decision	native_evidence	notes
-ExtLibs/AltitudeAngelWings.Plugin	WinForms third-party service plugin	retire	Porting/FEATURE_AUDIT.md	Historical AltitudeAngel API COM-browser integration requires a new authentication and privacy review and is not presented as functional.
-ExtLibs/AltitudeAngelWings	Sole service dependency of AltitudeAngelWings.Plugin	retire	Porting/FEATURE_AUDIT.md	No active project consumes this historical service client after its only UI plugin is retired.
+ExtLibs/AltitudeAngelWings.Plugin	WinForms third-party service plugin	retire	docs/migration/FEATURE_AUDIT.md	Historical AltitudeAngel API COM-browser integration requires a new authentication and privacy review and is not presented as functional.
+ExtLibs/AltitudeAngelWings	Sole service dependency of AltitudeAngelWings.Plugin	retire	docs/migration/FEATURE_AUDIT.md	No active project consumes this historical service client after its only UI plugin is retired.
 ExtLibs/AviFile	WinForms/GDI AVI helper	replace	Services/HudFrameRecorder.cs;Services/OsdVideoOverlay.cs	Portable bounded MJPEG AVI writer covers live HUD capture and OSD telemetry overlay export.
 ExtLibs/BSE.Windows.Forms	WinForms widget library	replace	App.axaml;Views/BackstageView.axaml	Avalonia themes layouts and native backstage controls replace the widget set.
 ExtLibs/BaseClasses	WinForms Mission Planner base controls	replace	Views;ViewModels	Native Avalonia views and activation-aware view models replace the form base classes.
@@ -13,18 +13,18 @@ ExtLibs/GLControl	WinForms OpenTK control	replace	Services/Terrain3D.cs;Views/Te
 ExtLibs/GMap.NET.Drawing	System.Drawing WinForms map renderer	replace	Controls/MapView.cs;Controls/FlightPlannerMap.cs	Mapsui/Avalonia map controls replace the drawing renderer and marker assets.
 ExtLibs/GMap.NET.WindowsForms	WinForms GMap control	replace	Controls/MapView.cs;Controls/FlightPlannerMap.cs	Both operational maps use the shared cross-platform Mapsui implementation.
 ExtLibs/GStreamerHud	WinForms GStreamer HUD plugin	replace	Services/VideoSourceResolver.cs;Services/MavlinkVideoStreams.cs	libVLC accepts direct sources and validated RTP GStreamer pipeline descriptions.
-ExtLibs/ImageVisualizer	Visual Studio WinForms extension	retire	Porting/PROJECT_CLEANUP_AUDIT.md	Developer IDE extension is neither a Mission Planner runtime feature nor a release build input.
-ExtLibs/Installer	WinForms driver installer	replace	build/windows/msi/Package.wxs;Porting/RELEASE.md	WiX 5 creates the current MSI; driver trust and installation remain an explicit OS/vendor responsibility.
-ExtLibs/LEDBulb	WinForms sample control	retire	Porting/PROJECT_CLEANUP_AUDIT.md	Standalone LED bulb sample has no Mission Planner product workflow or active consumer.
+ExtLibs/ImageVisualizer	Visual Studio WinForms extension	retire	docs/migration/PROJECT_CLEANUP_AUDIT.md	Developer IDE extension is neither a Mission Planner runtime feature nor a release build input.
+ExtLibs/Installer	WinForms driver installer	replace	build/windows/msi/Package.wxs;docs/RELEASE.md	WiX 5 creates the current MSI; driver trust and installation remain an explicit OS/vendor responsibility.
+ExtLibs/LEDBulb	WinForms sample control	retire	docs/migration/PROJECT_CLEANUP_AUDIT.md	Standalone LED bulb sample has no Mission Planner product workflow or active consumer.
 ExtLibs/MissionPlanner.Gridv2	WinForms Grid v2 plugin	replace	ViewModels/GridUIViewModel.cs;Views/GridUIView.axaml	Native Flight Planner survey/grid editor retains the mission-generation workflow.
-ExtLibs/MissionPlanner.Stats	Incomplete WinForms statistics plugin	retire	Porting/PROJECT_CLEANUP_AUDIT.md	Its only menu action selected a folder and performed no processing or display; no user workflow existed to port.
+ExtLibs/MissionPlanner.Stats	Incomplete WinForms statistics plugin	retire	docs/migration/PROJECT_CLEANUP_AUDIT.md	Its only menu action selected a folder and performed no processing or display; no user workflow existed to port.
 ExtLibs/OSDConfigurator	WinForms OSD editor	replace	ViewModels/GCSViews/ConfigurationView/ConfigOSDViewModel.cs;Views/OsdTuningSlotsWindow.cs	Native configuration pages cover OSD layout parameter and tuning-slot workflows.
 ExtLibs/ObjectListView	WinForms list widget library	replace	Views;Controls	Avalonia DataGrid ListBox and native tree/list views replace the UI dependency.
-ExtLibs/SimpleExample	WinForms plugin example	retire	Porting/Reference/PLUGINS.md;MissionPlannerTests/Avalonia/MissionPlanner.TestPlugin	Current plugin documentation and built lifecycle fixtures replace the obsolete sample.
+ExtLibs/SimpleExample	WinForms plugin example	retire	docs/migration/Reference/PLUGINS.md;MissionPlannerTests/Avalonia/MissionPlanner.TestPlugin	Current plugin documentation and built lifecycle fixtures replace the obsolete sample.
 ExtLibs/SimpleGrid	WinForms survey grid plugin	replace	ViewModels/SurveyMissionBuilder.cs;Views/GridUIView.axaml	Native survey generation includes the legacy and Grid v2 options.
 ExtLibs/TestPlugin	Unsafe experimental WinForms/MQTT plugin	retire	MissionPlannerTests/Avalonia/MissionPlanner.TestPlugin;MissionPlannerTests/Avalonia/MissionPlanner.Tests/PluginRuntimeTests.cs	Deterministic fixtures test the plugin ABI without starting an unauthenticated MQTT server or accepting all certificates.
 ExtLibs/TrackerHome	WinForms Garmin Tracker Home plugin	replace	Services/TrackerHomeNmeaService.cs;Views/TrackerHomeModuleWindow.axaml	Portable serial TCP UDP GPSD workflow replaces Windows SetupAPI/Garmin-only acquisition.
 ExtLibs/WebCamService	Windows DirectShow capture library	replace	Services/VideoSourceResolver.cs;Controls/VideoControl.cs	Cross-platform libVLC video input replaces DirectShow capture.
 ExtLibs/Xamarin.Forms.Platform.WinForms	WinForms renderer for retired Xamarin stack	replace	MissionPlanner.csproj;App.axaml	The product is a single native Avalonia desktop application and no Xamarin renderer remains.
 ExtLibs/ZedGraph	WinForms chart library	replace	Controls/LivePlot.cs;Controls/WaypointLeaderProfileControl.cs	Native Avalonia/ScottPlot graphs replace ZedGraph consumers.
-ExtLibs/mono	Vendored System.Windows.Forms implementation	retire	MissionPlanner.slnx;Porting/PROJECT_CLEANUP_AUDIT.md	Only retired WinForms projects referenced this submodule; no active project source package or runtime path consumes it.
+ExtLibs/mono	Vendored System.Windows.Forms implementation	retire	MissionPlanner.slnx;docs/migration/PROJECT_CLEANUP_AUDIT.md	Only retired WinForms projects referenced this submodule; no active project source package or runtime path consumes it.

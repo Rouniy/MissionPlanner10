@@ -5,7 +5,7 @@ readonly native_baseline_commit="67a3c4f22bd1b38ac499f9756902e04fa4ed8444"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "$script_dir/../.." && pwd -P)"
-manifest="$repo_root/Porting/NATIVE_SURFACE.tsv"
+manifest="$repo_root/docs/migration/NATIVE_SURFACE.tsv"
 require_closed=false
 
 case "${1:-}" in

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-audit="$repo_root/Porting/BINARY_ARTIFACT_AUDIT.tsv"
+audit="$repo_root/docs/migration/KEY_ARTIFACT_AUDIT.tsv"
 
 fail() {
-  echo "binary artifact audit: $*" >&2
+  echo "key artifact audit: $*" >&2
   exit 1
 }
 
@@ -25,21 +25,19 @@ while IFS=$'\t' read -r path decision evidence note; do
   [[ -n "$note" ]] || fail "missing note for $path"
 
   if [[ "$decision" == "retain" ]]; then
-    [[ -f "$repo_root/$path" ]] || fail "retained binary is missing: $path"
+    [[ -f "$repo_root/$path" ]] || fail "retained key/certificate artifact is missing: $path"
     git -C "$repo_root" ls-files --error-unmatch -- "$path" >/dev/null 2>&1 ||
-      fail "retained binary is not tracked: $path"
+      fail "retained key/certificate artifact is not tracked: $path"
     retained[$path]=1
   else
-    [[ ! -e "$repo_root/$path" ]] || fail "removed binary still exists: $path"
-    [[ -z $(git -C "$repo_root" ls-files -- "$path") ]] || fail "removed binary is still tracked: $path"
+    [[ ! -e "$repo_root/$path" ]] || fail "removed key artifact still exists: $path"
+    [[ -z $(git -C "$repo_root" ls-files -- "$path") ]] || fail "removed key artifact is still tracked: $path"
   fi
 done < <(tail -n +2 "$audit")
 
-((row_count > 0)) || fail "audit is empty"
-
 while IFS= read -r path; do
   [[ -n "$path" ]] || continue
-  [[ -n "${retained[$path]+x}" ]] || fail "unaudited tracked binary: $path"
-done < <(git -C "$repo_root" ls-files | grep -Ei '\.(dll|exe|pdb|so|dylib)$' | sort || true)
+  [[ -n "${retained[$path]+x}" ]] || fail "unaudited tracked key/certificate artifact: $path"
+done < <(git -C "$repo_root" ls-files | grep -Ei '\.(snk|pfx|p12|cer|key|pem|pub)$' | sort || true)
 
-echo "binary artifact audit: PASS ($row_count explicit decisions, ${#retained[@]} retained binaries)"
+echo "key artifact audit: PASS ($row_count explicit decisions, ${#retained[@]} retained artifacts)"

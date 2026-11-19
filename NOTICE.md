@@ -10,16 +10,16 @@ This repository integrates a native cross-platform Avalonia user interface direc
 - Mission Planner is licensed under the **GNU General Public License v3.0** (see `COPYING.txt`).
 - The cross-platform application and the reusable Mission Planner libraries now share this native
   source tree. The in-place migration baseline is commit
-  `67a3c4f22bd1b38ac499f9756902e04fa4ed8444`; the migration provenance is recorded under `Porting/`.
+  `67a3c4f22bd1b38ac499f9756902e04fa4ed8444`; the migration provenance is recorded under `docs/migration/`.
 
 ## What this project changes
 
 - The root `MissionPlanner.csproj` builds the application with **Avalonia (.NET 10)** for macOS,
   Linux and Windows. Replaced WinForms application, plugin and UI-library sources have been removed
-  after their native replacements or deliberate retirement decisions were recorded under `Porting/`.
+  after their native replacements or deliberate retirement decisions were recorded under `docs/migration/`.
 - Flight, protocol, log, parameter and mission backends are reused from the native tree and receive
   cross-platform fixes directly in the same history.
-- See `Porting/STATUS.md` for the live migration state and acceptance gates.
+- See `docs/STATUS.md` for the live migration state and acceptance gates.
 
 ## BLE transport dependencies
 
