@@ -21,9 +21,9 @@
       <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Modem" VerticalAlignment="Center" />
       <ComboBox Grid.Column="1" ItemsSource="{Binding Devices}"
                 SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
-                IsEnabled="{Binding !IsBusy}" MinWidth="320" />
+                IsEnabled="{Binding CanSwitchDevice}" MinWidth="320" />
       <Button Grid.Column="2" Content="Discover" Command="{Binding DiscoverCommand}"
-              IsEnabled="{Binding !IsBusy}" />
+              IsEnabled="{Binding CanSwitchDevice}" />
       <Button Grid.Column="3" Content="Refresh selected"
               Command="{Binding RefreshSelectedCommand}"
               IsEnabled="{Binding HasSelectedDevice}" />
@@ -38,7 +38,8 @@
             <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl"
                        Text="{Binding IdentityText}" TextWrapping="Wrap" />
             <TextBlock Grid.Row="0" Grid.Column="1" Classes="fieldlbl"
-                       Text="{Binding ParameterProgress}" Margin="12,0,0,0" />
+                       Text="{Binding ParameterProgress}" Margin="12,0,0,0"
+                       IsVisible="{Binding !UsesNativeSettings}" />
             <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Status}"
                        TextWrapping="Wrap" Margin="0,6,0,0" />
           </Grid>
@@ -58,7 +59,50 @@
           </DataGrid>
         </Expander>
 
-        <Expander Header="Mission Planner compatible parameters" IsExpanded="True">
+        <Expander x:Name="NativeSettingsGroup" Header="Modem settings" IsExpanded="True"
+                  IsVisible="{Binding UsesNativeSettings}">
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,360" Margin="8">
+            <TextBox Grid.Row="0" Text="{Binding NativeSettings.FilterText, Mode=TwoWay}"
+                     Watermark="Filter settings (native Hz, µs and packet counts; * and ? match)"
+                     Margin="0,0,0,6" />
+            <WrapPanel Grid.Row="1" Margin="0,0,0,2">
+              <Button Content="Read settings" Command="{Binding ReadNativeSettingsCommand}"
+                      IsEnabled="{Binding NativeSettings.CanRead}" Margin="0,0,8,4"
+                      ToolTip.Tip="Read every setting from the modem again." />
+              <Button x:Name="LoadNativeSnapshotButton" Content="Load snapshot…"
+                      IsEnabled="{Binding NativeSettings.CanImport}" Margin="0,0,8,4"
+                      ToolTip.Tip="Stage the values of a settings snapshot as edits. Nothing is sent to the modem." />
+              <Button x:Name="ExportNativeSnapshotButton" Content="Export snapshot…"
+                      IsEnabled="{Binding NativeSettings.CanExport}" Margin="0,0,16,4" />
+              <Button Content="Discard edits" Command="{Binding DiscardNativeSettingsCommand}"
+                      IsEnabled="{Binding NativeSettings.CanSave}" Margin="0,0,8,4" />
+              <Button x:Name="SaveNativeSettingsButton" Content="Save and restart"
+                      Command="{Binding SaveNativeSettingsCommand}"
+                      IsEnabled="{Binding CanSaveNativeSettings}" Margin="0,0,0,4"
+                      ToolTip.Tip="Validate and save the complete configuration; the modem then restarts." />
+            </WrapPanel>
+            <TextBlock Grid.Row="2" Classes="fieldlbl" TextWrapping="Wrap" Margin="0,0,0,6"
+                       Text="This modem's firmware saves one validated configuration at a time. Edits are staged locally until Save and restart." />
+            <TextBlock Grid.Row="3" x:Name="NativeSettingsStatus"
+                       Text="{Binding NativeSettings.StatusText}" TextWrapping="Wrap"
+                       Margin="0,0,0,6" />
+            <DataGrid Grid.Row="4" x:Name="NativeSettingsGrid"
+                      ItemsSource="{Binding NativeSettings.Rows}" AutoGenerateColumns="False"
+                      GridLinesVisibility="All" CanUserResizeColumns="True"
+                      IsEnabled="{Binding !NativeSettings.IsBusy}">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Setting" Binding="{Binding Name}" IsReadOnly="True" Width="190" />
+                <DataGridTextColumn Header="Value" Binding="{Binding ValueText, Mode=TwoWay}" Width="200" />
+                <DataGridTextColumn Header="State" Binding="{Binding EditState}" IsReadOnly="True" Width="80" />
+                <DataGridTextColumn Header="Type / access" Binding="{Binding TypeText}"
+                                    IsReadOnly="True" Width="*" />
+              </DataGrid.Columns>
+            </DataGrid>
+          </Grid>
+        </Expander>
+
+        <Expander Header="Mission Planner compatible parameters" IsExpanded="True"
+                  IsVisible="{Binding !UsesNativeSettings}">
           <Grid RowDefinitions="Auto,310,Auto" Margin="8">
             <WrapPanel Grid.Row="0" Margin="0,0,0,8">
               <Button x:Name="LoadParametersButton" Content="Load .param…"
@@ -131,7 +175,8 @@
           </Grid>
         </Expander>
 
-        <Expander Header="Radio encryption key" IsExpanded="True">
+        <Expander Header="Radio encryption key" IsExpanded="True"
+                  IsVisible="{Binding !UsesNativeSettings}">
           <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" RowDefinitions="Auto,Auto" Margin="8">
             <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Radio" VerticalAlignment="Center" Margin="0,0,6,0" />
             <ComboBox Grid.Column="1" ItemsSource="{Binding KeyRadios}"
@@ -151,7 +196,8 @@
           </Grid>
         </Expander>
 
-        <Expander Header="RTSP stream client" IsExpanded="True">
+        <Expander Header="RTSP stream client" IsExpanded="True"
+                  IsVisible="{Binding !UsesNativeSettings}">
           <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" Margin="8">
             <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Media path" VerticalAlignment="Center" Margin="0,0,6,0" />
             <TextBox Grid.Column="1" Text="{Binding RtspPath, Mode=TwoWay}"
@@ -191,11 +237,12 @@
       <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Values are kept only for this live tab session and are cleared before every device refresh."
                  TextWrapping="Wrap" VerticalAlignment="Center" />
       <Button Grid.Column="1" Content="Discard staged" Command="{Binding CancelChangesCommand}"
-              IsEnabled="{Binding HasPendingChanges}" Margin="8,0,5,0" />
+              IsEnabled="{Binding HasPendingChanges}" IsVisible="{Binding !UsesNativeSettings}"
+              Margin="8,0,5,0" />
       <Button Grid.Column="2" Content="Reboot selected" Command="{Binding RebootCommand}"
               IsEnabled="{Binding CanReboot}" Margin="0,0,5,0" />
       <Button Grid.Column="3" Content="Save to selected modem" Command="{Binding SaveCommand}"
-              IsEnabled="{Binding CanSave}" />
+              IsEnabled="{Binding CanSave}" IsVisible="{Binding !UsesNativeSettings}" />
     </Grid>
   </Grid>
 </UserControl>

@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -171,7 +172,12 @@ internal sealed class NvModemDeviceState {
   internal NvModemDeviceKey Key { get; set; }
   internal NvModemGeneration Generation { get; set; }
   internal uint ProductProfile { get; set; }
+  internal DateTime FirstSeenUtc { get; set; }
   internal DateTime LastSeenUtc { get; set; }
+
+  /// <summary>A PARAM list read waits for the passport, which says whether the modem is
+  /// configured through native transactions instead.</summary>
+  internal bool ParameterRequestDeferred { get; set; }
   internal int ExpectedParameterCount { get; set; }
   internal Dictionary<string, double> Parameters { get; } = new(StringComparer.Ordinal);
   internal Dictionary<string, byte> ParameterTypes { get; } = new(StringComparer.Ordinal);
@@ -233,6 +239,10 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private static readonly TimeSpan ParameterListTimeout = TimeSpan.FromSeconds(3);
   private static readonly TimeSpan ParameterListRetry = TimeSpan.FromSeconds(2);
   private static readonly TimeSpan ExpectedIdentityTransition = TimeSpan.FromSeconds(15);
+
+  // How long a newly seen modem's PARAM read waits for its passport. The page requests the
+  // passport on discovery; firmware that never sends one is read after this.
+  private static readonly TimeSpan PassportWait = TimeSpan.FromSeconds(3);
   private const int MaximumWriteAttempts = 3;
   private const int MaximumParameterListRetries = 6;
   private const ushort SetTransmitEnabledCommand = 42010;
@@ -245,6 +255,13 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       new(StringComparer.Ordinal);
   private readonly Queue<NvWriteOperation> _writeQueue = [];
   private readonly DispatcherTimer? _serviceTimer;
+  private readonly DateTime _clockStart;
+  private readonly Nv5SettingsSnapshots _nativeSnapshots = new();
+
+  // Per modem UID: the passport uptime last seen and the transport epoch, which advances when the
+  // uptime goes back, so a restart ends anything the editor was doing on the old boot.
+  private readonly Dictionary<string, (uint Uptime, ulong Epoch)> _nativeBoots =
+      new(StringComparer.Ordinal);
   private NvWriteOperation? _currentWrite;
   private uint _nextTransactionId = unchecked((uint)Environment.TickCount64);
   private bool _switchGuard;
@@ -257,13 +274,35 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private int _keyWriteChannel;
 
   public NvModemViewModel()
-      : this(new NvModemMavlinkTransport(), () => DateTime.UtcNow, startTimer: true) {
+      : this(new NvModemMavlinkTransport(), () => DateTime.UtcNow, startTimer: true,
+          nativeClock: () => unchecked((uint)Environment.TickCount64)) {
   }
 
   internal NvModemViewModel(
-      INvModemMavlinkTransport transport, Func<DateTime> utcNow, bool startTimer) {
+      INvModemMavlinkTransport transport, Func<DateTime> utcNow, bool startTimer,
+      Func<uint>? nativeClock = null) {
     _transport = transport;
     _utcNow = utcNow;
+    _clockStart = utcNow();
+    // Native transactions time out on a monotonic clock; the injected wall clock serves tests.
+    NativeSettings = new Nv5NativeSettingsEditor(nativeClock ?? NativeNowMs,
+        () => MAVLinkInterface.gcssysid,
+        (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER) {
+      Snapshots = _nativeSnapshots,
+    };
+    NativeSettings.SendFrame += (frame, target) => {
+      if (target.Route is NvModemLink link) {
+        _transport.Send(link, frame.Payload, target.System, target.Component);
+      }
+    };
+    NativeSettings.BusyChanged += _ => RefreshControls();
+    NativeSettings.EditsChanged += RefreshControls;
+    NativeSettings.CommitSent += ArmNativeIdentityTransition;
+    NativeSettings.PropertyChanged += (_, args) => {
+      if (args.PropertyName == nameof(Nv5NativeSettingsEditor.CanSave)) {
+        OnPropertyChanged(nameof(CanSaveNativeSettings));
+      }
+    };
     _transport.PacketReceived += OnPacketReceived;
     _transport.LinksChanged += OnLinksChanged;
     RadioStatuses.Add(new NvRadioStatusRow(1));
@@ -341,11 +380,29 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private string _rtspPath = "";
 
+  /// <summary>Native settings of the selected modem when its firmware advertises configuration
+  /// transactions; such a modem is configured through them instead of PARAM_SET.</summary>
+  public Nv5NativeSettingsEditor NativeSettings { get; }
+
+  public bool UsesNativeSettings => SelectedState is { } device && SupportsNativeSettings(device);
+  public bool CanSwitchDevice => !IsBusy && !NativeSettings.Saving;
+
+  /// <summary>A native save waits for any modem command still awaiting its acknowledgement, just
+  /// as those commands wait for a native save.</summary>
+  public bool CanSaveNativeSettings => !IsBusy && NativeSettings.CanSave;
+
+  partial void OnIsBusyChanged(bool value) {
+    OnPropertyChanged(nameof(CanSaveNativeSettings));
+    OnPropertyChanged(nameof(CanSwitchDevice));
+  }
   public bool HasSelectedDevice => SelectedDevice != null;
   public bool HasParameters => Parameters.Count != 0;
   public bool HasPendingChanges => _parameterRows.Values.Any(row => row.IsChanged)
       || SelectedState is { } device && RtspPending(device);
-  public bool CanEdit => SelectedState is { } device && IsOnline(device) && !IsBusy;
+  // A native save owns the modem until it settles; a reboot, transmitter command or PARAM write in
+  // between could cut the commit short or race its restart.
+  public bool CanEdit => SelectedState is { } device && IsOnline(device) && !IsBusy
+      && !NativeSettings.Saving;
   public bool CanSave => CanEdit && HasPendingChanges;
   public bool CanUseNv5Controls => CanEdit
       && SelectedState?.Generation == NvModemGeneration.Nv5;
@@ -380,7 +437,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     if (_switchGuard || ReferenceEquals(oldValue, newValue)) {
       return;
     }
-    if (IsBusy && oldValue != null) {
+    if ((IsBusy || NativeSettings.Saving) && oldValue != null) {
       _switchGuard = true;
       SelectedDevice = oldValue;
       _switchGuard = false;
@@ -452,9 +509,56 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   }
 
   [RelayCommand]
+  private void ReadNativeSettings() => NativeSettings.RereadDevice();
+
+  [RelayCommand]
+  private async Task SaveNativeSettings() {
+    NvModemDeviceState? device = SelectedState;
+    if (device == null || !CanSaveNativeSettings) {
+      if (IsBusy) {
+        SetStatus("Wait for the pending modem command to finish before saving.", true);
+      }
+      return;
+    }
+    if (!await Dialogs.Confirm("Save and restart NV modem", NativeSaveSummary(device))) {
+      return;
+    }
+    // The dialog gives a modem command time to start; it must not overlap the native save.
+    if (!ReferenceEquals(device, SelectedState) || !CanSaveNativeSettings) {
+      SetStatus(IsBusy
+          ? "A modem command started before confirmation; nothing was saved."
+          : "The selected modem changed before confirmation; nothing was saved.", true);
+      return;
+    }
+    NativeSettings.Save();
+  }
+
+  internal string NativeSaveSummary(NvModemDeviceState device) {
+    IReadOnlyList<(string Name, string Before, string After)> changes =
+        NativeSettings.PendingChangeList();
+    string details = string.Join(Environment.NewLine,
+        changes.Take(20).Select(change => $"{change.Name}: {change.Before} → {change.After}"));
+    if (changes.Count > 20) {
+      details += $"{Environment.NewLine}…and {changes.Count - 20} more";
+    }
+    return $"Save {changes.Count} change(s) to {ModemName(device)} "
+        + $"{device.Key.SystemId}:{device.Key.ComponentId}? The modem validates the complete "
+        + $"configuration, saves it and restarts.{Environment.NewLine}{Environment.NewLine}{details}";
+  }
+
+  [RelayCommand]
+  private void DiscardNativeSettings() => NativeSettings.Discard();
+
+  [RelayCommand]
   private void RefreshSelected() {
     NvModemDeviceState? device = SelectedState;
     if (device == null || IsBusy) {
+      return;
+    }
+    if (SupportsNativeSettings(device)) {
+      // Refresh reads a transaction-capable modem in full, whatever an earlier read left.
+      SendIdentityRequest(device.Key.Link, device.Key.SystemId, device.Key.ComponentId);
+      NativeSettings.RereadDevice();
       return;
     }
     ClearDeviceParameters(device);
@@ -955,6 +1059,11 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     if (_disposed) {
       return;
     }
+    if (packet.msgid is NvModemMessageIds.Nv5ConfigResult or NvModemMessageIds.Nv5ConfigValue) {
+      // The editor accepts only replies from its target on its route and transport epoch.
+      NativeSettings.Receive(packet, source);
+      return;
+    }
 
     var key = new NvModemDeviceKey(source, packet.sysid, packet.compid);
     uint msgid = packet.msgid;
@@ -1015,7 +1124,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     bool inserted;
     if (device == null) {
       inserted = true;
-      device = new NvModemDeviceState(key);
+      device = new NvModemDeviceState(key) { FirstSeenUtc = _utcNow() };
       _devices.Add(key, device);
       device.Choice = new NvModemDeviceChoice(device);
       Devices.Add(device.Choice);
@@ -1026,6 +1135,17 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       device.Generation = NvModemGeneration.Nv4;
     } else if (nv5Identity) {
       device.Generation = NvModemGeneration.Nv5;
+    }
+    if (supportedModemInfo) {
+      // Known before selection, so a transaction-capable modem is never sent PARAM requests.
+      device.ModemInfo = modemInfo;
+      device.ModemInfoReady = true;
+      ObserveNativeBoot(modemInfo);
+      if (device.ParameterRequestDeferred) {
+        // The capability is known now: the deferred read goes out, unless it is native.
+        device.ParameterRequestDeferred = false;
+        SendParameterRequestList(device);
+      }
     }
 
     device.LastSeenUtc = _utcNow();
@@ -1086,6 +1206,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     }
 
     if (ReferenceEquals(device, SelectedState)) {
+      if (supportedModemInfo) {
+        ObserveNativeTarget(device);
+      }
       UpdateSelectedState();
     }
     RebuildCopySources();
@@ -1097,29 +1220,47 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       return true;
     }
 
+    // A UID that returns on another connection after its own one closed (a re-plugged USB modem,
+    // a reopened network link) is the same modem: its record moves with it, so a native save in
+    // recovery follows it to the new route. Two open links to one modem stay separate records.
+    var openLinks = new HashSet<NvModemLink>(_transport.Snapshot());
     NvModemDeviceState[] matches = [.. _devices.Values.Where(device =>
         device.ModemInfoReady
         && !Equals(device.Key, announcedKey)
-        && Equals(device.Key.Link, announcedKey.Link)
+        && (Equals(device.Key.Link, announcedKey.Link) || !openLinks.Contains(device.Key.Link))
         && SameModemIdentity(device.ModemInfo, identity))];
     if (matches.Length == 0) {
       return true;
     }
-    if (matches.Length != 1) {
+    // A record whose connection has closed is an earlier route to this modem, never a second
+    // live endpoint, however recently it was heard: only a record on the announcing link can
+    // conflict with the new address.
+    NvModemDeviceState[] sameLink =
+        [.. matches.Where(device => Equals(device.Key.Link, announcedKey.Link))];
+    if (sameLink.Length > 1) {
       RetireIdentityCandidate(announcedKey);
       SetStatus("Multiple modem records reported the same UID2; identity migration is blocked.",
           true);
       return false;
     }
-
-    NvModemDeviceState previous = matches[0];
-    bool expectedTransition = ExpectedIdentityTransitionMatches(previous, announcedKey);
-    if (!expectedTransition && IsOnline(previous)) {
+    if (sameLink.Length == 1 && IsOnline(sameLink[0])
+        && !ExpectedIdentityTransitionMatches(sameLink[0], announcedKey)) {
       RetireIdentityCandidate(announcedKey);
       SetStatus("Two live modem endpoints reported the same UID2; identity migration is blocked.",
           true);
       return false;
     }
+
+    // One record moves to the new address: the one a native save is bound to, else the selected
+    // one, so the page keeps following the modem; else the one on this link, else the latest
+    // heard. The others are earlier routes to the same modem and are retired.
+    NvModemDeviceState previous = matches.FirstOrDefault(IsNativeSaveRecord)
+        ?? matches.FirstOrDefault(device => ReferenceEquals(device, SelectedState))
+        ?? sameLink.FirstOrDefault()
+        ?? matches.MaxBy(device => device.LastSeenUtc)!;
+    NvModemDeviceState[] superseded =
+        [.. matches.Where(device => !ReferenceEquals(device, previous))];
+    bool expectedTransition = ExpectedIdentityTransitionMatches(previous, announcedKey);
     if (IsBusy || _currentWrite != null || _writeQueue.Count != 0) {
       _retiredDeviceKeys.Add(announcedKey);
       SetStatus("The modem identity changed during a configuration transaction; migration is "
@@ -1134,9 +1275,26 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       return false;
     }
 
+    foreach (NvModemDeviceState stale in superseded) {
+      // An earlier route to the modem that now answers here: packets still arriving from it are
+      // ignored, as for any record whose identity moved.
+      _devices.Remove(stale.Key);
+      _retiredDeviceKeys.Add(stale.Key);
+      if (stale.Choice != null) {
+        Devices.Remove(stale.Choice);
+      }
+    }
     MigrateDeviceIdentity(previous, target, announcedKey, identity, expectedTransition);
     return true;
   }
+
+  /// <summary>The record a native save in progress was sent to: its verified UID on its original
+  /// route and address.</summary>
+  private bool IsNativeSaveRecord(NvModemDeviceState device) =>
+      NativeSettings.Saving && NativeSettings.Target is { } target
+      && target.Uid.AsSpan().SequenceEqual(device.ModemInfo.Uid2 ?? [])
+      && Equals(target.Route, device.Key.Link)
+      && target.System == device.Key.SystemId && target.Component == device.Key.ComponentId;
 
   private void MigrateDeviceIdentity(
       NvModemDeviceState previous,
@@ -1237,6 +1395,38 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     device.IdentityTransitionExpiresUtc = Later(_utcNow(), device.RebootReadyUtc)
         + ExpectedIdentityTransition;
   }
+
+  /// <summary>
+  /// A native save that changes MAV_SYS_ID or LOCAL_IP_4 restarts the modem under a new MAVLink
+  /// address: the firmware takes its system ID from the one and its component ID from the other.
+  /// That address is expected exactly as after a PARAM save, so a modem that returns within the
+  /// online window still moves its record.
+  /// </summary>
+  private void ArmNativeIdentityTransition(
+      IReadOnlyDictionary<string, Nv5ConfigurationClient.Value> candidate) {
+    NvModemDeviceState? device = _devices.Values.FirstOrDefault(IsNativeSaveRecord);
+    if (device == null) {
+      return;
+    }
+    byte system = NativeAddressByte(candidate, "MAV_SYS_ID", device.Key.SystemId);
+    byte component = NativeAddressByte(candidate, "LOCAL_IP_4", device.Key.ComponentId);
+    if (system == device.Key.SystemId && component == device.Key.ComponentId) {
+      return;
+    }
+    device.ExpectedSystemId = system;
+    device.ExpectedComponentId = component;
+    device.IdentityTransitionExpected = true;
+    device.IdentityTransitionExpiresUtc = _utcNow() + ExpectedIdentityTransition;
+  }
+
+  private static byte NativeAddressByte(
+      IReadOnlyDictionary<string, Nv5ConfigurationClient.Value> values, string name,
+      byte fallback) =>
+      values.TryGetValue(name, out Nv5ConfigurationClient.Value? value)
+          && value.Type == Nv5ConfigValueTypes.UInt32 && value.Bytes.Length == 4
+          && BinaryPrimitives.ReadUInt32LittleEndian(value.Bytes) is var number
+          && number <= byte.MaxValue
+          ? (byte)number : fallback;
 
   private static byte ParameterByte(
       NvModemDeviceState device, string name, byte fallback) {
@@ -1506,6 +1696,12 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     }
     if (SupportsRtsp(device)) {
       SendRtspRequest(device);
+    }
+    if (SupportsNativeSettings(device)) {
+      ObserveNativeTarget(device);
+    } else {
+      // A modem configured through PARAM_SET needs no native session; free one held elsewhere.
+      NativeSettings.StopReading();
     }
 
     UpdateSelectedState();
@@ -2047,8 +2243,16 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
   internal void ServiceTransactions() {
     DateTime now = _utcNow();
+    NativeSettings.Service();
     foreach (NvModemDeviceState device in _devices.Values) {
       UpdateDeviceLabel(device);
+      if (SupportsNativeSettings(device)) {
+        // Its settings are read through configuration transactions, never as a PARAM list.
+        device.ParameterListInProgress = false;
+      } else if (device.ParameterRequestDeferred && now - device.FirstSeenUtc >= PassportWait) {
+        // No passport arrived: older firmware, read as before.
+        SendParameterRequestList(device);
+      }
       if (!device.ParameterListInProgress) {
         continue;
       }
@@ -2092,6 +2296,16 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   }
 
   private void SendParameterRequestList(NvModemDeviceState device, bool retry = false) {
+    if (SupportsNativeSettings(device)) {
+      device.ParameterListInProgress = false;
+      device.ParameterRequestDeferred = false;
+      return;
+    }
+    if (!device.ModemInfoReady && _utcNow() - device.FirstSeenUtc < PassportWait) {
+      device.ParameterRequestDeferred = true;
+      return;
+    }
+    device.ParameterRequestDeferred = false;
     if (!retry) {
       device.ParameterRefreshPending = true;
     }
@@ -2147,9 +2361,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
         && (name.StartsWith("TX_", StringComparison.Ordinal)
             || name.StartsWith("RX_", StringComparison.Ordinal));
 
-    // The original GTU NVStat panel predates NV5Settings. Old NV4 RFM firmware
-    // publishes NV_TX/NV_RX node names and does not reliably fill the version
-    // majors, so NVStat identifies it from the first five characters only.
+    // Old NV4 RFM firmware predates the passport. It publishes NV_TX/NV_RX node
+    // names and does not reliably fill the version majors, so the legacy status
+    // check identifies it from the first five characters only.
     bool legacyRfmSignature = name.StartsWith("NV_TX", StringComparison.OrdinalIgnoreCase)
         || name.StartsWith("NV_RX", StringComparison.OrdinalIgnoreCase);
     return currentSettingsSignature || legacyRfmSignature;
@@ -2387,7 +2601,39 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       && (device.RtspPathReady ? RtspPath != device.RtspPath : _rtspEdited);
 
   private bool HasPendingChangesFor(NvModemDeviceState device) =>
-      _parameterRows.Values.Any(row => row.IsChanged) || RtspPending(device);
+      _parameterRows.Values.Any(row => row.IsChanged) || RtspPending(device)
+      || (SupportsNativeSettings(device) && NativeSettings.HasPendingChanges());
+
+  private static bool SupportsNativeSettings(NvModemDeviceState device) =>
+      device.ModemInfoReady
+      && (device.ModemInfo.Capabilities & NvModemCapabilities.ConfigurationTransactions) != 0;
+
+  private uint NativeNowMs() => unchecked((uint)(long)(_utcNow() - _clockStart).TotalMilliseconds);
+
+  private void ObserveNativeBoot(NvModemInfoMessage info) {
+    if ((info.Capabilities & NvModemCapabilities.ConfigurationTransactions) == 0
+        || !HasStableModemIdentity(info)) {
+      return;
+    }
+    string uid = Convert.ToHexString(info.Uid2);
+    _nativeBoots.TryGetValue(uid, out (uint Uptime, ulong Epoch) boot);
+    ulong epoch = boot.Epoch == 0 ? 1 : boot.Epoch;
+    if (boot.Epoch != 0 && unchecked((int)(info.TimeBootMs - boot.Uptime)) < -100) {
+      epoch++;
+    }
+    _nativeBoots[uid] = (info.TimeBootMs, epoch);
+  }
+
+  private void ObserveNativeTarget(NvModemDeviceState device) {
+    if (!SupportsNativeSettings(device)) {
+      return;
+    }
+    byte[] uid = (byte[])(device.ModemInfo.Uid2 ?? []).Clone();
+    _nativeBoots.TryGetValue(Convert.ToHexString(uid), out (uint Uptime, ulong Epoch) boot);
+    NativeSettings.ObserveTarget(new Nv5ConfigurationClient.Target(uid, device.Key.Link,
+        boot.Epoch, device.ModemInfo.Capabilities, device.Key.SystemId, device.Key.ComponentId,
+        HasStableModemIdentity(device.ModemInfo)), device.ModemInfo.TimeBootMs);
+  }
 
   private async Task DiscoverAfterRebootAsync() {
     await Task.Delay(1500);
@@ -2407,6 +2653,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   }
 
   private void RefreshControls() {
+    OnPropertyChanged(nameof(UsesNativeSettings));
+    OnPropertyChanged(nameof(CanSwitchDevice));
+    OnPropertyChanged(nameof(CanSaveNativeSettings));
     OnPropertyChanged(nameof(HasSelectedDevice));
     OnPropertyChanged(nameof(HasParameters));
     OnPropertyChanged(nameof(HasPendingChanges));
@@ -2453,6 +2702,8 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       return;
     }
 
+    // Frees a modem's single read session at once instead of after its lease.
+    NativeSettings.StopReading();
     _disposed = true;
     _serviceTimer?.Stop();
     _transport.PacketReceived -= OnPacketReceived;

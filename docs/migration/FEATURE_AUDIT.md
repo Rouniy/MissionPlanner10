@@ -76,8 +76,8 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   MAVLink `SERIAL_CONTROL`; the tunnel is target-bound, allowed only for one selected disarmed
   autopilot, has bounded synchronous reads and releases the exclusive UART on close, target change
   or physical link loss. Raw UART remains available when MAVLink is disconnected.
-- Setup contains an **NV Modem** child page immediately below SiK Radio. It ports the dirty
-  `NV5Settings` source from AgroSky GTU, including NV4/NV5 discovery, generation-specific parameter
+- Setup contains an **NV Modem** child page immediately below SiK Radio. It ports the modem
+  vendor's reference settings page, including NV4/NV5 discovery, generation-specific parameter
   descriptions, typed MAVLink parameter encoding, live dual-radio status, radio/RTSP presets,
   cross-device channel copying, printable key generation and protected-key handling, RTSP path
   get/set, transmitter diagnostics, reboot, bounded retries and Mission Planner-compatible `.param`
