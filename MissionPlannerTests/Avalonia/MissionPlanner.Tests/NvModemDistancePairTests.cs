@@ -789,6 +789,56 @@ public class NvModemDistancePairTests {
     Assert.True(pair.TryClose());
   }
 
+  [Fact]
+  public void A_modem_keeps_its_route_while_open_and_moves_once_that_route_closes() {
+    var bench = new PairBench();
+    foreach (Nv5FakeModem each in bench.Modems) {
+      each.CommitModel = true;
+    }
+    NvModemDistancePairViewModel pair = bench.Open();
+    bench.OfferAll();
+    Nv5FakeModem modem = bench.Modems[1];
+    Target usb = modem.Peer;
+    Target lan = usb with { Route = "peer-1-lan" };
+
+    // The same modem is heard on a second route that is open as well: the window keeps the one
+    // it uses, without reading the modem again or relabelling it.
+    int reads = modem.ReadBegins;
+    pair.Offer(lan, 0, "192.168.1.11");
+    pair.Observe(lan, 0);
+    Assert.Same(usb.Route, pair.Modem2Editor.Target!.Route);
+    Assert.Equal("10:11 · 192.168.0.11", pair.SelectedPeer!.Label);
+    Assert.False(bench.Pump(() => modem.ReadBegins != reads || !pair.Modem2Editor.Ready,
+        steps: 200));
+
+    // Nor is a save on its route cut short, before its commit or while it is recovered.
+    pair.RangingEnabled = true;
+    pair.Apply();
+    pair.Observe(lan, 0);
+    Assert.True(bench.Pump(() => pair.Editors.All(editor => editor.AwaitingReconnect
+        && editor.StatusText.Contains("Waiting for restart", StringComparison.Ordinal))),
+        pair.Status);
+    pair.Observe(lan, 0);
+    foreach (Nv5FakeModem each in bench.Modems) {
+      each.Reboot();
+      pair.Observe(each.Peer with { TransportEpoch = each.Peer.TransportEpoch + 1 }, 30);
+    }
+    pair.Observe(lan, 30);
+    Assert.True(bench.Pump(() => !pair.Active), pair.Status);
+    Assert.StartsWith("Both modems saved, restarted and verified", pair.Status,
+        StringComparison.Ordinal);
+    Assert.True(bench.Pump(() => pair.CanApply), pair.SwitchHint);
+
+    // Once its route closes, a passport on the other one moves it there.
+    bench.Closed.Add(usb.Route);
+    modem.Peer = lan;
+    pair.Offer(lan, 40, "192.168.1.11");
+    pair.Observe(lan, 40);
+    Assert.Same(lan.Route, pair.Modem2Editor.Target!.Route);
+    Assert.Equal("10:11 · 192.168.1.11", pair.SelectedPeer!.Label);
+    Assert.True(bench.Pump(() => pair.Modem2Editor.Ready && pair.CanApply), pair.Status);
+  }
+
   /// <summary>
   /// With MP_NV5_CONFIG_FIXTURE set to the NV5 firmware's host nv5-configuration-fixture, two
   /// instances of the firmware's configuration core make the pair: the window turns the second
@@ -968,10 +1018,14 @@ public class NvModemDistancePairTests {
     internal List<Action> Held { get; } = [];
     internal int Begins => Modems[0].Begins + Modems[1].Begins;
 
+    /// <summary>Routes that have closed; every other route is open.</summary>
+    internal HashSet<object> Closed { get; } = [];
+
     internal NvModemDistancePairViewModel Create() {
       var store = new Nv5SettingsSnapshots();
       Pair = new NvModemDistancePairViewModel(Modems[0].Peer, Modems[1].Peer,
-          () => new Nv5NativeSettingsEditor(() => _now, () => 255, 190) { Snapshots = store });
+          () => new Nv5NativeSettingsEditor(() => _now, () => 255, 190) { Snapshots = store },
+          route => !Closed.Contains(route));
       Pair.SendFrame += (frame, target) => _frames.Enqueue((frame, target));
       Pair.Open();
       return Pair;

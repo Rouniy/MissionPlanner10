@@ -588,7 +588,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     int likely = NvModemDistancePairViewModel.LikelyPeer(PairLinks(selected),
         candidates.Select(candidate => PairLinks(candidate.Device)).ToList());
     var pair = new NvModemDistancePairViewModel(first, candidates[likely].Target,
-        CreateNativeEditor);
+        CreateNativeEditor, IsOpenRoute);
     pair.SendFrame += SendNativeFrame;
     pair.CommitSent += ArmNativeIdentityTransition;
     foreach ((NvModemDeviceState device, Nv5ConfigurationClient.Target target) in candidates) {
@@ -2745,6 +2745,11 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     }
     _distancePair.Observe(target, device.ModemInfo.TimeBootMs);
   }
+
+  /// <summary>Whether a modem's route is a link that is still open. A modem keeps a route while
+  /// it is, as a device record does.</summary>
+  private bool IsOpenRoute(object route) =>
+      route is NvModemLink link && _transport.Snapshot().Contains(link);
 
   private Nv5ConfigurationClient.Target NativeTargetOf(NvModemDeviceState device) {
     byte[] uid = (byte[])(device.ModemInfo.Uid2 ?? []).Clone();

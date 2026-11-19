@@ -143,6 +143,37 @@ public partial class NvModemTests {
     Assert.True(bench.ViewModel.NativeSettings.RestartedRecently);
   }
 
+  [Fact]
+  public void A_modem_heard_on_a_second_open_link_keeps_the_link_the_window_uses() {
+    using var bench = new DistancePageBench();
+    bench.Passport(bench.A, NativePassport(uidSeed: 0x40));
+    bench.Passport(bench.B, NativePassport(uidSeed: 0x60));
+    Assert.True(bench.Pump(() => bench.ViewModel.NativeSettings.Ready));
+    NvModemDistancePairViewModel? opened = bench.ViewModel.OpenDistancePair();
+    Assert.True(opened != null, bench.ViewModel.Status);
+    NvModemDistancePairViewModel pair = opened!;
+    Assert.True(bench.Pump(() => pair.Modem1Editor.Ready && pair.Modem2Editor.Ready
+        && pair.CanApply), pair.Status);
+
+    // Modem 1 is heard on the LAN link too, while its USB link stays open: the window goes on
+    // using USB and neither reads it again nor relabels it.
+    int reads = bench.A.ReadBegins;
+    bench.ViewModel.HandlePacket(bench.LinkB, Packet(NvModemMessageIds.NvModemInfo,
+        NativePassport(uidSeed: 0x40), bench.A.Peer.System, bench.A.Peer.Component));
+    Assert.Same(bench.LinkA, pair.Modem1Editor.Target!.Route);
+    Assert.Equal("10:11 · modem USB", pair.FixedName);
+    Assert.False(bench.Pump(() => bench.A.ReadBegins != reads || !pair.Modem1Editor.Ready,
+        steps: 100));
+
+    // Once USB closes, the modem's passport on LAN moves it there.
+    bench.Transport.Links.Remove(bench.LinkA);
+    bench.A.Peer = bench.A.Peer with { Route = bench.LinkB };
+    bench.Passport(bench.A, NativePassport(uidSeed: 0x40));
+    Assert.Same(bench.LinkB, pair.Modem1Editor.Target!.Route);
+    Assert.Equal("10:11 · modem LAN", pair.FixedName);
+    Assert.True(bench.Pump(() => pair.Modem1Editor.Ready && pair.CanApply), pair.Status);
+  }
+
   [AvaloniaTheory]
   [InlineData(860)]
   [InlineData(1120)]

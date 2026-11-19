@@ -117,6 +117,7 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   private readonly Dictionary<string, Peer> _peers = new(StringComparer.Ordinal);
   private readonly Target[] _opening;
   private readonly string _fixedUid;
+  private readonly Func<object, bool> _routeOpen;
   private readonly uint[] _hash = new uint[2];
   private readonly bool[] _prepared = new bool[2];
   private readonly bool[] _complete = new bool[2];
@@ -143,8 +144,11 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   /// <param name="first">The modem selected on the settings page: Modem 1.</param>
   /// <param name="second">The modem the window opens on as Modem 2.</param>
   /// <param name="createEditor">Makes an editor that shares the page's snapshot store.</param>
+  /// <param name="routeOpen">Whether a modem's route is still open; without it every route
+  /// is.</param>
   internal NvModemDistancePairViewModel(Target first, Target second,
-      Func<Nv5NativeSettingsEditor> createEditor) {
+      Func<Nv5NativeSettingsEditor> createEditor, Func<object, bool>? routeOpen = null) {
+    _routeOpen = routeOpen ?? (_ => true);
     _opening = [first, second];
     for (int i = 0; i < 2; i++) {
       _names[i] = TabName(i, _opening[i]);
@@ -347,7 +351,12 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
     string text = ModemText(target, label);
     string uid = UidKey(target.Uid);
     if (uid == _fixedUid) {
-      FixedName = text;
+      if (Follows(_editors[0].Target ?? _opening[0], target)) {
+        FixedName = text;
+      }
+      return;
+    }
+    if (_peers.TryGetValue(uid, out Peer? known) && !Follows(known.Target, target)) {
       return;
     }
     _peers[uid] = new Peer(target, uptime, label);
@@ -376,15 +385,24 @@ public sealed partial class NvModemDistancePairViewModel : ObservableObject {
   /// from.</summary>
   internal void Observe(Target target, uint uptime) {
     string uid = UidKey(target.Uid);
-    if (_peers.TryGetValue(uid, out Peer? known)) {
+    if (_peers.TryGetValue(uid, out Peer? known) && Follows(known.Target, target)) {
       _peers[uid] = known with { Target = target, Uptime = uptime };
     }
     foreach (Nv5NativeSettingsEditor editor in _editors) {
-      if (editor.Target is { } current && UidKey(current.Uid) == uid) {
+      if (editor.Target is { } current && UidKey(current.Uid) == uid && Follows(current, target)) {
         editor.ObserveTarget(target, uptime);
       }
     }
   }
+
+  /// <summary>
+  /// Whether a passport on <paramref name="next"/>'s route reaches a modem held on
+  /// <paramref name="current"/>'s: always on the same route, and from another one only once the
+  /// held route has closed. A second open link to the same modem would otherwise take it over,
+  /// restarting its read or failing its save.
+  /// </summary>
+  private bool Follows(Target current, Target next) =>
+      Equals(current.Route, next.Route) || !_routeOpen(current.Route);
 
   /// <summary>Closes unless a save is under way; drops what was staged and frees both
   /// modems' read sessions.</summary>
