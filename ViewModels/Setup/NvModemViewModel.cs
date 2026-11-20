@@ -257,6 +257,11 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private readonly DispatcherTimer? _serviceTimer;
   private readonly DateTime _clockStart;
   private readonly Nv5SettingsSnapshots _nativeSnapshots = new();
+  private readonly Func<uint> _nativeClock;
+
+  // The distance pair window, while it is open. It holds its own editors of the two modems; the
+  // page's editor leaves them to it until the window closes.
+  private NvModemDistancePairViewModel? _distancePair;
 
   // Per modem UID: the passport uptime last seen and the transport epoch, which advances when the
   // uptime goes back, so a restart ends anything the editor was doing on the old boot.
@@ -285,19 +290,12 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     _utcNow = utcNow;
     _clockStart = utcNow();
     // Native transactions time out on a monotonic clock; the injected wall clock serves tests.
-    NativeSettings = new Nv5NativeSettingsEditor(nativeClock ?? NativeNowMs,
-        () => MAVLinkInterface.gcssysid,
-        (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER) {
-      Snapshots = _nativeSnapshots,
-    };
-    NativeSettings.SendFrame += (frame, target) => {
-      if (target.Route is NvModemLink link) {
-        _transport.Send(link, frame.Payload, target.System, target.Component);
-      }
-    };
+    _nativeClock = nativeClock ?? NativeNowMs;
+    NativeSettings = CreateNativeEditor();
+    NativeSettings.SendFrame += SendNativeFrame;
     NativeSettings.BusyChanged += _ => RefreshControls();
     NativeSettings.EditsChanged += RefreshControls;
-    NativeSettings.CommitSent += ArmNativeIdentityTransition;
+    NativeSettings.CommitSent += values => ArmNativeIdentityTransition(NativeSettings, values);
     NativeSettings.PropertyChanged += (_, args) => {
       if (args.PropertyName == nameof(Nv5NativeSettingsEditor.CanSave)) {
         OnPropertyChanged(nameof(CanSaveNativeSettings));
@@ -385,15 +383,27 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   public Nv5NativeSettingsEditor NativeSettings { get; }
 
   public bool UsesNativeSettings => SelectedState is { } device && SupportsNativeSettings(device);
-  public bool CanSwitchDevice => !IsBusy && !NativeSettings.Saving;
+  public bool CanSwitchDevice => !IsBusy && !NativeSettings.Saving && _distancePair == null;
 
   /// <summary>A native save waits for any modem command still awaiting its acknowledgement, just
   /// as those commands wait for a native save.</summary>
-  public bool CanSaveNativeSettings => !IsBusy && NativeSettings.CanSave;
+  public bool CanSaveNativeSettings => !IsBusy && NativeSettings.CanSave && _distancePair == null;
+
+  /// <summary>Pair setup starts from a read modem without unsaved edits, as the pair window
+  /// saves what its own tables hold.</summary>
+  public bool CanConfigureDistancePair => UsesNativeSettings && DistancePairBlocked().Length == 0;
+
+  /// <summary>What the pair window does, or why it cannot open now: a greyed control that does not
+  /// say why reads as a fault.</summary>
+  public string DistancePairHint => !UsesNativeSettings ? ""
+      : DistancePairBlocked() is { Length: > 0 } blocked ? blocked
+      : "Switches ranging on or off for both ends of a link, and sets its schedule.";
 
   partial void OnIsBusyChanged(bool value) {
     OnPropertyChanged(nameof(CanSaveNativeSettings));
     OnPropertyChanged(nameof(CanSwitchDevice));
+    OnPropertyChanged(nameof(CanConfigureDistancePair));
+    OnPropertyChanged(nameof(DistancePairHint));
   }
   public bool HasSelectedDevice => SelectedDevice != null;
   public bool HasParameters => Parameters.Count != 0;
@@ -402,7 +412,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   // A native save owns the modem until it settles; a reboot, transmitter command or PARAM write in
   // between could cut the commit short or race its restart.
   public bool CanEdit => SelectedState is { } device && IsOnline(device) && !IsBusy
-      && !NativeSettings.Saving;
+      && !NativeSettings.Saving && _distancePair == null;
   public bool CanSave => CanEdit && HasPendingChanges;
   public bool CanUseNv5Controls => CanEdit
       && SelectedState?.Generation == NvModemGeneration.Nv5;
@@ -548,6 +558,75 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void DiscardNativeSettings() => NativeSettings.Discard();
+
+  /// <summary>Pair ranging only: the LPS_RNG_ settings belong to the LPS field.</summary>
+  [RelayCommand]
+  private void ShowDistanceSettings() => NativeSettings.FilterText = "CH?_RNG_*";
+
+  /// <summary>
+  /// Opens pair setup with the selected modem as Modem 1. Every other verified,
+  /// transaction-capable modem that is online is a candidate for Modem 2; the window opens on the
+  /// one whose live radio roles and carrier look like the other end of a link.
+  /// </summary>
+  internal NvModemDistancePairViewModel? OpenDistancePair() {
+    NvModemDeviceState? selected = SelectedState;
+    if (selected == null || !CanConfigureDistancePair || NativeSettings.Target is not { } first) {
+      return null;
+    }
+    var candidates = new List<(NvModemDeviceState Device, Nv5ConfigurationClient.Target Target)>();
+    foreach (NvModemDeviceState device in _devices.Values) {
+      if (!SupportsNativeSettings(device) || !HasStableModemIdentity(device.ModemInfo)
+          || !IsOnline(device) || first.Uid.AsSpan().SequenceEqual(device.ModemInfo.Uid2 ?? [])) {
+        continue;
+      }
+      candidates.Add((device, NativeTargetOf(device)));
+    }
+    if (candidates.Count == 0) {
+      SetStatus("Discover a second verified modem with transaction support.", true);
+      return null;
+    }
+    int likely = NvModemDistancePairViewModel.LikelyPeer(PairLinks(selected),
+        candidates.Select(candidate => PairLinks(candidate.Device)).ToList());
+    var pair = new NvModemDistancePairViewModel(first, candidates[likely].Target,
+        CreateNativeEditor, IsOpenRoute);
+    pair.SendFrame += SendNativeFrame;
+    pair.CommitSent += ArmNativeIdentityTransition;
+    foreach ((NvModemDeviceState device, Nv5ConfigurationClient.Target target) in candidates) {
+      pair.Offer(target, device.ModemInfo.TimeBootMs, device.Key.Link.Name);
+    }
+    pair.Offer(first, selected.ModemInfo.TimeBootMs, selected.Key.Link.Name);
+    _distancePair = pair;
+    pair.Open();
+    RefreshControls();
+    return pair;
+  }
+
+  /// <summary>The pair window closed: the page's editor follows the selected modem again.</summary>
+  internal void CloseDistancePair() {
+    if (_distancePair == null) {
+      return;
+    }
+    _distancePair = null;
+    if (SelectedState is { } device && SupportsNativeSettings(device)) {
+      ObserveNativeTarget(device);
+    }
+    RefreshControls();
+  }
+
+  internal NvModemDistancePairViewModel? DistancePair => _distancePair;
+
+  private string DistancePairBlocked() =>
+      _distancePair != null ? "The pair window is open."
+      : IsBusy ? "Wait for the pending modem command to finish."
+      : NativeSettings.Busy ? "Available once this modem has been read."
+      : !NativeSettings.Ready ? "This modem's settings are not read: press Read settings."
+      : NativeSettings.HasPendingChanges()
+          ? "This modem has unsaved edits: save them, or drop them with Read settings, first."
+      : "";
+
+  private static IReadOnlyDictionary<int, NvPairLink> PairLinks(NvModemDeviceState device) =>
+      device.Links.ToDictionary(pair => pair.Key, pair => new NvPairLink(pair.Value.Role,
+          pair.Value.FrequencyHz, pair.Value.BandwidthHz, pair.Value.Modulation));
 
   [RelayCommand]
   private void RefreshSelected() {
@@ -1060,9 +1139,15 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       return;
     }
     if (packet.msgid is NvModemMessageIds.Nv5ConfigResult or NvModemMessageIds.Nv5ConfigValue) {
-      // The editor accepts only replies from its target on its route and transport epoch.
+      // An editor accepts only replies from its target on its route and transport epoch.
       NativeSettings.Receive(packet, source);
+      _distancePair?.Receive(packet, source);
       return;
+    }
+    if (packet.msgid == NvModemMessageIds.Nv5Distance) {
+      // The measuring modem's readout; the packet still counts as the modem being heard.
+      NativeSettings.Receive(packet, source);
+      _distancePair?.Receive(packet, source);
     }
 
     var key = new NvModemDeviceKey(source, packet.sysid, packet.compid);
@@ -1211,6 +1296,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       }
       UpdateSelectedState();
     }
+    if (supportedModemInfo && _distancePair != null) {
+      ObservePairTarget(device);
+    }
     RebuildCopySources();
   }
 
@@ -1291,10 +1379,19 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   /// <summary>The record a native save in progress was sent to: its verified UID on its original
   /// route and address.</summary>
   private bool IsNativeSaveRecord(NvModemDeviceState device) =>
-      NativeSettings.Saving && NativeSettings.Target is { } target
+      NativeEditors().Any(editor => IsSaveRecordOf(editor, device));
+
+  /// <summary>The record a save of this editor is bound to: the same UID at the address and on
+  /// the link the save began on.</summary>
+  private static bool IsSaveRecordOf(Nv5NativeSettingsEditor editor, NvModemDeviceState device) =>
+      editor.Saving && editor.Target is { } target
       && target.Uid.AsSpan().SequenceEqual(device.ModemInfo.Uid2 ?? [])
       && Equals(target.Route, device.Key.Link)
       && target.System == device.Key.SystemId && target.Component == device.Key.ComponentId;
+
+  /// <summary>The page's editor and, while the pair window is open, its two editors.</summary>
+  private IEnumerable<Nv5NativeSettingsEditor> NativeEditors() =>
+      _distancePair == null ? [NativeSettings] : [NativeSettings, .. _distancePair.Editors];
 
   private void MigrateDeviceIdentity(
       NvModemDeviceState previous,
@@ -1402,9 +1499,10 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   /// That address is expected exactly as after a PARAM save, so a modem that returns within the
   /// online window still moves its record.
   /// </summary>
-  private void ArmNativeIdentityTransition(
+  private void ArmNativeIdentityTransition(Nv5NativeSettingsEditor editor,
       IReadOnlyDictionary<string, Nv5ConfigurationClient.Value> candidate) {
-    NvModemDeviceState? device = _devices.Values.FirstOrDefault(IsNativeSaveRecord);
+    NvModemDeviceState? device = _devices.Values.FirstOrDefault(
+        record => IsSaveRecordOf(editor, record));
     if (device == null) {
       return;
     }
@@ -2244,6 +2342,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   internal void ServiceTransactions() {
     DateTime now = _utcNow();
     NativeSettings.Service();
+    _distancePair?.Service();
     foreach (NvModemDeviceState device in _devices.Values) {
       UpdateDeviceLabel(device);
       if (SupportsNativeSettings(device)) {
@@ -2625,14 +2724,52 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   }
 
   private void ObserveNativeTarget(NvModemDeviceState device) {
-    if (!SupportsNativeSettings(device)) {
+    // While the pair window is open its editors follow the modems; the page's editor waits, so
+    // that it never reads a modem the window is saving.
+    if (!SupportsNativeSettings(device) || _distancePair != null) {
       return;
     }
+    NativeSettings.ObserveTarget(NativeTargetOf(device), device.ModemInfo.TimeBootMs);
+  }
+
+  /// <summary>Offers an online modem to the open pair window, and gives a modem it holds its
+  /// current route and boot.</summary>
+  private void ObservePairTarget(NvModemDeviceState device) {
+    if (_distancePair == null || !SupportsNativeSettings(device)
+        || !HasStableModemIdentity(device.ModemInfo)) {
+      return;
+    }
+    Nv5ConfigurationClient.Target target = NativeTargetOf(device);
+    if (IsOnline(device)) {
+      _distancePair.Offer(target, device.ModemInfo.TimeBootMs, device.Key.Link.Name);
+    }
+    _distancePair.Observe(target, device.ModemInfo.TimeBootMs);
+  }
+
+  /// <summary>Whether a modem's route is a link that is still open. A modem keeps a route while
+  /// it is, as a device record does.</summary>
+  private bool IsOpenRoute(object route) =>
+      route is NvModemLink link && _transport.Snapshot().Contains(link);
+
+  private Nv5ConfigurationClient.Target NativeTargetOf(NvModemDeviceState device) {
     byte[] uid = (byte[])(device.ModemInfo.Uid2 ?? []).Clone();
     _nativeBoots.TryGetValue(Convert.ToHexString(uid), out (uint Uptime, ulong Epoch) boot);
-    NativeSettings.ObserveTarget(new Nv5ConfigurationClient.Target(uid, device.Key.Link,
-        boot.Epoch, device.ModemInfo.Capabilities, device.Key.SystemId, device.Key.ComponentId,
-        HasStableModemIdentity(device.ModemInfo)), device.ModemInfo.TimeBootMs);
+    return new Nv5ConfigurationClient.Target(uid, device.Key.Link, boot.Epoch,
+        device.ModemInfo.Capabilities, device.Key.SystemId, device.Key.ComponentId,
+        HasStableModemIdentity(device.ModemInfo));
+  }
+
+  /// <summary>An editor that shares the page's clock, MAVLink source and snapshot store.</summary>
+  private Nv5NativeSettingsEditor CreateNativeEditor() =>
+      new(_nativeClock, () => MAVLinkInterface.gcssysid,
+          (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER) {
+        Snapshots = _nativeSnapshots,
+      };
+
+  private void SendNativeFrame(Nv5ConfigurationFrame frame, Nv5ConfigurationClient.Target target) {
+    if (target.Route is NvModemLink link) {
+      _transport.Send(link, frame.Payload, target.System, target.Component);
+    }
   }
 
   private async Task DiscoverAfterRebootAsync() {
@@ -2656,6 +2793,8 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     OnPropertyChanged(nameof(UsesNativeSettings));
     OnPropertyChanged(nameof(CanSwitchDevice));
     OnPropertyChanged(nameof(CanSaveNativeSettings));
+    OnPropertyChanged(nameof(CanConfigureDistancePair));
+    OnPropertyChanged(nameof(DistancePairHint));
     OnPropertyChanged(nameof(HasSelectedDevice));
     OnPropertyChanged(nameof(HasParameters));
     OnPropertyChanged(nameof(HasPendingChanges));
@@ -2704,6 +2843,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
     // Frees a modem's single read session at once instead of after its lease.
     NativeSettings.StopReading();
+    _distancePair?.TryClose();
     _disposed = true;
     _serviceTimer?.Stop();
     _transport.PacketReceived -= OnPacketReceived;

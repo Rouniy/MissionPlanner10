@@ -1,0 +1,33 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlanner.ViewModels.Setup"
+  x:Class="MissionPlanner.Views.Setup.Nv5NativeSettingsTable"
+  x:DataType="vm:Nv5NativeSettingsEditor"
+>
+  <!-- One modem's complete settings, for review and edits saved with the pair. -->
+  <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="6">
+    <TextBox Grid.Row="0" Text="{Binding FilterText, Mode=TwoWay}"
+             Watermark="Filter settings (native Hz, µs and packet counts; * and ? match)"
+             Margin="0,0,0,6" />
+    <WrapPanel Grid.Row="1" Margin="0,0,0,2">
+      <Button x:Name="ReadSettingsButton" Content="Read settings"
+              Command="{Binding ReadSettingsCommand}" IsEnabled="{Binding CanRead}"
+              Margin="0,0,8,4"
+              ToolTip.Tip="Read every setting from the modem again. Unsaved edits in this table are dropped." />
+    </WrapPanel>
+    <TextBlock Grid.Row="2" x:Name="SettingsStatus" Text="{Binding StatusText}"
+               TextWrapping="Wrap" Margin="0,0,0,6" />
+    <DataGrid Grid.Row="3" x:Name="SettingsGrid" ItemsSource="{Binding Rows}"
+              AutoGenerateColumns="False" GridLinesVisibility="All" CanUserResizeColumns="True"
+              IsEnabled="{Binding !IsBusy}">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Setting" Binding="{Binding Name}" IsReadOnly="True" Width="170" />
+        <DataGridTextColumn Header="Value" Binding="{Binding ValueText, Mode=TwoWay}" Width="150" />
+        <DataGridTextColumn Header="State" Binding="{Binding EditState}" IsReadOnly="True" Width="70" />
+        <DataGridTextColumn Header="Type / access" Binding="{Binding TypeText}" IsReadOnly="True"
+                            Width="*" />
+      </DataGrid.Columns>
+    </DataGrid>
+  </Grid>
+</UserControl>

@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using MissionPlanner.Services;
 using Phase = MissionPlanner.Services.Nv5ConfigurationClient.ClientPhase;
 using Target = MissionPlanner.Services.Nv5ConfigurationClient.Target;
@@ -152,6 +153,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   private bool _rebuilding;
   private bool _reloadPending;
 
+  // Set when a save that was not committed is cancelled while a request is in flight: the abort
+  // goes out once that request is answered.
+  private bool _cancelPending;
+
   // Set when the device refused a save because its settings changed after they were read: the
   // edits were made to values that are no longer current, so only a new read may lift it.
   private bool _refreshRequired;
@@ -165,6 +170,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _system = system;
     _component = component;
     _client = NewClient();
+    UpdateDistanceRows();
   }
 
   /// <summary>A frame to send on the target's own link.</summary>
@@ -228,6 +234,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   internal bool Ready =>
       !Busy && _values.Count != 0 && _client.Phase is Phase.Ready or Phase.Active;
 
+  /// <summary>A save can begin: the values are a confirmed readback that the device has not since
+  /// refused as out of date.</summary>
+  internal bool CanBeginSave => Ready && _readBack && !_refreshRequired;
+
   /// <summary>False while the values are a local merge after a save, before the device is read
   /// again.</summary>
   internal bool ValuesReadBack => _readBack;
@@ -282,13 +292,17 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (sameRoute && !restart) {
       return;
     }
-    if (sameUid && Reading()) {
-      // A restart or a new route ends what the device was doing for this editor; the read goes
-      // on where it stopped.
+    if (sameUid && (Reading() || (_quickWrite && !_commitSent && Busy))) {
+      // A restart or a new route ends what the device was doing for this editor. A read goes on
+      // where it stopped; a switch-off that was not committed is begun again on the new boot.
       EndReadSession();
       _target = target;
-      _retries = 0;
-      StartRead();
+      if (_quickWrite) {
+        StartQuickWrite();
+      } else {
+        _retries = 0;
+        StartRead();
+      }
       return;
     }
     if (!sameUid && Reading()) {
@@ -319,10 +333,14 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _refreshRequired = false;
     ClearRows();
     _started = _commitSent = false;
+    ResetDistance();
     Reload();
   }
 
   internal bool Receive(MAVLink.MAVLinkMessage message, object route) {
+    if (message.msgid == NvModemMessageIds.Nv5Distance) {
+      return ReceiveDistance(message, route);
+    }
     if (_target == null || !_client.Receive(message, route, _target.TransportEpoch, Now())) {
       return false;
     }
@@ -338,21 +356,15 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       if (result.Result > Nv5ConfigResults.Accepted && !_autoCommit && _step == Step.Validate
           && result.CommittedKnown != 0 && result.State == Nv5ConfigStates.Staged
           && result.Operation is Nv5ConfigOperations.Validate or Nv5ConfigOperations.Status) {
+        // The pair window decides what follows; the refusal stays in view for it to name.
         SetStep(Step.Prepared);
+        SetStatus(RefusalReason(result));
         Prepared?.Invoke(false, result.Channel1LinkHash, result.Channel2LinkHash);
         return true;
       }
       if (result.Result > Nv5ConfigResults.Accepted && !endedAnyway && _step != Step.Recovery
           && _step != Step.Aborting) {
-        string reason = ResultName(result.Result);
-        string field = NameOf(result.ErrorName);
-        if (field.Length != 0) {
-          reason += $" Field: {field}.";
-        }
-        if (result.Operation is Nv5ConfigOperations.Validate or Nv5ConfigOperations.Status) {
-          reason += $" Candidate link hashes: radio 1 = {result.Channel1LinkHash}, radio 2 = "
-              + $"{result.Channel2LinkHash}. Compare with the peer before setting CHn_PEER_HASH.";
-        }
+        string reason = RefusalReason(result);
         if (result.Result == Nv5ConfigResults.StaleRevision && !Reading()) {
           _refreshRequired = true;
         }
@@ -384,9 +396,14 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (_client.TakeOutbound(Now()) is { } frame) {
       SendFrame?.Invoke(frame, _target);
     }
+    UpdateDistance();
     bool recovering = _step == Step.Recovery;
     if (Busy && unchecked(Now() - (recovering ? _recoveryStarted : _progress))
         > (recovering ? 30000u : 12000u)) {
+      // A switch-off keeps trying until its modem is back; a read waits for the next restart.
+      if (!recovering && _quickWrite && RetryLater("The modem stopped answering.", false)) {
+        return;
+      }
       Fail(_commitSent
           ? "Restart/readback was not confirmed. The save outcome remains uncertain."
           : "Configuration timed out; no save was confirmed.", _commitSent);
@@ -396,6 +413,11 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return;
     }
     Advance();
+    // The next request goes out at once rather than on the owner's next tick, so a read of the
+    // whole catalogue takes round trips, not service intervals.
+    if (_target != null && _client.TakeOutbound(Now()) is { } next) {
+      SendFrame?.Invoke(next, _target);
+    }
   }
 
   /// <summary>Reads the device, or takes its settings from the shared store when it reports no
@@ -407,6 +429,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _retries = 0;
     StartRead();
   }
+
+  /// <summary>Read settings, for a table shown outside the settings page.</summary>
+  [RelayCommand]
+  private void ReadSettings() => RereadDevice();
 
   /// <summary>Reads every setting from the device, whatever the store holds.</summary>
   internal void RereadDevice() {
@@ -435,8 +461,54 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
 
   internal void Save() => StartSave(commit: true);
 
-  /// <summary>Prepares without committing, for peer-verified pair provisioning.</summary>
-  internal void Prepare() => StartSave(commit: false);
+  /// <summary>Prepares without committing, for peer-verified pair provisioning. False when no
+  /// transaction began; the status says why.</summary>
+  internal bool Prepare() => StartSave(commit: false);
+
+  /// <summary>
+  /// Ends a save that has not been committed and keeps the table as it is, as the pair window does
+  /// when the other modem's check fails. A request still in flight is answered before the abort
+  /// goes out, and a save already being cancelled keeps its reason. Raises no
+  /// <see cref="ConfigurationFinished"/>: the caller ended the save.
+  /// </summary>
+  internal void Cancel(string reason) {
+    if (!Busy || _commitSent || Reading() || _quickWrite || _cancelPending
+        || _step == Step.Aborting) {
+      return;
+    }
+    _writes.Clear();
+    _commitRequested = false;
+    SetStatus(reason);
+    if (_client.Pending) {
+      _cancelPending = true;
+      return;
+    }
+    AbortCancelled();
+  }
+
+  /// <summary>What the table shows for these settings, edits included.</summary>
+  internal IReadOnlyDictionary<string, string> TableTexts(IEnumerable<string> names) {
+    var texts = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (string name in names) {
+      if (_rows.TryGetValue(name, out Nv5NativeSettingRow? row)) {
+        texts[name] = row.ValueText;
+      }
+    }
+    return texts;
+  }
+
+  /// <summary>Puts back texts taken by <see cref="TableTexts"/> after a save that staged over
+  /// them ended before its commit, so the device still holds what was read.</summary>
+  internal void RestoreTableTexts(IReadOnlyDictionary<string, string> texts) {
+    if (_commitSent) {
+      return;
+    }
+    foreach ((string name, string text) in texts) {
+      if (_rows.TryGetValue(name, out Nv5NativeSettingRow? row)) {
+        row.ValueText = text;
+      }
+    }
+  }
 
   internal bool ContinuePreparation(IReadOnlyDictionary<string, string> values) {
     if (_step != Step.Prepared || _client.Pending) {
@@ -464,7 +536,8 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
         || _client.Phase != Phase.Validated || _client.Pending) {
       return false;
     }
-    if (CommitCheck != null && !CommitCheck(CandidateValues())) {
+    // A ranging switch-off changes no identity or address, which is all this check guards.
+    if (CommitCheck != null && !_quickWrite && !CommitCheck(CandidateValues())) {
       Fail("The selected device or requested address is no longer available. Review the device "
           + "settings before saving.");
       return false;
@@ -835,6 +908,21 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     return true;
   }
 
+  /// <summary>Why the device refused an operation, naming the field it refused, and for a
+  /// candidate the link hashes it computed.</summary>
+  private static string RefusalReason(Nv5ConfigResultMessage result) {
+    string reason = ResultName(result.Result);
+    string field = NameOf(result.ErrorName);
+    if (field.Length != 0) {
+      reason += $" Field: {field}.";
+    }
+    if (result.Operation is Nv5ConfigOperations.Validate or Nv5ConfigOperations.Status) {
+      reason += $" Candidate link hashes: radio 1 = {result.Channel1LinkHash}, radio 2 = "
+          + $"{result.Channel2LinkHash}. Compare with the peer before setting CHn_PEER_HASH.";
+    }
+    return reason;
+  }
+
   internal static string ResultName(byte result) => result switch {
     Nv5ConfigResults.Busy =>
         "Device busy; finish the other configuration operation and refresh.",
@@ -878,7 +966,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   }
 
   private bool Reading() =>
-      _step is Step.Info or Step.ReadBegin or Step.Read or Step.ReadEnd;
+      !_quickWrite && _step is Step.Info or Step.ReadBegin or Step.Read or Step.ReadEnd;
 
   private void StartRead() {
     KeepForResume();
@@ -889,7 +977,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _known.Clear();
     _kept = 0;
     _readIndex = 0;
-    _retryPending = _waitingForReader = false;
+    _retryPending = _waitingForReader = _cancelPending = false;
     if (!_client.Discover(_target!, Now())) {
       Fail("Cannot start configuration discovery.");
       return;
@@ -942,12 +1030,18 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _kept = _readValues.Count;
   }
 
-  /// <summary>Repeats a failed read after a pause.</summary>
+  /// <summary>Repeats a failed read, or a ranging switch-off not yet committed, after a
+  /// pause.</summary>
   private bool RetryLater(string reason, bool deviceBusy) {
-    if (!Reading()) {
+    bool quick = _quickWrite && !_commitSent && Busy;
+    if (!Reading() && !quick) {
       return false;
     }
-    if (_retries == 0) {
+    if (quick) {
+      if (unchecked(Now() - _quickStarted) > QuickWriteBudgetMs) {
+        return false;
+      }
+    } else if (_retries == 0) {
       _retryStarted = Now();
     } else if (unchecked(Now() - _retryStarted) > ReadRetryBudgetMs) {
       return false;
@@ -957,17 +1051,31 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       _retries++;
     }
     EndReadSession();
-    KeepForResume();
+    if (!quick) {
+      KeepForResume();
+    }
     ReleaseReader();
     _client = NewClient();
+    if (quick) {
+      _writes.Clear();
+      _writes.AddRange(_quickWrites);
+      _started = false;
+    }
     _retryAt = Now() + delay;
     _retryPending = true;
     _waitingForReader = false;
     SetStep(Step.Info);
-    SetStatus(deviceBusy
-        ? "Another configuration session is using this modem; it is read once that session "
-            + "ends…"
-        : $"{reason} Reading again…");
+    if (quick) {
+      SetStatus(deviceBusy
+          ? "The modem is busy with another configuration operation; ranging is switched off "
+              + "once that ends…"
+          : $"{reason} Trying again to switch ranging off…");
+    } else {
+      SetStatus(deviceBusy
+          ? "Another configuration session is using this modem; it is read once that session "
+              + "ends…"
+          : $"{reason} Reading again…");
+    }
     return true;
   }
 
@@ -1005,7 +1113,14 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       SetStep(Step.Failed);
       return;
     }
+    if (_cancelPending) {
+      AbortCancelled();
+      return;
+    }
     if (_client.Phase == Phase.Error) {
+      if (_quickWrite && RetryLater("Configuration protocol failed.", false)) {
+        return;
+      }
       Fail("Configuration protocol failed.", _commitSent);
       return;
     }
@@ -1077,6 +1192,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return;
     }
     if (_client.Phase is not (Phase.Ready or Phase.RestartRequired)) {
+      return;
+    }
+    if (_quickWrite) {
+      AdvanceQuickWriteInfo();
       return;
     }
     if (UseSnapshot()) {
@@ -1192,15 +1311,28 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
   private void AdvanceRecovery() {
     if (_client.Phase == Phase.Active && _client.DurableConfirmed) {
       _started = false;
-      _values = new SortedDictionary<string, Value>(
-          CandidateValues().ToDictionary(pair => pair.Key, pair => pair.Value),
-          StringComparer.Ordinal);
+      bool quick = _quickWrite;
+      _quickWrite = false;
+      if (quick) {
+        // Only what the switch-off wrote is known; edits in the table were not saved.
+        foreach (Value written in _quickWrites) {
+          if (_values.TryGetValue(written.Name, out Value? held)) {
+            _values[written.Name] = held with { Bytes = Copy(written.Bytes) };
+          }
+        }
+      } else {
+        _values = new SortedDictionary<string, Value>(
+            CandidateValues().ToDictionary(pair => pair.Key, pair => pair.Value),
+            StringComparer.Ordinal);
+      }
       _valuesIdentity = Empty;
       // Derived read-only values such as the link hash stay stale until the next read.
       _readBack = false;
       Rebuild();
       SetStep(Step.Idle);
-      SetStatus("Saved, restarted and verified active.");
+      SetStatus(quick
+          ? "Ranging switched off, restarted and verified active."
+          : "Saved, restarted and verified active.");
       _reloadPending = true;
       ConfigurationFinished?.Invoke(true);
     } else if (_client.Phase == Phase.Superseded) {
@@ -1240,13 +1372,25 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     return true;
   }
 
+  /// <summary>Aborts the transaction a <see cref="Cancel"/> ended; one the device never opened
+  /// needs no abort.</summary>
+  private void AbortCancelled() {
+    _cancelPending = false;
+    if (_client.Abort(Now())) {
+      SetStep(Step.Aborting);
+    } else {
+      _started = false;
+      SetStep(Step.Failed);
+    }
+  }
+
   private void Fail(string reason, bool uncertain = false) {
     // A read given up frees the device's read session at once instead of after its lease.
     if (Reading()) {
       EndReadSession();
     }
     ReleaseReader();
-    _retryPending = _waitingForReader = false;
+    _retryPending = _waitingForReader = _quickWrite = _cancelPending = false;
     SetStatus(reason);
     _writes.Clear();
     if (!uncertain && _started && !_client.Pending && _client.Abort(Now())) {
@@ -1257,22 +1401,23 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     ConfigurationFinished?.Invoke(false);
   }
 
-  private void StartSave(bool commit) {
+  private bool StartSave(bool commit) {
     if (Busy || (commit && !HasPendingChanges())) {
-      return;
+      return false;
     }
     if (_refreshRequired) {
       SetStatus("Settings changed on the device since they were read. Use Read settings and "
           + "review your changes before saving.");
-      return;
+      return false;
     }
     if (!_readBack) {
       SetStatus("The values shown are not a confirmed readback. Use Read settings before saving.");
-      return;
+      return false;
     }
     _autoCommit = commit;
     _commitRequested = false;
     _durableEmitted = false;
+    _cancelPending = false;
     _writes.Clear();
     foreach ((string name, Nv5NativeSettingRow row) in _rows) {
       Value value = _values[name];
@@ -1281,7 +1426,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       }
       if (!Encode(value, row.ValueText, out byte[] bytes)) {
         Fail($"Invalid value for {name}.");
-        return;
+        return false;
       }
       if (!Same(bytes, value.Bytes)) {
         _writes.Add(value with { Bytes = bytes });
@@ -1304,11 +1449,12 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     // changed after they were read instead of applying these edits over that change.
     if (!_client.Begin(FreshNonce(), _valuesIdentity.Revision, Now())) {
       Fail("Refresh the device before starting a new transaction.");
-      return;
+      return false;
     }
     SetStep(Step.Begin);
     SetStatus("Validating and saving the complete configuration…");
     Service();
+    return true;
   }
 
   private void TryCommit() {
@@ -1318,7 +1464,10 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     }
     _commitSent = true;
     SetStep(Step.Commit);
-    CommitSent?.Invoke(CandidateValues());
+    // A ranging switch-off announces no identity change, and it has no read values to inspect.
+    if (!_quickWrite) {
+      CommitSent?.Invoke(CandidateValues());
+    }
   }
 
   private void Rebuild() {
@@ -1346,6 +1495,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     ShowRows();
     _rebuilding = false;
     RefreshCommands();
+    UpdateDistanceRows();
     EditsChanged?.Invoke();
   }
 
@@ -1354,6 +1504,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     _rows.Clear();
     Rows.Clear();
     RefreshCommands();
+    UpdateDistanceRows();
   }
 
   private void ShowRows() {

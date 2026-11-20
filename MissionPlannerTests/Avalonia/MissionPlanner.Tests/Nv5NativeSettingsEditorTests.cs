@@ -10,7 +10,7 @@ using Target = MissionPlanner.Services.Nv5ConfigurationClient.Target;
 
 namespace MissionPlanner.Tests;
 
-public class Nv5NativeSettingsEditorTests {
+public partial class Nv5NativeSettingsEditorTests {
   // A modem with two settings, no configuration digest and a validation that refuses the
   // candidate, as the transaction protocol's own editor tests use.
   [Fact]
@@ -313,6 +313,16 @@ public class Nv5NativeSettingsEditorTests {
     Assert.Equal(unchecked((uint)-5), modem.Staged["CH1_KEY_W0"]);
     Assert.Equal(113u, modem.Staged["CH1_KEY_W2"]);
     editor.Discard();
+  }
+
+  [Fact]
+  public void A_read_asks_for_each_setting_as_soon_as_the_previous_one_arrives() {
+    var bench = new Bench(CatalogueModem());
+    uint start = bench.Now;
+    bench.Attach();
+    // The owner services the editor only now and then; replies must not wait for it.
+    uint elapsed = bench.Now - start;
+    Assert.True(elapsed < 200, $"{elapsed} ms to read {bench.Full} settings");
   }
 
   [Fact]
@@ -675,6 +685,9 @@ public class Nv5NativeSettingsEditorTests {
     private uint _now = 1000;
 
     internal Nv5FakeModem Modem { get; } = modem;
+
+    /// <summary>The fake clock, in milliseconds.</summary>
+    internal uint Now => _now;
     internal int Full => Modem.Settings.Count;
     internal event Action<Nv5NativeSettingsEditor, Nv5ConfigurationFrame>? Sent;
 
@@ -725,6 +738,29 @@ public class Nv5NativeSettingsEditorTests {
       return done();
     }
 
+    /// <summary>Delivers ranging telemetry from the modem's own address and route.</summary>
+    internal void Distance(Nv5DistanceMessage value) {
+      NvModemMavlinkDialect.Register();
+      byte[] bytes = new MAVLink.MavlinkParse().GenerateMAVLinkPacket20(
+          (MAVLink.MAVLINK_MSG_ID)NvModemMessageIds.Nv5Distance, value, false, Modem.Peer.System,
+          Modem.Peer.Component);
+      MAVLink.MAVLinkMessage message = new MAVLink.MavlinkParse().ReadPacket(
+          new MemoryStream(bytes))!;
+      foreach ((Nv5NativeSettingsEditor editor, _) in _editors.ToList()) {
+        editor.Receive(message, Modem.Peer.Route);
+      }
+    }
+
+    /// <summary>Lets time pass without any reply, servicing the editors as the page does.</summary>
+    internal void Wait(uint milliseconds) {
+      for (uint waited = 0; waited < milliseconds; waited += 20) {
+        _now += 20;
+        foreach ((Nv5NativeSettingsEditor editor, _) in _editors.ToList()) {
+          editor.Service();
+        }
+      }
+    }
+
     /// <summary>Settings the firmware derives, which a new boot reads again.</summary>
     internal int Derived(int first = 0, int count = -1) =>
         Modem.Settings.Skip(first).Take(count < 0 ? Full : count)
@@ -760,10 +796,21 @@ internal sealed class Nv5FakeModem {
 
   internal bool BusyBegin { get; set; }
   internal bool RejectValidate { get; set; }
+
+  /// <summary>Validations accepted before every later one is refused, as when the peer proof
+  /// staged after the first one does not hold.</summary>
+  internal int AcceptedValidations { get; set; } = int.MaxValue;
+
+  internal int Validations { get; private set; }
   internal bool CommitModel { get; set; }
+
+  /// <summary>Refuses every commit as a storage failure.</summary>
+  internal bool FailCommit { get; set; }
+
   internal int RefuseReadBegins { get; set; }
   internal bool SingleReader { get; set; }
   internal int ReadBegins { get; private set; }
+  internal int Begins { get; private set; }
   internal int Reads { get; private set; }
   internal int Commits { get; private set; }
 
@@ -855,6 +902,7 @@ internal sealed class Nv5FakeModem {
         _readOpen = false;
         break;
       case Nv5ConfigOperations.Begin:
+        Begins++;
         Staged.Clear();
         // As the firmware does: edits based on an older committed revision are refused.
         reply.Result = BusyBegin ? Nv5ConfigResults.Busy
@@ -868,7 +916,7 @@ internal sealed class Nv5FakeModem {
       case Nv5ConfigOperations.Validate:
         reply.TransactionRevision = Revision;
         Array.Fill(reply.TransactionDigest, (byte)0xab);
-        if (RejectValidate) {
+        if (RejectValidate || ++Validations > AcceptedValidations) {
           reply.State = Nv5ConfigStates.Staged;
           reply.Result = Nv5ConfigResults.InvalidConfiguration;
           reply.Channel1LinkHash = 12345678;
@@ -879,7 +927,9 @@ internal sealed class Nv5FakeModem {
         break;
       case Nv5ConfigOperations.Commit:
         Commits++;
-        if (CommitModel) {
+        if (FailCommit) {
+          reply.Result = Nv5ConfigResults.StorageFailed;
+        } else if (CommitModel) {
           foreach ((string stagedName, uint stagedRaw) in Staged) {
             Set(stagedName, stagedRaw);
           }

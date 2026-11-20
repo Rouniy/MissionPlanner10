@@ -31,6 +31,7 @@ public partial class NvModemView : UserControl {
         args.Cancel = true;
       }
     };
+    this.FindControl<Button>("ConfigureDistancePairButton")!.Click += ConfigureDistancePair;
     this.FindControl<Button>("LoadNativeSnapshotButton")!.Click += LoadNativeSnapshot;
     this.FindControl<Button>("ExportNativeSnapshotButton")!.Click += ExportNativeSnapshot;
     this.FindControl<DataGrid>("NativeSettingsGrid")!.BeginningEdit += (_, args) => {
@@ -41,6 +42,18 @@ public partial class NvModemView : UserControl {
   }
 
   private NvModemViewModel? ViewModel => DataContext as NvModemViewModel;
+
+  private async void ConfigureDistancePair(object? sender, RoutedEventArgs e) {
+    if (TopLevel.GetTopLevel(this) is not Window owner || ViewModel is not { } page
+        || page.OpenDistancePair() is not { } pair) {
+      return;
+    }
+    try {
+      await new NvModemDistancePairWindow { DataContext = pair }.ShowDialog(owner);
+    } finally {
+      page.CloseDistancePair();
+    }
+  }
 
   private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
