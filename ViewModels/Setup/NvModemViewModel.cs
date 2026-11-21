@@ -292,6 +292,8 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     // Native transactions time out on a monotonic clock; the injected wall clock serves tests.
     _nativeClock = nativeClock ?? NativeNowMs;
     NativeSettings = CreateNativeEditor();
+    // The page shows the selected modem's LPS row, so it asks whether its reports are current.
+    NativeSettings.LpsChallenges = true;
     NativeSettings.SendFrame += SendNativeFrame;
     NativeSettings.BusyChanged += _ => RefreshControls();
     NativeSettings.EditsChanged += RefreshControls;
@@ -1148,6 +1150,10 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       // The measuring modem's readout; the packet still counts as the modem being heard.
       NativeSettings.Receive(packet, source);
       _distancePair?.Receive(packet, source);
+    }
+    if (packet.msgid is NvModemMessageIds.Nv5LpsStatus or NvModemMessageIds.Nv5LpsBeacon) {
+      // An editor takes only its modem's reports, from its verified route.
+      NativeSettings.Receive(packet, source);
     }
 
     var key = new NvModemDeviceKey(source, packet.sysid, packet.compid);

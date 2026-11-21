@@ -341,6 +341,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (message.msgid == NvModemMessageIds.Nv5Distance) {
       return ReceiveDistance(message, route);
     }
+    if (message.msgid is NvModemMessageIds.Nv5LpsStatus or NvModemMessageIds.Nv5LpsBeacon) {
+      return ReceiveLps(message, route);
+    }
     if (_target == null || !_client.Receive(message, route, _target.TransportEpoch, Now())) {
       return false;
     }
@@ -396,6 +399,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (_client.TakeOutbound(Now()) is { } frame) {
       SendFrame?.Invoke(frame, _target);
     }
+    ServiceLps();
     UpdateDistance();
     bool recovering = _step == Step.Recovery;
     if (Busy && unchecked(Now() - (recovering ? _recoveryStarted : _progress))
@@ -1103,6 +1107,8 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if ((_step == Step.Commit || _step == Step.Recovery) && _client.DurableConfirmed
         && !_durableEmitted) {
       _durableEmitted = true;
+      // Reports from before the restart describe the old configuration.
+      _lps.Invalidate();
       DurableSaved?.Invoke();
     }
     if (_step is Step.Idle or Step.Failed) {
@@ -1463,6 +1469,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return;
     }
     _commitSent = true;
+    _lps.Invalidate();
     SetStep(Step.Commit);
     // A ranging switch-off announces no identity change, and it has no read values to inspect.
     if (!_quickWrite) {

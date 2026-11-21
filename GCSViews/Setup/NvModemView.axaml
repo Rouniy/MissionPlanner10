@@ -60,7 +60,8 @@
           </DataGrid>
         </Expander>
 
-        <Expander x:Name="DistanceGroup" Header="Distance" IsExpanded="True"
+        <Expander x:Name="DistanceGroup" Header="{Binding NativeSettings.DistanceTitle}"
+                  IsExpanded="True"
                   IsVisible="{Binding UsesNativeSettings}">
           <!-- Ranging is always switched for both ends of a link, so the group has no per-modem
                switch: it shows each radio's state, and pair setup changes it. -->

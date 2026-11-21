@@ -841,7 +841,15 @@ internal sealed class Nv5FakeModem {
     _activeDigest = Digest;
   }
 
+  /// <summary>LPS freshness challenges, which a modem answers with its next STATUS, not
+  /// here.</summary>
+  internal List<MAVLink.mavlink_command_long_t> Challenges { get; } = [];
+
   internal IEnumerable<MAVLink.MAVLinkMessage> Answer(Nv5ConfigurationFrame request) {
+    if (request.Payload is MAVLink.mavlink_command_long_t command) {
+      Challenges.Add(command);
+      yield break;
+    }
     Seen.Add(request);
     if (_activeDigest == 0 && _activeRevision == Revision) {
       _activeDigest = Digest;
