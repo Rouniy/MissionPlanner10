@@ -109,7 +109,7 @@ groups and the PARAM save buttons give way to **Modem settings**; maintenance co
 stay. NV4 modems and NV5 firmware without the bit keep the PARAM page described above, unchanged.
 The firmware's ranging, LPS, calibration and capture messages (53020, 53025–53028, 53030–53033)
 are registered with the shared parser; the Distance group below shows the ranging telemetry
-(`NV5_DISTANCE`, 53020).
+(`NV5_DISTANCE`, 53020) and the LPS reports (`NV5_LPS_STATUS` and `NV5_LPS_BEACON`, 53030–53031).
 
 Capability is known only from the passport. A modem first heard through other telemetry has its
 PARAM read deferred while the page requests the passport: the read is skipped if the passport
@@ -221,10 +221,71 @@ against in-process modems, and the layout at narrow widths. With `MP_NV5_CONFIG_
 the NV5 firmware's host `nv5-configuration-fixture`, further tests exchange real frames with the
 firmware's configuration core: one drives the client through commit, restart, recovery and
 readback; one reads the real catalogue through the editor, saves a change, restarts the fixture
-and reads the change back; one switches ranging off without a read; and one pairs two fixture
-instances through the window, including the peer proof. The host fixture has no LR2021 radio, on
-which alone the firmware allows ranging on, so that pair is saved with ranging off. The tests do
-not cover flash interruption, physical restart timing or radio behavior.
+and reads the change back; one switches ranging off without a read; one pairs two fixture
+instances through the window, including the peer proof; and one saves three instances as one LPS
+field through the LPS field window, below. The host fixture has no LR2021 radio, on which alone
+the firmware allows ranging on, so that pair is saved with ranging off. The tests do not cover
+flash interruption, physical restart timing or radio behavior.
+
+## LPS field
+
+A modem with LPS settings (`LPS_ROLE` and the field it belongs to) shows its LPS role in the
+Distance group, which is then titled **Distance and LPS**. A radio that LPS uses shows LPS in its
+row instead of pair ranging, since one radio never runs both: a rover's row has its position, or
+why there is none, and the latest range to each beacon; a beacon's row has its latest answer. The
+pair window keeps showing each radio's own ranging state. **Configure LPS field…**, on its own
+line of the group, opens the LPS field window, and the line beside it says what the window does or
+why it cannot open now, as for the pair window. The two windows are never open together.
+
+- **Reports and freshness.** `NV5_LPS_STATUS` and `NV5_LPS_BEACON` count only from the modem's
+  verified route and UID, and a beacon row only with the exact capture of the latest status; a
+  report never renews an older one. The page asks the selected modem, and the window each of its
+  modems, whether the reports are current: an exact-target `MAV_CMD_REQUEST_MESSAGE` for 53030
+  with a fresh random 64-bit nonce in params 2–4 (24, 24 and 16 bits), retried after three seconds
+  and refreshed after five. The answer bounds the age of later reports, allowing 500 ppm of
+  relative drift and 2 ms of clock uncertainty, and trust ends ten seconds after the last answer.
+  A position is shown only while its reports are confirmed current and its own validity has not
+  run out, and it expires between reports. Nothing is asked once a commit has gone out, and a
+  commit or a new route withdraws the reports until the modem is back. A range says its age once
+  it is two seconds old; after three seconds without a report the row shows only that silence, in
+  red. Calibration is optional: a fix says which of its ranges were calibrated and is never held
+  back for it. This is freshness correlation, not authentication, and nothing here feeds the
+  flight controller.
+- **Window.** The selected modem is Modem 1; every other verified, transaction-capable modem that
+  is online follows as Modem 2, 3 and so on, and a modem heard later joins. The tabs read `Field`,
+  then `Modem N · system:component`, each with that modem's complete settings for review only. The
+  left column lists the modems with their role (Off, Rover or Beacon), radio and, for a beacon, the
+  survey row it answers for. Under each modem a line says what saving does to it, including
+  whether its radio keeps its data link (an LPS reservation, `CHn_RSV_EN`) or LPS takes the radio
+  over. A radio that is not fitted or not an LR2021 is listed greyed, with the reason. The rover's
+  flight controller IDs, launch height and, under Advanced, its launch-height and range-noise
+  uncertainty follow, with the burst settings of its radio, which the pair window sets. The launch
+  height is the surveyed rover antenna height above the WGS 84 ellipsoid at launch minus the field
+  origin's ellipsoid height; saving it does not tie the barometer, which `+LPS_TIE` does in the
+  modem's configuration mode while the flight controller is disarmed and still. A modem whose
+  firmware has no LPS settings is listed and left alone.
+- **Field.** The field shown is the one Modem 1 holds, or the first modem that holds one, until it
+  is edited; **Show** takes it from another modem. Values are shown in operator units and saved
+  exactly: degrees with seven decimals, metres with three, the datum and addresses in hexadecimal,
+  and survey uncertainty as standard deviations, whose squares the modem stores. The covariance
+  terms and the ranging radio settings are behind their own switches. **Import…** and **Export…**
+  use the field document, which holds the survey and the ranging radio settings but no keys or
+  network settings, and is read only whole; a hexadecimal value in it is shown and compared as the
+  decimal the modem reads back. Rows past the beacon count are saved as zeros, as the modems store
+  them. The window keeps a generation that a modem already holds with exactly this survey, so a
+  modem joining the field needs no change elsewhere; otherwise it chooses one no listed modem uses.
+  Radio-only changes keep the generation.
+- **Saving.** Only modems whose settings change are saved, and only once every listed modem has
+  been read back in full; the save checks the roles, survey rows and readback again rather than
+  trusting the button. **Verify and save N modems** saves one modem at a time, beacons before the
+  rover: each is checked, committed, restarted and read back in full, and the readback must be the
+  configuration the modem reported active, before the next begins. The group is not one
+  transaction. If a modem's settings changed while it waited, or a modem fails, saving stops:
+  modems saved before it keep their new settings, the others are not attempted, and the failed
+  modem is read again before the same window can save once more. A commit that was sent but not
+  confirmed is shown as an unknown outcome until that read says whether it took effect. Close waits
+  while a modem is being saved, and for a check stopped before its commit to be cancelled on its
+  modem.
 
 ## Acceptance boundary
 
@@ -233,7 +294,9 @@ passport validation, UID2 address migration and conflict guards, NV4 apply trans
 key-write paths, exact typed echoes and rejection diagnostics, independent diversity key targeting,
 RTSP dirty-state handling, current preset staging, parameter-file roundtrip and slow/silent-device
 handling are covered by automated tests. Distance pair setup with ranging on, real distance
-readings and their burst timing need two modems with LR2021 radios and an operator run. NV4 coverage
+readings and their burst timing need two modems with LR2021 radios and an operator run; LPS
+positions, ranges and their freshness on real radios need beacon and rover modems with LR2021
+radios, and the barometer tie a flight controller. NV4 coverage
 additionally pins the complete sketch catalog, parameter-specific descriptions and both
 apply-trigger spellings. A representative physical NV4 and NV5 modem on UDP/TCP/UART still require
 an operator acceptance run, including reboot/reappearance and real RF/RTSP behavior.

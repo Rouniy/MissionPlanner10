@@ -95,6 +95,7 @@
     <Compile Include="Services/LocalKmlServer.cs" />
     <Compile Include="Services/MavlinkSerialControlPort.cs" />
     <Compile Include="Services/Nv5ConfigurationClient.cs" />
+    <Compile Include="Services/Nv5LpsTelemetry.cs" />
     <Compile Include="Services/OsdTuningSlotService.cs" />
     <Compile Include="Services/PythonScriptHost.cs" />
     <Compile Include="Services/SikRadioFirmwareService.cs" />
@@ -106,11 +107,15 @@
     <Compile Include="ViewModels/ExternalGuidedViewModel.cs" />
     <Compile Include="ViewModels/MavlinkCanTransport.cs" />
     <Compile Include="ViewModels/Setup/Nv5NativeSettingsEditor.cs" />
+    <Compile Include="ViewModels/Setup/Nv5LpsField.cs" />
     <Compile Include="ViewModels/Setup/Nv5NativeSettingsEditor.Distance.cs" />
+    <Compile Include="ViewModels/Setup/Nv5NativeSettingsEditor.Lps.cs" />
     <Compile Include="ViewModels/Setup/NvModemDistancePairViewModel.cs" />
+    <Compile Include="ViewModels/Setup/NvModemLpsFieldViewModel.cs" />
     <Compile Include="GCSViews/Setup/Nv5NativeSettingsTable.axaml.cs" />
     <Compile Include="GCSViews/Setup/NvDistanceRowsView.axaml.cs" />
     <Compile Include="GCSViews/Setup/NvModemDistancePairWindow.axaml.cs" />
+    <Compile Include="GCSViews/Setup/NvModemLpsFieldWindow.axaml.cs" />
     <Compile Include="Views/DroneCanFieldGraphWindow.cs" />
     <Compile Include="Views/DroneCanSubscriberWindow.cs" />
     <Compile Include="Views/ExternalGuidedView.axaml.cs" />
