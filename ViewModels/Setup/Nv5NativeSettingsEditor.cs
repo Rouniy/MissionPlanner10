@@ -1578,7 +1578,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     return Ends("_RNG_N") ? "exchanges" : "";
   }
 
-  private static bool TryParseInteger(string text, out long number) {
+  /// <summary>An integer as the firmware's own tools write it: decimal, 0x hexadecimal or
+  /// leading-zero octal, with an optional sign.</summary>
+  internal static bool TryParseInteger(string text, out long number) {
     number = 0;
     bool negative = text.StartsWith('-');
     string digits = negative || text.StartsWith('+') ? text[1..] : text;

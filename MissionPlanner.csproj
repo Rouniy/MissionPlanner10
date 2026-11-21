@@ -107,6 +107,7 @@
     <Compile Include="ViewModels/ExternalGuidedViewModel.cs" />
     <Compile Include="ViewModels/MavlinkCanTransport.cs" />
     <Compile Include="ViewModels/Setup/Nv5NativeSettingsEditor.cs" />
+    <Compile Include="ViewModels/Setup/Nv5LpsField.cs" />
     <Compile Include="ViewModels/Setup/Nv5NativeSettingsEditor.Distance.cs" />
     <Compile Include="ViewModels/Setup/Nv5NativeSettingsEditor.Lps.cs" />
     <Compile Include="ViewModels/Setup/NvModemDistancePairViewModel.cs" />
