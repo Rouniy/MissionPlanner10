@@ -212,10 +212,8 @@ public partial class Nv5NativeSettingsEditorTests {
   }
 
   [Fact]
-  public void Freshness_is_asked_for_only_when_wanted_and_never_while_a_save_restarts() {
-    Nv5FakeModem modem = Nv5LpsTestData.Modem(0, Nv5LpsRoles.Rover, 0);
-    modem.CommitModel = true;
-    var bench = new Bench(modem);
+  public void Freshness_is_asked_for_only_when_wanted_and_never_once_a_commit_went_out() {
+    var bench = new Bench(Nv5LpsTestData.Modem(0, Nv5LpsRoles.Rover, 0));
     Nv5NativeSettingsEditor editor = bench.Attach();
     // Time passes with every request answered, as on a live link.
     void Elapse(uint milliseconds) {
@@ -236,15 +234,26 @@ public partial class Nv5NativeSettingsEditorTests {
     Elapse(400);
     Assert.Equal(2, bench.Modem.Challenges.Count);
     Assert.NotEqual(Nv5LpsTestData.Nonce(first), Nv5LpsTestData.Nonce(bench.Modem.Challenges[1]));
+    // Answered, the fix is shown.
+    Nv5LpsStatusMessage report = Nv5LpsTestData.Status(
+        Nv5LpsTestData.Nonce(bench.Modem.Challenges[1]));
+    report.PoseValidForUs = 30000000;
+    Assert.True(editor.Receive(Nv5LpsTestData.Packet(report), bench.Modem.Peer.Route));
+    Assert.StartsWith("E 0.00, N 0.00", editor.LpsRow().Reading, StringComparison.Ordinal);
 
-    // A commit restarts the modem: nothing is asked until it is back and verified.
+    // A commit may restart the modem: its reports are withdrawn at once, and nothing is asked
+    // while the commit has no answer.
+    bench.Drop = (_, frame) => frame.Payload is Nv5ConfigControlMessage {
+      Operation: Nv5ConfigOperations.Commit,
+    };
     Assert.True(editor.SetValue("LPS_FC_SYS", "2"));
     editor.Save();
-    Assert.True(bench.Pump(() => editor.AwaitingReconnect
-        && editor.StatusText.Contains("Waiting for restart", StringComparison.Ordinal)),
-        editor.StatusText);
+    Assert.True(bench.Pump(() => editor.AwaitingReconnect), editor.StatusText);
+    Assert.False(editor.Lps.Received);
+    Assert.Equal("no LPS report yet", editor.LpsRow().Reading);
     int asked = bench.Modem.Challenges.Count;
-    Elapse(4000);
+    Elapse(2500);
+    Assert.True(editor.AwaitingReconnect, editor.StatusText);
     Assert.Equal(asked, bench.Modem.Challenges.Count);
   }
 
