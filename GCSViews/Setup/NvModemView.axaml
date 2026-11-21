@@ -65,7 +65,7 @@
                   IsVisible="{Binding UsesNativeSettings}">
           <!-- Ranging is always switched for both ends of a link, so the group has no per-modem
                switch: it shows each radio's state, and pair setup changes it. -->
-          <Grid RowDefinitions="Auto,Auto" Margin="8">
+          <Grid RowDefinitions="Auto,Auto,Auto" Margin="8">
             <setup:NvDistanceRowsView Grid.Row="0" x:Name="DistanceRows"
                                       Rows="{Binding NativeSettings.DistanceRows}" />
             <!-- The line beside the button says what it does, or why it is unavailable now. -->
@@ -76,6 +76,14 @@
               <TextBlock x:Name="DistancePairHint" Classes="fieldlbl"
                          Text="{Binding DistancePairHint}" TextWrapping="Wrap"
                          VerticalAlignment="Center" Margin="10,0,0,0" />
+            </DockPanel>
+            <!-- The LPS field has its own line, with its own guidance. -->
+            <DockPanel Grid.Row="2" Margin="0,6,0,0">
+              <Button DockPanel.Dock="Left" x:Name="ConfigureLpsFieldButton"
+                      Content="Configure LPS field…"
+                      IsEnabled="{Binding CanConfigureLpsField}" VerticalAlignment="Center" />
+              <TextBlock x:Name="LpsFieldHint" Classes="fieldlbl" Text="{Binding LpsFieldHint}"
+                         TextWrapping="Wrap" VerticalAlignment="Center" Margin="10,0,0,0" />
             </DockPanel>
           </Grid>
         </Expander>

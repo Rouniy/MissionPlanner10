@@ -262,6 +262,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   // The distance pair window, while it is open. It holds its own editors of the two modems; the
   // page's editor leaves them to it until the window closes.
   private NvModemDistancePairViewModel? _distancePair;
+  private NvModemLpsFieldViewModel? _lpsField;
 
   // Per modem UID: the passport uptime last seen and the transport epoch, which advances when the
   // uptime goes back, so a restart ends anything the editor was doing on the old boot.
@@ -385,11 +386,11 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   public Nv5NativeSettingsEditor NativeSettings { get; }
 
   public bool UsesNativeSettings => SelectedState is { } device && SupportsNativeSettings(device);
-  public bool CanSwitchDevice => !IsBusy && !NativeSettings.Saving && _distancePair == null;
+  public bool CanSwitchDevice => !IsBusy && !NativeSettings.Saving && !FieldWindowOpen;
 
   /// <summary>A native save waits for any modem command still awaiting its acknowledgement, just
   /// as those commands wait for a native save.</summary>
-  public bool CanSaveNativeSettings => !IsBusy && NativeSettings.CanSave && _distancePair == null;
+  public bool CanSaveNativeSettings => !IsBusy && NativeSettings.CanSave && !FieldWindowOpen;
 
   /// <summary>Pair setup starts from a read modem without unsaved edits, as the pair window
   /// saves what its own tables hold.</summary>
@@ -401,11 +402,24 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       : DistancePairBlocked() is { Length: > 0 } blocked ? blocked
       : "Switches ranging on or off for both ends of a link, and sets its schedule.";
 
+  /// <summary>The LPS field window starts from a read modem without unsaved edits, as the pair
+  /// window does.</summary>
+  public bool CanConfigureLpsField => UsesNativeSettings && DistancePairBlocked().Length == 0;
+
+  /// <summary>What the LPS field window does, or why it cannot open now.</summary>
+  public string LpsFieldHint => !UsesNativeSettings ? ""
+      : DistancePairBlocked() is { Length: > 0 } blocked ? blocked
+      : NativeSettings.LpsSupported ? "Sets the surveyed field and the LPS role of each modem."
+      : "This modem's firmware has no LPS settings; the field can still be set on the modems that "
+          + "have them.";
+
   partial void OnIsBusyChanged(bool value) {
     OnPropertyChanged(nameof(CanSaveNativeSettings));
     OnPropertyChanged(nameof(CanSwitchDevice));
     OnPropertyChanged(nameof(CanConfigureDistancePair));
     OnPropertyChanged(nameof(DistancePairHint));
+    OnPropertyChanged(nameof(CanConfigureLpsField));
+    OnPropertyChanged(nameof(LpsFieldHint));
   }
   public bool HasSelectedDevice => SelectedDevice != null;
   public bool HasParameters => Parameters.Count != 0;
@@ -414,7 +428,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   // A native save owns the modem until it settles; a reboot, transmitter command or PARAM write in
   // between could cut the commit short or race its restart.
   public bool CanEdit => SelectedState is { } device && IsOnline(device) && !IsBusy
-      && !NativeSettings.Saving && _distancePair == null;
+      && !NativeSettings.Saving && !FieldWindowOpen;
   public bool CanSave => CanEdit && HasPendingChanges;
   public bool CanUseNv5Controls => CanEdit
       && SelectedState?.Generation == NvModemGeneration.Nv5;
@@ -617,8 +631,54 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
   internal NvModemDistancePairViewModel? DistancePair => _distancePair;
 
+  /// <summary>
+  /// Opens the LPS field window with the selected modem as Modem 1; every other verified,
+  /// transaction-capable modem that is online follows, and modems heard later join.
+  /// </summary>
+  internal NvModemLpsFieldViewModel? OpenLpsField() {
+    NvModemDeviceState? selected = SelectedState;
+    if (selected == null || !CanConfigureLpsField || NativeSettings.Target is not { } first) {
+      return null;
+    }
+    var field = new NvModemLpsFieldViewModel(CreateNativeEditor, IsOpenRoute);
+    field.SendFrame += SendNativeFrame;
+    field.CommitSent += ArmNativeIdentityTransition;
+    _lpsField = field;
+    // The window's own editor of this modem asks for fresh reports while it is open.
+    NativeSettings.LpsChallenges = false;
+    field.Offer(first, selected.ModemInfo.TimeBootMs, selected.Key.Link.Name);
+    foreach (NvModemDeviceState device in _devices.Values) {
+      if (SupportsNativeSettings(device) && HasStableModemIdentity(device.ModemInfo)
+          && IsOnline(device) && !first.Uid.AsSpan().SequenceEqual(device.ModemInfo.Uid2 ?? [])) {
+        field.Offer(NativeTargetOf(device), device.ModemInfo.TimeBootMs, device.Key.Link.Name);
+      }
+    }
+    RefreshControls();
+    return field;
+  }
+
+  /// <summary>The LPS field window closed: the page's editor follows the selected modem
+  /// again.</summary>
+  internal void CloseLpsField() {
+    if (_lpsField == null) {
+      return;
+    }
+    _lpsField = null;
+    NativeSettings.LpsChallenges = true;
+    if (SelectedState is { } device && SupportsNativeSettings(device)) {
+      ObserveNativeTarget(device);
+    }
+    RefreshControls();
+  }
+
+  internal NvModemLpsFieldViewModel? LpsField => _lpsField;
+
+  /// <summary>A window that saves modems of its own is open; the page waits for it.</summary>
+  private bool FieldWindowOpen => _distancePair != null || _lpsField != null;
+
   private string DistancePairBlocked() =>
-      _distancePair != null ? "The pair window is open."
+      _lpsField != null ? "The LPS field window is open."
+      : _distancePair != null ? "The pair window is open."
       : IsBusy ? "Wait for the pending modem command to finish."
       : NativeSettings.Busy ? "Available once this modem has been read."
       : !NativeSettings.Ready ? "This modem's settings are not read: press Read settings."
@@ -1144,6 +1204,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       // An editor accepts only replies from its target on its route and transport epoch.
       NativeSettings.Receive(packet, source);
       _distancePair?.Receive(packet, source);
+      _lpsField?.Receive(packet, source);
       return;
     }
     if (packet.msgid == NvModemMessageIds.Nv5Distance) {
@@ -1154,6 +1215,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     if (packet.msgid is NvModemMessageIds.Nv5LpsStatus or NvModemMessageIds.Nv5LpsBeacon) {
       // An editor takes only its modem's reports, from its verified route.
       NativeSettings.Receive(packet, source);
+      _lpsField?.Receive(packet, source);
     }
 
     var key = new NvModemDeviceKey(source, packet.sysid, packet.compid);
@@ -1305,6 +1367,12 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     if (supportedModemInfo && _distancePair != null) {
       ObservePairTarget(device);
     }
+    if (supportedModemInfo && _lpsField != null && SupportsNativeSettings(device)
+        && HasStableModemIdentity(device.ModemInfo) && IsOnline(device)) {
+      // A modem heard while the window is open joins it; one it holds follows its restarts.
+      _lpsField.Offer(NativeTargetOf(device), device.ModemInfo.TimeBootMs,
+          device.Key.Link.Name);
+    }
     RebuildCopySources();
   }
 
@@ -1395,9 +1463,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       && Equals(target.Route, device.Key.Link)
       && target.System == device.Key.SystemId && target.Component == device.Key.ComponentId;
 
-  /// <summary>The page's editor and, while the pair window is open, its two editors.</summary>
+  /// <summary>The page's editor and, while a field window is open, the window's editors.</summary>
   private IEnumerable<Nv5NativeSettingsEditor> NativeEditors() =>
-      _distancePair == null ? [NativeSettings] : [NativeSettings, .. _distancePair.Editors];
+      [NativeSettings, .. _distancePair?.Editors ?? [], .. _lpsField?.Editors ?? []];
 
   private void MigrateDeviceIdentity(
       NvModemDeviceState previous,
@@ -2349,6 +2417,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     DateTime now = _utcNow();
     NativeSettings.Service();
     _distancePair?.Service();
+    _lpsField?.Service();
     foreach (NvModemDeviceState device in _devices.Values) {
       UpdateDeviceLabel(device);
       if (SupportsNativeSettings(device)) {
@@ -2730,9 +2799,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   }
 
   private void ObserveNativeTarget(NvModemDeviceState device) {
-    // While the pair window is open its editors follow the modems; the page's editor waits, so
+    // While a field window is open its editors follow the modems; the page's editor waits, so
     // that it never reads a modem the window is saving.
-    if (!SupportsNativeSettings(device) || _distancePair != null) {
+    if (!SupportsNativeSettings(device) || FieldWindowOpen) {
       return;
     }
     NativeSettings.ObserveTarget(NativeTargetOf(device), device.ModemInfo.TimeBootMs);
@@ -2801,6 +2870,8 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     OnPropertyChanged(nameof(CanSaveNativeSettings));
     OnPropertyChanged(nameof(CanConfigureDistancePair));
     OnPropertyChanged(nameof(DistancePairHint));
+    OnPropertyChanged(nameof(CanConfigureLpsField));
+    OnPropertyChanged(nameof(LpsFieldHint));
     OnPropertyChanged(nameof(HasSelectedDevice));
     OnPropertyChanged(nameof(HasParameters));
     OnPropertyChanged(nameof(HasPendingChanges));
@@ -2850,6 +2921,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     // Frees a modem's single read session at once instead of after its lease.
     NativeSettings.StopReading();
     _distancePair?.TryClose();
+    _lpsField?.TryClose();
     _disposed = true;
     _serviceTimer?.Stop();
     _transport.PacketReceived -= OnPacketReceived;
