@@ -258,6 +258,45 @@ public partial class Nv5NativeSettingsEditorTests {
   }
 
   [Fact]
+  public void A_report_from_before_a_commit_is_not_shown_until_the_save_ends() {
+    Nv5FakeModem modem = Nv5LpsTestData.Modem(0, Nv5LpsRoles.Rover, 0);
+    modem.CommitModel = true;
+    var bench = new Bench(modem);
+    Nv5NativeSettingsEditor editor = bench.Attach();
+    bool? finished = null;
+    editor.ConfigurationFinished += success => finished = success;
+    // The configuration being replaced has a faulted radio.
+    static Nv5LpsStatusMessage Faulted(ulong sequence) {
+      Nv5LpsStatusMessage report = Nv5LpsTestData.Status(0, sequence, 1000000 + sequence * 1000);
+      report.OwnerFlags |= Nv5LpsOwnerFlags.Faulted;
+      return report;
+    }
+    Assert.True(editor.Receive(Nv5LpsTestData.Packet(Faulted(1)), modem.Peer.Route));
+    Assert.Equal("radio fault", editor.LpsRow().Alert);
+
+    Assert.True(editor.SetValue("LPS_FC_SYS", "2"));
+    editor.Save();
+    Assert.True(bench.Pump(() => editor.StatusText.Contains("Waiting for restart",
+        StringComparison.Ordinal)), editor.StatusText);
+    // Sent before the commit, a report arrives late: the withdrawn readout stays withdrawn.
+    Assert.False(editor.Receive(Nv5LpsTestData.Packet(Faulted(2)), modem.Peer.Route));
+    Assert.False(editor.Lps.Received);
+    NvDistanceReadout shown = editor.LpsRow();
+    Assert.Equal(("no LPS report yet", ""), (shown.Reading, shown.Alert));
+    Assert.Equal("", editor.DistanceRows[1].Alert);
+
+    // Once the modem is back and the save confirmed, its reports are shown again.
+    modem.Reboot();
+    editor.ObserveTarget(modem.Peer with { TransportEpoch = modem.Peer.TransportEpoch + 1 }, 30);
+    Assert.True(bench.Pump(() => finished != null));
+    Assert.True(finished, editor.StatusText);
+    Nv5LpsStatusMessage current = Nv5LpsTestData.Status();
+    current.BootNonce = 456;
+    Assert.True(editor.Receive(Nv5LpsTestData.Packet(current), modem.Peer.Route));
+    Assert.Equal("no position: not confirmed current yet", editor.LpsRow().Reading);
+  }
+
+  [Fact]
   public void A_modem_without_lps_settings_has_no_lps_row_and_is_never_asked() {
     var bench = new Bench(CatalogueModem());
     Nv5NativeSettingsEditor editor = bench.Add(null);

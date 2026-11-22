@@ -272,7 +272,9 @@ public sealed partial class Nv5NativeSettingsEditor {
   }
 
   private bool ReceiveLps(MAVLink.MAVLinkMessage message, object route) {
-    if (_target == null) {
+    // From a commit until its save ends, a report may still describe the configuration being
+    // replaced: the commit withdrew the reports, and none is taken until the modem is back.
+    if (_target == null || AwaitingReconnect) {
       return false;
     }
     _lps.Observe(_target);

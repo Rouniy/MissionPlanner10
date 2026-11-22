@@ -1107,8 +1107,6 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if ((_step == Step.Commit || _step == Step.Recovery) && _client.DurableConfirmed
         && !_durableEmitted) {
       _durableEmitted = true;
-      // Reports from before the restart describe the old configuration.
-      _lps.Invalidate();
       DurableSaved?.Invoke();
     }
     if (_step is Step.Idle or Step.Failed) {

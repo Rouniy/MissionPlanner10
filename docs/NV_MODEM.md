@@ -247,11 +247,12 @@ why it cannot open now, as for the pair window. The two windows are never open t
   relative drift and 2 ms of clock uncertainty, and trust ends ten seconds after the last answer.
   A position is shown only while its reports are confirmed current and its own validity has not
   run out, and it expires between reports. Nothing is asked once a commit has gone out, and a
-  commit or a new route withdraws the reports until the modem is back. A range says its age once
-  it is two seconds old; after three seconds without a report the row shows only that silence, in
-  red. Calibration is optional: a fix says which of its ranges were calibrated and is never held
-  back for it. This is freshness correlation, not authentication, and nothing here feeds the
-  flight controller.
+  commit or a new route withdraws the reports until the modem is back: from a commit until its save
+  ends, no report is taken, so a late one cannot bring back the configuration being replaced.
+  A range says its age once it is two seconds old; after three seconds without a report the row
+  shows only that silence, in red. Calibration is optional: a fix says which of its ranges were
+  calibrated and is never held back for it. This is freshness correlation, not authentication, and
+  nothing here feeds the flight controller.
 - **Window.** The selected modem is Modem 1; every other verified, transaction-capable modem that
   is online follows as Modem 2, 3 and so on, and a modem heard later joins. The tabs read `Field`,
   then `Modem N · system:component`, each with that modem's complete settings for review only. The
