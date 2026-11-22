@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using MissionPlanner.Services;
@@ -561,24 +562,39 @@ public sealed partial class NvModemLpsFieldViewModel : ObservableObject {
   }
 
   /// <summary>Writes the field shown as a field document.</summary>
+  /// <remarks>The document is written to a new, unpredictably named file beside it, which only
+  /// this export can have created (CreateNew fails on any existing path), and then replaces the
+  /// destination. A failed export removes that file and touches no other.</remarks>
   internal void ExportField(string path) {
     string error = Nv5LpsField.Validate(_text);
     if (error.Length != 0) {
       Status = $"Not exported. Field: {error}";
       return;
     }
-    string temporary = path + ".part";
+    string fullPath = Path.GetFullPath(path);
+    string temporary = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".",
+        $".{Path.GetFileName(fullPath)}."
+            + $"{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}.tmp");
+    bool created = false;
     try {
-      File.WriteAllBytes(temporary, Nv5LpsField.ToJson(Nv5LpsField.Normalized(_text)));
-      File.Move(temporary, path, overwrite: true);
+      using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+          FileShare.None)) {
+        created = true;
+        stream.Write(Nv5LpsField.ToJson(Nv5LpsField.Normalized(_text)));
+        stream.Flush(flushToDisk: true);
+      }
+      File.Move(temporary, fullPath, overwrite: true);
       Status = "Field exported.";
+      return;
     } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
+      Status = "Could not write the field document.";
+    }
+    if (created) {
       try {
         File.Delete(temporary);
       } catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) {
         // The partial document is left where it is; the status names the failure.
       }
-      Status = "Could not write the field document.";
     }
   }
 

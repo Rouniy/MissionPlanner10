@@ -403,7 +403,7 @@ public class NvModemLpsFieldTests {
       string path = Path.Combine(directory, "field.json");
       field.ExportField(path);
       Assert.Equal("Field exported.", field.Status);
-      Assert.False(File.Exists(path + ".part"));
+      Assert.Equal([path], Directory.GetFiles(directory));
       Assert.True(Nv5LpsField.FromJson(File.ReadAllBytes(path), out SortedDictionary<string,
           string> exported, out string error), error);
       Assert.Equal(field.Field, exported);
@@ -423,6 +423,44 @@ public class NvModemLpsFieldTests {
       field.ExportField(path);
       Assert.Equal("Not exported. Field: Beacon IDs and nonzero addresses must be unique.",
           field.Status);
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  [Fact]
+  public void An_export_replaces_its_document_and_removes_only_the_file_it_made() {
+    var bench = new LpsFieldBench(Nv5LpsTestData.Modem(0, Nv5LpsRoles.Rover, 0),
+        Nv5LpsTestData.Modem(1, Nv5LpsRoles.Beacon, uint.MaxValue));
+    NvModemLpsFieldViewModel field = bench.Open();
+    string directory = Directory.CreateTempSubdirectory("lps-field-").FullName;
+    try {
+      string path = Path.Combine(directory, "field.json");
+      string blocked = Path.Combine(directory, "blocked.json");
+      // Files that merely share a document's name belong to someone else.
+      string[] kept = [path + ".part", path + ".tmp", Path.Combine(directory, ".field.json.tmp"),
+          blocked + ".part"];
+      foreach (string file in kept) {
+        File.WriteAllText(file, "kept");
+      }
+      File.WriteAllText(path, "old");
+      string[] Files() => [.. Directory.GetFiles(directory).Order(StringComparer.Ordinal)];
+      string[] expected = [.. kept.Append(path).Order(StringComparer.Ordinal)];
+
+      field.ExportField(path);
+      Assert.Equal("Field exported.", field.Status);
+      Assert.True(Nv5LpsField.FromJson(File.ReadAllBytes(path), out _, out string error), error);
+      Assert.Equal(expected, Files());
+      Assert.All(kept, file => Assert.Equal("kept", File.ReadAllText(file)));
+
+      // A folder in the document's place cannot be replaced: the export fails and removes only
+      // the file it made.
+      Directory.CreateDirectory(blocked);
+      field.ExportField(blocked);
+      Assert.Equal("Could not write the field document.", field.Status);
+      Assert.Equal(expected, Files());
+      Assert.All(kept, file => Assert.Equal("kept", File.ReadAllText(file)));
+      Assert.Empty(Directory.EnumerateFileSystemEntries(blocked));
     } finally {
       Directory.Delete(directory, recursive: true);
     }
