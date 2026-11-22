@@ -239,8 +239,9 @@ why it cannot open now, as for the pair window. The two windows are never open t
 
 - **Reports and freshness.** `NV5_LPS_STATUS` and `NV5_LPS_BEACON` count only from the modem's
   verified route and UID, and a beacon row only with the exact capture of the latest status; a
-  report never renews an older one. The page asks the selected modem, and the window each of its
-  modems, whether the reports are current: an exact-target `MAV_CMD_REQUEST_MESSAGE` for 53030
+  report never renews an older one, and a late one from an earlier radio-owner epoch of the same
+  boot withdraws nothing. The page asks the selected modem, and the window each of its modems,
+  whether the reports are current: an exact-target `MAV_CMD_REQUEST_MESSAGE` for 53030
   with a fresh random 64-bit nonce in params 2–4 (24, 24 and 16 bits), retried after three seconds
   and refreshed after five. The answer bounds the age of later reports, allowing 500 ppm of
   relative drift and 2 ms of clock uncertainty, and trust ends ten seconds after the last answer.

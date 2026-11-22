@@ -86,6 +86,38 @@ public class Nv5LpsTelemetryTests {
   }
 
   [Fact]
+  public void A_late_report_from_an_earlier_epoch_withdraws_nothing() {
+    var model = new Nv5LpsTelemetry();
+    model.Observe(Peer);
+    Assert.NotNull(model.Request(100000, 42));
+    Assert.True(model.Receive(Nv5LpsTestData.Packet(Nv5LpsTestData.Status(42, 5)), "route",
+        110000));
+    Assert.True(model.PoseCurrent(110000));
+    // Sent before the radio owner's epoch advanced to the current one, it arrives late.
+    Nv5LpsStatusMessage late = Nv5LpsTestData.Status(0, 4, 900000);
+    late.RuntimeEpoch = 6;
+    Assert.False(model.Receive(Nv5LpsTestData.Packet(late), "route", 111000));
+    Assert.True(model.Verified(111000));
+    Assert.True(model.PoseCurrent(111000));
+    Assert.False(model.ChallengeDue(111000));
+    Assert.Equal(5ul, model.Status.SnapshotSeq);
+
+    // A later epoch is a change: the confirmation is withdrawn until a challenge renews it, and a
+    // late report of the epoch before does not take the place of its reports.
+    Nv5LpsStatusMessage next = Nv5LpsTestData.Status(0, 6, 1001000);
+    next.RuntimeEpoch = 8;
+    Assert.False(model.Receive(Nv5LpsTestData.Packet(next), "route", 112000));
+    Assert.False(model.Verified(112000));
+    Assert.True(model.ChallengeDue(112000));
+    next.SnapshotSeq = 7;
+    next.SnapshotTimeUs = 1002000;
+    Assert.True(model.Receive(Nv5LpsTestData.Packet(next), "route", 113000));
+    Assert.False(model.Receive(Nv5LpsTestData.Packet(Nv5LpsTestData.Status(0, 6, 1000500)),
+        "route", 113500));
+    Assert.Equal((8ul, 7ul), (model.Status.RuntimeEpoch, model.Status.SnapshotSeq));
+  }
+
+  [Fact]
   public void Rows_join_only_their_exact_capture_and_another_report_never_renews_them() {
     var model = new Nv5LpsTelemetry();
     model.Observe(Peer);

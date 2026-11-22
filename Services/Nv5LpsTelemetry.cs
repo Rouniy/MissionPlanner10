@@ -14,8 +14,11 @@ namespace MissionPlanner.Services;
 /// request's send time and the reply's receipt bound how old any later report can be, allowing
 /// 500 ppm of relative drift and 2 ms of clock uncertainty. Challenges are retried after three
 /// seconds and refreshed after five; without a fresh anchor, trust ends after ten. BEACON rows join
-/// only the exact capture of the latest STATUS, and a report never renews an older one. This is
-/// freshness correlation, not authentication. Times are microseconds on the caller's clock.
+/// only the exact capture of the latest STATUS, and a report never renews an older one. A STATUS
+/// from an earlier radio-owner epoch of the same boot is late, not a change, and withdraws
+/// nothing; another boot or a later epoch withdraws the confirmation until a challenge renews it.
+/// This is freshness correlation, not authentication. Times are microseconds on the caller's
+/// clock.
 /// </remarks>
 internal sealed class Nv5LpsTelemetry {
   private const ulong ChallengeRetryUs = 3_000_000;
@@ -199,10 +202,14 @@ internal sealed class Nv5LpsTelemetry {
     }
     bool response = _nonce != 0 && value.Challenge == _nonce && now >= _sentAt
         && now - _sentAt <= ChallengeRetryUs;
+    // Within a boot the radio-owner epoch only advances, and within an epoch so do the sequence
+    // and the capture time. A report behind the latest, from an earlier epoch or earlier in this
+    // one, is late or repeated: it is refused before it could withdraw the current confirmation.
     if (_received && value.BootNonce == _status.BootNonce
-        && value.RuntimeEpoch == _status.RuntimeEpoch
-        && (value.SnapshotSeq <= _status.SnapshotSeq
-            || value.SnapshotTimeUs < _status.SnapshotTimeUs)) {
+        && (value.RuntimeEpoch < _status.RuntimeEpoch
+            || (value.RuntimeEpoch == _status.RuntimeEpoch
+                && (value.SnapshotSeq <= _status.SnapshotSeq
+                    || value.SnapshotTimeUs < _status.SnapshotTimeUs)))) {
       return false;
     }
     if (!response && _anchored && (value.BootNonce != _boot || value.RuntimeEpoch != _epoch)) {
