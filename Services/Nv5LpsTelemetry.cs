@@ -15,10 +15,11 @@ namespace MissionPlanner.Services;
 /// 500 ppm of relative drift and 2 ms of clock uncertainty. Challenges are retried after three
 /// seconds and refreshed after five; without a fresh anchor, trust ends after ten. BEACON rows join
 /// only the exact capture of the latest STATUS, and a report never renews an older one. A STATUS
-/// from an earlier radio-owner epoch of the same boot is late, not a change, and withdraws
-/// nothing; another boot or a later epoch withdraws the confirmation until a challenge renews it.
-/// This is freshness correlation, not authentication. Times are microseconds on the caller's
-/// clock.
+/// behind the newest one heard from its boot, such as one from an earlier radio-owner epoch, is
+/// late, not a change: it withdraws nothing and is not taken, even once a later epoch has
+/// withdrawn the confirmation. Another boot or a later epoch withdraws the confirmation until a
+/// challenge renews it. This is freshness correlation, not authentication. Times are microseconds
+/// on the caller's clock.
 /// </remarks>
 internal sealed class Nv5LpsTelemetry {
   private const ulong ChallengeRetryUs = 3_000_000;
@@ -29,6 +30,8 @@ internal sealed class Nv5LpsTelemetry {
   private readonly Nv5LpsBeaconMessage[] _rows = new Nv5LpsBeaconMessage[4];
   private Target? _target;
   private Nv5LpsStatusMessage _status;
+  // The newest STATUS heard, whether taken or withdrawing the confirmation; all zero until one is.
+  private Nv5LpsStatusMessage _newest;
   private ulong _nonce;
   private ulong _sentAt;
   private ulong _anchorSent;
@@ -71,6 +74,7 @@ internal sealed class Nv5LpsTelemetry {
     _boot = 0;
     _epoch = 0;
     _status = default;
+    _newest = default;
   }
 
   internal bool ChallengeDue(ulong now) =>
@@ -203,17 +207,20 @@ internal sealed class Nv5LpsTelemetry {
     bool response = _nonce != 0 && value.Challenge == _nonce && now >= _sentAt
         && now - _sentAt <= ChallengeRetryUs;
     // Within a boot the radio-owner epoch only advances, and within an epoch so do the sequence
-    // and the capture time. A report behind the latest, from an earlier epoch or earlier in this
-    // one, is late or repeated: it is refused before it could withdraw the current confirmation.
-    if (_received && value.BootNonce == _status.BootNonce
-        && (value.RuntimeEpoch < _status.RuntimeEpoch
-            || (value.RuntimeEpoch == _status.RuntimeEpoch
-                && (value.SnapshotSeq <= _status.SnapshotSeq
-                    || value.SnapshotTimeUs < _status.SnapshotTimeUs)))) {
+    // and the capture time. A report behind the newest heard, from an earlier epoch or earlier in
+    // this one, is late or repeated: it is refused before it could withdraw the current
+    // confirmation, and after a later epoch withdrew it. A report's boot nonce is never zero.
+    if (value.BootNonce == _newest.BootNonce
+        && (value.RuntimeEpoch < _newest.RuntimeEpoch
+            || (value.RuntimeEpoch == _newest.RuntimeEpoch
+                && (value.SnapshotSeq <= _newest.SnapshotSeq
+                    || value.SnapshotTimeUs < _newest.SnapshotTimeUs)))) {
       return false;
     }
     if (!response && _anchored && (value.BootNonce != _boot || value.RuntimeEpoch != _epoch)) {
-      // Another boot or radio-owner epoch: nothing known about this one is trusted.
+      // Another boot or radio-owner epoch: nothing known about this one is trusted, and a report
+      // older than this one is not taken in its place.
+      _newest = value;
       _anchored = false;
       _nonce = 0;
       _mask = 0;
@@ -239,6 +246,7 @@ internal sealed class Nv5LpsTelemetry {
       _anchored = true;
     }
     _status = value;
+    _newest = value;
     _receivedAt = now;
     _received = true;
     _mask = 0;
