@@ -341,6 +341,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (message.msgid == NvModemMessageIds.Nv5Distance) {
       return ReceiveDistance(message, route);
     }
+    if (message.msgid is NvModemMessageIds.Nv5LpsStatus or NvModemMessageIds.Nv5LpsBeacon) {
+      return ReceiveLps(message, route);
+    }
     if (_target == null || !_client.Receive(message, route, _target.TransportEpoch, Now())) {
       return false;
     }
@@ -396,6 +399,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     if (_client.TakeOutbound(Now()) is { } frame) {
       SendFrame?.Invoke(frame, _target);
     }
+    ServiceLps();
     UpdateDistance();
     bool recovering = _step == Step.Recovery;
     if (Busy && unchecked(Now() - (recovering ? _recoveryStarted : _progress))
@@ -1463,6 +1467,7 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
       return;
     }
     _commitSent = true;
+    _lps.Invalidate();
     SetStep(Step.Commit);
     // A ranging switch-off announces no identity change, and it has no read values to inspect.
     if (!_quickWrite) {
@@ -1571,7 +1576,9 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     return Ends("_RNG_N") ? "exchanges" : "";
   }
 
-  private static bool TryParseInteger(string text, out long number) {
+  /// <summary>An integer as the firmware's own tools write it: decimal, 0x hexadecimal or
+  /// leading-zero octal, with an optional sign.</summary>
+  internal static bool TryParseInteger(string text, out long number) {
     number = 0;
     bool negative = text.StartsWith('-');
     string digits = negative || text.StartsWith('+') ? text[1..] : text;

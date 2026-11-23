@@ -254,6 +254,48 @@ internal static class Nv5RangingReferenceScopes {
   internal const byte WholeAssembly = 1;
 }
 
+/// <summary>LPS role of <see cref="Nv5LpsStatusMessage.Role"/>, and of the LPS_ROLE
+/// setting.</summary>
+internal static class Nv5LpsRoles {
+  internal const byte Off = 0;
+  internal const byte Rover = 1;
+  internal const byte Beacon = 2;
+}
+
+/// <summary>Rover positioning state of <see cref="Nv5LpsStatusMessage.Status"/>; the others are
+/// reasons there is no position.</summary>
+internal static class Nv5LpsStatuses {
+  internal const byte RadioFault = 1;
+  internal const byte StaleFlightController = 5;
+  internal const byte RangesStale = 9;
+  internal const byte Valid = 13;
+}
+
+/// <summary>Radio-owner state of <see cref="Nv5LpsStatusMessage.OwnerFlags"/>.</summary>
+internal static class Nv5LpsOwnerFlags {
+  internal const byte Bound = 1;
+
+  /// <summary>LPS has the radio to itself, and its data link is paused.</summary>
+  internal const byte Dedicated = 2;
+
+  internal const byte Maintenance = 4;
+  internal const byte Faulted = 8;
+  internal const byte TransmitSuppressed = 16;
+}
+
+/// <summary>Contents of a beacon row, <see cref="Nv5LpsBeaconMessage.Flags"/>.</summary>
+internal static class Nv5LpsBeaconFlags {
+  internal const byte Observed = 1;
+  internal const byte Calibrated = 2;
+}
+
+/// <summary>Why a beacon row's peer is retired, <see cref="Nv5LpsBeaconMessage.Exclusion"/>.</summary>
+internal static class Nv5LpsPeerExclusions {
+  internal const byte Included = 0;
+  internal const byte Calibration = 1;
+  internal const byte RangeUnavailable = 2;
+}
+
 [StructLayout(LayoutKind.Sequential, Pack = 1, Size = 75)]
 internal struct Nv5ConfigControlMessage {
   internal ulong BootNonce;

@@ -32,6 +32,7 @@ public partial class NvModemView : UserControl {
       }
     };
     this.FindControl<Button>("ConfigureDistancePairButton")!.Click += ConfigureDistancePair;
+    this.FindControl<Button>("ConfigureLpsFieldButton")!.Click += ConfigureLpsField;
     this.FindControl<Button>("LoadNativeSnapshotButton")!.Click += LoadNativeSnapshot;
     this.FindControl<Button>("ExportNativeSnapshotButton")!.Click += ExportNativeSnapshot;
     this.FindControl<DataGrid>("NativeSettingsGrid")!.BeginningEdit += (_, args) => {
@@ -42,6 +43,18 @@ public partial class NvModemView : UserControl {
   }
 
   private NvModemViewModel? ViewModel => DataContext as NvModemViewModel;
+
+  private async void ConfigureLpsField(object? sender, RoutedEventArgs e) {
+    if (TopLevel.GetTopLevel(this) is not Window owner || ViewModel is not { } page
+        || page.OpenLpsField() is not { } field) {
+      return;
+    }
+    try {
+      await new NvModemLpsFieldWindow { DataContext = field }.ShowDialog(owner);
+    } finally {
+      page.CloseLpsField();
+    }
+  }
 
   private async void ConfigureDistancePair(object? sender, RoutedEventArgs e) {
     if (TopLevel.GetTopLevel(this) is not Window owner || ViewModel is not { } page

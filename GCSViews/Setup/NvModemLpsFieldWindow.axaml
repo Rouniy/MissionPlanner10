@@ -1,0 +1,359 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlanner.ViewModels.Setup"
+  xmlns:setup="using:MissionPlanner.Views.Setup"
+  x:Class="MissionPlanner.Views.Setup.NvModemLpsFieldWindow"
+  x:DataType="vm:NvModemLpsFieldViewModel"
+  Title="Configure LPS field"
+  Width="1200" Height="860" MinWidth="1000" MinHeight="700"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Window.Styles>
+    <!-- The red the settings pages use for errors: only a problem is coloured. -->
+    <Style Selector="TextBlock.problem">
+      <Setter Property="Foreground" Value="#FF7777" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Grid.field > TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- A radio that cannot take LPS stays in the list, greyed, and its tip says why. -->
+    <Style Selector="ComboBox.choices ComboBoxItem" x:DataType="vm:NvLpsChoice">
+      <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+      <Setter Property="ToolTip.Tip" Value="{Binding TipText}" />
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="12" RowSpacing="8">
+    <TextBlock Grid.Row="0" Classes="fieldlbl" Text="{Binding Explanation}" TextWrapping="Wrap" />
+
+    <!-- Modems and roles on the left; the shared field and each modem's settings on the right. -->
+    <Grid Grid.Row="1" ColumnDefinitions="460,*" ColumnSpacing="12">
+      <ScrollViewer Grid.Column="0" x:Name="LpsSetup" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="6" Margin="0,0,14,0">
+          <Grid ColumnDefinitions="*,92,92,72" ColumnSpacing="6">
+            <TextBlock Grid.Column="0" Text="Modem" FontWeight="SemiBold" />
+            <TextBlock Grid.Column="1" Text="Role" FontWeight="SemiBold" />
+            <TextBlock Grid.Column="2" Text="Radio" FontWeight="SemiBold" />
+            <TextBlock Grid.Column="3" Text="Beacon" FontWeight="SemiBold" />
+          </Grid>
+          <ItemsControl x:Name="LpsModems" ItemsSource="{Binding Modems}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:NvLpsModem">
+                <StackPanel Spacing="2" Margin="0,0,0,6">
+                  <Grid ColumnDefinitions="*,92,92,72" ColumnSpacing="6">
+                    <TextBlock Grid.Column="0" Text="{Binding Name}" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Address}" />
+                    <ComboBox Grid.Column="1" Classes="choices" ItemsSource="{Binding Roles}"
+                              SelectedItem="{Binding Role, Mode=TwoWay}"
+                              IsVisible="{Binding LoadedShown}" IsEnabled="{Binding Editable}"
+                              HorizontalAlignment="Stretch"
+                              ToolTip.Tip="Off leaves the modem out of LPS. The rover measures its distance to the beacons; a beacon answers." />
+                    <ComboBox Grid.Column="2" Classes="choices" ItemsSource="{Binding Radios}"
+                              SelectedItem="{Binding Radio, Mode=TwoWay}"
+                              IsVisible="{Binding RadioShown}" IsEnabled="{Binding Editable}"
+                              HorizontalAlignment="Stretch"
+                              ToolTip.Tip="The LR2021 radio that ranges. Without a reservation for LPS, its data link stops while LPS runs." />
+                    <ComboBox Grid.Column="3" Classes="choices" ItemsSource="{Binding Beacons}"
+                              SelectedItem="{Binding Beacon, Mode=TwoWay}"
+                              IsVisible="{Binding BeaconShown}" IsEnabled="{Binding Editable}"
+                              HorizontalAlignment="Stretch"
+                              ToolTip.Tip="The surveyed beacon this modem answers for." />
+                  </Grid>
+                  <TextBlock Text="{Binding Line}" TextWrapping="Wrap"
+                             Classes.problem="{Binding LineIsProblem}" />
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="LpsFieldProblems" Classes="problem" Text="{Binding ProblemsText}"
+                     TextWrapping="Wrap" IsVisible="{Binding ProblemsShown}" />
+
+          <!-- Settings only the rover uses, shown for whichever modem is the rover. -->
+          <TextBlock x:Name="LpsRoverName" Text="{Binding RoverName}" TextWrapping="Wrap"
+                     FontWeight="SemiBold" Margin="0,6,0,0" />
+          <Grid Classes="field" ColumnDefinitions="232,*">
+            <TextBlock Text="Flight controller system" />
+            <NumericUpDown Grid.Column="1" x:Name="LpsFcSystem"
+                           Value="{Binding FlightControllerSystem, Mode=TwoWay}" Minimum="1"
+                           Maximum="255" Increment="1" FormatString="0"
+                           IsEnabled="{Binding RoverEnabled}"
+                           ToolTip.Tip="MAVLink system ID of the flight controller on the rover's telemetry port." />
+          </Grid>
+          <Grid Classes="field" ColumnDefinitions="232,*">
+            <TextBlock Text="Flight controller component" />
+            <NumericUpDown Grid.Column="1" x:Name="LpsFcComponent"
+                           Value="{Binding FlightControllerComponent, Mode=TwoWay}" Minimum="1"
+                           Maximum="255" Increment="1" FormatString="0"
+                           IsEnabled="{Binding RoverEnabled}"
+                           ToolTip.Tip="MAVLink component ID of that flight controller." />
+          </Grid>
+          <Grid Classes="field" ColumnDefinitions="232,*">
+            <TextBlock Text="Launch HAE minus origin HAE (m)" />
+            <NumericUpDown Grid.Column="1" x:Name="LpsLaunchHeight"
+                           Value="{Binding LaunchHeight, Mode=TwoWay}" Minimum="-2147483.648"
+                           Maximum="2147483.647" Increment="0.1" FormatString="0.000"
+                           IsEnabled="{Binding RoverEnabled}"
+                           ToolTip.Tip="Surveyed rover antenna height above the WGS 84 ellipsoid at launch minus the field origin's ellipsoid height. Beacon Up is an ENU tangent-plane coordinate, not this height difference." />
+          </Grid>
+          <TextBlock x:Name="LpsBurst" Text="{Binding BurstText}" TextWrapping="Wrap"
+                     IsVisible="{Binding BurstText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          <TextBlock Classes="fieldlbl" Text="{Binding TieHint}" TextWrapping="Wrap" />
+          <Expander x:Name="LpsRoverAdvanced" Header="Advanced"
+                    IsExpanded="{Binding RoverAdvancedShown, Mode=TwoWay}">
+            <StackPanel Spacing="4">
+              <Grid Classes="field" ColumnDefinitions="216,*">
+                <TextBlock Text="Launch height σ (m)" />
+                <NumericUpDown Grid.Column="1" x:Name="LpsLaunchSigma"
+                               Value="{Binding LaunchSigma, Mode=TwoWay}" Minimum="0"
+                               Maximum="10000" Increment="0.01" FormatString="0.0000"
+                               IsEnabled="{Binding RoverEnabled}"
+                               ToolTip.Tip="Uncertainty of the surveyed launch height when the barometer is tied. The modem stores its square." />
+              </Grid>
+              <Grid Classes="field" ColumnDefinitions="216,*">
+                <TextBlock Text="Range noise σ (m)" />
+                <NumericUpDown Grid.Column="1" x:Name="LpsRangeSigma"
+                               Value="{Binding RangeSigma, Mode=TwoWay}" Minimum="0"
+                               Maximum="10000" Increment="0.01" FormatString="0.0000"
+                               IsEnabled="{Binding RoverEnabled}"
+                               ToolTip.Tip="Expected noise of one range measurement, for the position solver. The modem stores its square." />
+              </Grid>
+            </StackPanel>
+          </Expander>
+        </StackPanel>
+      </ScrollViewer>
+
+      <TabControl Grid.Column="1" x:Name="LpsTabs">
+        <TabItem Header="Field">
+          <ScrollViewer x:Name="LpsFieldPage" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="8" Margin="6">
+              <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="6">
+                <TextBlock Grid.Column="0" Text="Field saved on" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="1" x:Name="LpsFieldSource" ItemsSource="{Binding FieldSources}"
+                          SelectedItem="{Binding SelectedFieldSource, Mode=TwoWay}"
+                          IsEnabled="{Binding InputsEnabled}" HorizontalAlignment="Stretch"
+                          ToolTip.Tip="Show the field one of the modems holds. Changes here reach the modems only when they are saved.">
+                  <ComboBox.Styles>
+                    <Style Selector="ComboBoxItem" x:DataType="vm:NvLpsSource">
+                      <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+                    </Style>
+                  </ComboBox.Styles>
+                </ComboBox>
+                <Button Grid.Column="2" x:Name="LpsFieldRead" Content="Show"
+                        IsEnabled="{Binding InputsEnabled}" />
+                <Button Grid.Column="3" x:Name="LpsFieldImport" Content="Import…"
+                        IsEnabled="{Binding InputsEnabled}"
+                        ToolTip.Tip="Load a field document: the survey and the ranging radio settings, without keys or network settings." />
+                <Button Grid.Column="4" x:Name="LpsFieldExport" Content="Export…"
+                        ToolTip.Tip="Save the field shown here as a document." />
+              </Grid>
+              <Grid Classes="field" ColumnDefinitions="168,*">
+                <TextBlock Text="Origin latitude (°)" />
+                <TextBox Grid.Column="1" x:Name="LpsLatitude"
+                         Text="{Binding LatitudeText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                         IsEnabled="{Binding InputsEnabled}"
+                         ToolTip.Tip="Latitude of the field origin in degrees, up to 7 decimals." />
+              </Grid>
+              <Grid Classes="field" ColumnDefinitions="168,*">
+                <TextBlock Text="Origin longitude (°)" />
+                <TextBox Grid.Column="1" x:Name="LpsLongitude"
+                         Text="{Binding LongitudeText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                         IsEnabled="{Binding InputsEnabled}"
+                         ToolTip.Tip="Longitude of the field origin in degrees, up to 7 decimals." />
+              </Grid>
+              <Grid Classes="field" ColumnDefinitions="168,*">
+                <TextBlock Text="Ellipsoid height (m)" />
+                <NumericUpDown Grid.Column="1" x:Name="LpsEllipsoidHeight"
+                               Value="{Binding EllipsoidHeight, Mode=TwoWay}" Minimum="-100000"
+                               Maximum="100000" Increment="0.1" FormatString="0.000"
+                               IsEnabled="{Binding InputsEnabled}"
+                               ToolTip.Tip="Height of the field origin above the WGS 84 ellipsoid." />
+              </Grid>
+              <Grid Classes="field" ColumnDefinitions="168,*">
+                <TextBlock Text="Sea-level height (m)" />
+                <NumericUpDown Grid.Column="1" x:Name="LpsSeaLevelHeight"
+                               Value="{Binding SeaLevelHeight, Mode=TwoWay}" Minimum="-100000"
+                               Maximum="100000" Increment="0.1" FormatString="0.000"
+                               IsEnabled="{Binding InputsEnabled}"
+                               ToolTip.Tip="Height of the field origin above mean sea level." />
+              </Grid>
+              <Grid Classes="field" ColumnDefinitions="168,*">
+                <TextBlock Text="Datum ID (hex)" />
+                <TextBox Grid.Column="1" x:Name="LpsDatum"
+                         Text="{Binding DatumText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                         IsEnabled="{Binding InputsEnabled}"
+                         ToolTip.Tip="64-bit identity of the survey datum, the same on every modem of the field." />
+              </Grid>
+              <Grid Classes="field" ColumnDefinitions="168,*">
+                <TextBlock Text="Surveyed beacons" />
+                <ComboBox Grid.Column="1" x:Name="LpsBeaconCount"
+                          ItemsSource="{Binding BeaconCounts}"
+                          SelectedItem="{Binding SelectedBeaconCount, Mode=TwoWay}"
+                          IsEnabled="{Binding InputsEnabled}" HorizontalAlignment="Stretch"
+                          ToolTip.Tip="Beacons in the survey. A position needs three; a fourth adds redundancy." />
+              </Grid>
+              <TextBlock x:Name="LpsGeneration" Text="{Binding GenerationText}" TextWrapping="Wrap" />
+              <DataGrid x:Name="LpsBeacons" ItemsSource="{Binding ShownBeaconRows}"
+                        AutoGenerateColumns="False" GridLinesVisibility="All"
+                        CanUserResizeColumns="True" CanUserSortColumns="False"
+                        IsReadOnly="{Binding !InputsEnabled}" MinHeight="120">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Binding="{Binding Name}" IsReadOnly="True" FontWeight="SemiBold"
+                                      Width="44" />
+                  <DataGridTextColumn Binding="{Binding Id, Mode=TwoWay}" Width="96">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="ID" ToolTip.Tip="Survey identity of the beacon. Each beacon modem answers for one ID." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding Address, Mode=TwoWay}" Width="96">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="Address" ToolTip.Tip="Nonzero LR2021 ranging address of the beacon in hexadecimal, unique in the field." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding East, Mode=TwoWay}" Width="96">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="East (m)" ToolTip.Tip="Surveyed position east of the field origin." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding North, Mode=TwoWay}" Width="96">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="North (m)" ToolTip.Tip="Surveyed position north of the field origin." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding Up, Mode=TwoWay}" Width="84">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="Up (m)" ToolTip.Tip="Surveyed antenna height above the field origin." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding SigmaEast, Mode=TwoWay}" Width="70">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="σE (m)" ToolTip.Tip="Survey uncertainty east. The modem stores its square." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding SigmaNorth, Mode=TwoWay}" Width="70">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="σN (m)" ToolTip.Tip="Survey uncertainty north. The modem stores its square." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding SigmaUp, Mode=TwoWay}" Width="70">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="σU (m)" ToolTip.Tip="Survey uncertainty up. The modem stores its square." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding BiasSigma, Mode=TwoWay}" Width="80">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="Bias σ (m)" ToolTip.Tip="Uncertainty of this beacon's range bias. The modem stores its square." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding EastNorth, Mode=TwoWay}" Width="80"
+                                      IsVisible="False">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="EN (m²)" ToolTip.Tip="Survey covariance of east and north, in square metres." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding EastUp, Mode=TwoWay}" Width="80"
+                                      IsVisible="False">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="EU (m²)" ToolTip.Tip="Survey covariance of east and up, in square metres." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                  <DataGridTextColumn Binding="{Binding NorthUp, Mode=TwoWay}" Width="80"
+                                      IsVisible="False">
+                    <DataGridTextColumn.Header>
+                      <TextBlock Text="NU (m²)" ToolTip.Tip="Survey covariance of north and up, in square metres." />
+                    </DataGridTextColumn.Header>
+                  </DataGridTextColumn>
+                </DataGrid.Columns>
+              </DataGrid>
+              <CheckBox x:Name="LpsShowCovariance" Content="Show covariance terms"
+                        IsChecked="{Binding ShowCovariance, Mode=TwoWay}"
+                        ToolTip.Tip="East-north, east-up and north-up survey covariance in square metres. Zero when the survey gives none." />
+              <Expander x:Name="LpsRadioAdvanced" Header="Ranging radio"
+                        IsExpanded="{Binding RadioSettingsShown, Mode=TwoWay}">
+                <StackPanel Spacing="4">
+                  <Grid Classes="field" ColumnDefinitions="216,*">
+                    <TextBlock Text="Ranging bandwidth" />
+                    <ComboBox Grid.Column="1" x:Name="LpsRangingBandwidth"
+                              ItemsSource="{Binding RangingBandwidths}"
+                              SelectedItem="{Binding RangingBandwidth, Mode=TwoWay}"
+                              IsEnabled="{Binding InputsEnabled}" HorizontalAlignment="Stretch"
+                              ToolTip.Tip="LoRa bandwidth of the ranging exchanges. Every modem of the field uses the same radio settings." />
+                  </Grid>
+                  <Grid Classes="field" ColumnDefinitions="216,*">
+                    <TextBlock Text="Ranging spreading factor" />
+                    <ComboBox Grid.Column="1" x:Name="LpsRangingSf"
+                              ItemsSource="{Binding RangingSpreadingFactors}"
+                              SelectedItem="{Binding RangingSpreadingFactor, Mode=TwoWay}"
+                              IsEnabled="{Binding InputsEnabled}" HorizontalAlignment="Stretch"
+                              ToolTip.Tip="Spreading factor of the ranging exchanges." />
+                  </Grid>
+                  <CheckBox x:Name="LpsRangingExtended" Content="Extended ranging"
+                            IsChecked="{Binding ExtendedRanging, Mode=TwoWay}"
+                            IsEnabled="{Binding InputsEnabled}"
+                            ToolTip.Tip="Use the LR2021 extended ranging exchange." />
+                  <Grid Classes="field" ColumnDefinitions="216,*">
+                    <TextBlock Text="Response length (symbols)" />
+                    <NumericUpDown Grid.Column="1" x:Name="LpsResponseSymbols"
+                                   Value="{Binding ResponseSymbols, Mode=TwoWay}" Minimum="1"
+                                   Maximum="63" Increment="1" FormatString="0"
+                                   IsEnabled="{Binding InputsEnabled}"
+                                   ToolTip.Tip="Length of the beacon's ranging response, 1 to 63 symbols." />
+                  </Grid>
+                  <CheckBox x:Name="LpsRendezvousSame" Content="Meet on the data link carrier"
+                            IsChecked="{Binding MeetOnDataCarrier, Mode=TwoWay}"
+                            IsEnabled="{Binding InputsEnabled}"
+                            ToolTip.Tip="The rover and a beacon agree on each burst on the carrier of the radio's data link. Untick to give them their own carrier." />
+                  <Grid Classes="field" ColumnDefinitions="216,*">
+                    <TextBlock Text="Meeting carrier (MHz)" />
+                    <NumericUpDown Grid.Column="1" x:Name="LpsRendezvousMhz"
+                                   Value="{Binding MeetingMhz, Mode=TwoWay}" Minimum="0.000001"
+                                   Maximum="4294.967295" Increment="0.1" FormatString="0.000000"
+                                   IsEnabled="{Binding MeetingCarrierEnabled}"
+                                   ToolTip.Tip="Carrier on which the rover and a beacon agree on each burst." />
+                  </Grid>
+                  <Grid Classes="field" ColumnDefinitions="216,*">
+                    <TextBlock Text="Meeting bandwidth" />
+                    <ComboBox Grid.Column="1" x:Name="LpsRendezvousBandwidth"
+                              ItemsSource="{Binding MeetingBandwidths}"
+                              SelectedItem="{Binding MeetingBandwidth, Mode=TwoWay}"
+                              IsEnabled="{Binding InputsEnabled}" HorizontalAlignment="Stretch"
+                              ToolTip.Tip="LoRa bandwidth of the messages that set up each burst." />
+                  </Grid>
+                  <Grid Classes="field" ColumnDefinitions="216,*">
+                    <TextBlock Text="Meeting spreading factor" />
+                    <ComboBox Grid.Column="1" x:Name="LpsRendezvousSf"
+                              ItemsSource="{Binding MeetingSpreadingFactors}"
+                              SelectedItem="{Binding MeetingSpreadingFactor, Mode=TwoWay}"
+                              IsEnabled="{Binding InputsEnabled}" HorizontalAlignment="Stretch"
+                              ToolTip.Tip="Spreading factor of the messages that set up each burst." />
+                  </Grid>
+                </StackPanel>
+              </Expander>
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+      </TabControl>
+    </Grid>
+
+    <!-- The LPS rows of the modem settings, one per modem, in the same columns. -->
+    <Border Grid.Row="2" x:Name="LpsReadoutGroup" BorderBrush="{DynamicResource MpBorderBrush}"
+            BorderThickness="1" CornerRadius="2" Padding="8">
+      <StackPanel Spacing="4">
+        <TextBlock Text="LPS" FontWeight="SemiBold" />
+        <setup:NvDistanceRowsView x:Name="LpsRows" Rows="{Binding LpsRows}" ModeHeader="LPS" />
+      </StackPanel>
+    </Border>
+
+    <!-- One fixed place for progress and outcomes, with the save beside it. -->
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" x:Name="LpsFieldStatus" Text="{Binding Status}"
+                 TextWrapping="Wrap" VerticalAlignment="Center" />
+      <Button Grid.Column="1" x:Name="LpsFieldApply" Content="{Binding ApplyText}"
+              IsEnabled="{Binding CanApply}" ToolTip.Tip="{Binding ApplyTip}"
+              VerticalAlignment="Center" />
+      <Button Grid.Column="2" x:Name="LpsFieldClose" Content="Close" VerticalAlignment="Center" />
+    </Grid>
+  </Grid>
+</Window>

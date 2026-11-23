@@ -211,6 +211,9 @@ public sealed partial class Nv5NativeSettingsEditor {
 
   /// <summary>A readout of the previous device must not stand under the new one.</summary>
   private void ResetDistance() {
+    if (_target != null) {
+      _lps.Observe(_target);
+    }
     for (int channel = 0; channel < 2; channel++) {
       _haveDistance[channel] = false;
       _distanceReading[channel] = _distanceAlert[channel] = _distanceBurst[channel] = "";
@@ -377,8 +380,16 @@ public sealed partial class Nv5NativeSettingsEditor {
           on ? (telemetry ? _distanceReading[channel] : NoTelemetry) : "",
           on && telemetry ? _distanceAlert[channel] : "",
           on && telemetry ? _distanceBurst[channel] : "", text);
-      DistanceRows[channel].Show(_distanceRows[channel]);
+      // A radio ranges either with its pair or for LPS, never both: its row says which. The pair
+      // window keeps showing the radio's own ranging state.
+      if (LpsRadio() == channel + 1) {
+        NvDistanceReadout lps = LpsRow(radioInRow: true);
+        DistanceRows[channel].Show(on ? lps with { Mode = lps.Mode + " · ranging on" } : lps);
+      } else {
+        DistanceRows[channel].Show(_distanceRows[channel]);
+      }
     }
+    DistanceTitle = LpsSupported ? "Distance and LPS" : "Distance";
   }
 
   /// <summary>A numeric setting as last read, or zero when the device has none of that

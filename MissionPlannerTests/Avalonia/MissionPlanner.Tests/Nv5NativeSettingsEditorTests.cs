@@ -807,6 +807,9 @@ internal sealed class Nv5FakeModem {
   /// <summary>Refuses every commit as a storage failure.</summary>
   internal bool FailCommit { get; set; }
 
+  /// <summary>Answers every commit as indeterminate, as after a cut during the write.</summary>
+  internal bool IndeterminateCommit { get; set; }
+
   internal int RefuseReadBegins { get; set; }
   internal bool SingleReader { get; set; }
   internal int ReadBegins { get; private set; }
@@ -841,7 +844,15 @@ internal sealed class Nv5FakeModem {
     _activeDigest = Digest;
   }
 
+  /// <summary>LPS freshness challenges, which a modem answers with its next STATUS, not
+  /// here.</summary>
+  internal List<MAVLink.mavlink_command_long_t> Challenges { get; } = [];
+
   internal IEnumerable<MAVLink.MAVLinkMessage> Answer(Nv5ConfigurationFrame request) {
+    if (request.Payload is MAVLink.mavlink_command_long_t command) {
+      Challenges.Add(command);
+      yield break;
+    }
     Seen.Add(request);
     if (_activeDigest == 0 && _activeRevision == Revision) {
       _activeDigest = Digest;
@@ -927,7 +938,9 @@ internal sealed class Nv5FakeModem {
         break;
       case Nv5ConfigOperations.Commit:
         Commits++;
-        if (FailCommit) {
+        if (IndeterminateCommit) {
+          reply.Result = Nv5ConfigResults.Indeterminate;
+        } else if (FailCommit) {
           reply.Result = Nv5ConfigResults.StorageFailed;
         } else if (CommitModel) {
           foreach ((string stagedName, uint stagedRaw) in Staged) {
