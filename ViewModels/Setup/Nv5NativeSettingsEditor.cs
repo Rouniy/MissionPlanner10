@@ -641,11 +641,12 @@ public sealed partial class Nv5NativeSettingsEditor : ObservableObject {
     // The document holds key words. It is written to a fresh, unpredictably named file that only
     // this call can have created (CreateNew fails on any existing path, including a symbolic
     // link) and that is owner-only before the first byte; the rename then replaces the
-    // destination, whose earlier permissions do not carry over.
+    // destination, whose earlier permissions do not carry over. That name is short and does not
+    // grow with the destination's, so any name the folder accepts can be exported to.
     string fullPath = Path.GetFullPath(path);
     string temporary = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".",
-        $".{Path.GetFileName(fullPath)}."
-            + $"{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}.tmp");
+        $".settings-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}"
+            + ".tmp");
     bool created = false;
     try {
       using (FileStream stream = CreateOwnerOnlyFile(temporary)) {

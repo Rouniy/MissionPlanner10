@@ -466,6 +466,22 @@ public partial class Nv5NativeSettingsEditorTests {
   }
 
   [Fact]
+  public void A_snapshot_is_exported_under_the_longest_name_a_folder_takes() {
+    var bench = new Bench(TwoSettingModem());
+    Nv5NativeSettingsEditor editor = bench.Attach();
+    string directory = Directory.CreateTempSubdirectory("nv5-export-").FullName;
+    try {
+      // 255 bytes, the usual limit for one name: a temporary name grown from it would not fit.
+      string path = Path.Combine(directory, new string('s', 250) + ".json");
+      Assert.True(editor.ExportSnapshot(path), editor.StatusText);
+      Assert.Equal("1234", (string?)JsonNode.Parse(File.ReadAllText(path))!["catalog_id"]);
+      Assert.Equal(path, Assert.Single(Directory.GetFiles(directory)));
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  [Fact]
   public void Owner_only_access_is_read_back_from_the_unix_file_mode() {
     if (OperatingSystem.IsWindows()) {
       return;
