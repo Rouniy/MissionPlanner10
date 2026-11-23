@@ -78,7 +78,8 @@ public class Nv5LpsTelemetryTests {
     Assert.False(model.Receive(Nv5LpsTestData.Packet(value), "route", 111000));
     Assert.False(model.PoseCurrent(111000));
     Assert.True(model.ChallengeDue(111000));
-    // The new boot's reports are taken, but as passive ones until a challenge confirms them.
+    // The new boot's later reports are taken, but as passive ones until a challenge confirms them.
+    value.SnapshotSeq = 3;
     Assert.True(model.Receive(Nv5LpsTestData.Packet(value), "route", 112000));
     Assert.False(model.Verified(112000));
     model.Observe(Peer with { TransportEpoch = 2 });
@@ -115,6 +116,44 @@ public class Nv5LpsTelemetryTests {
     Assert.False(model.Receive(Nv5LpsTestData.Packet(Nv5LpsTestData.Status(0, 6, 1000500)),
         "route", 113500));
     Assert.Equal((8ul, 7ul), (model.Status.RuntimeEpoch, model.Status.SnapshotSeq));
+  }
+
+  [Fact]
+  public void A_late_report_is_not_taken_once_a_later_epoch_withdrew_the_confirmation() {
+    var model = new Nv5LpsTelemetry();
+    model.Observe(Peer);
+    Assert.NotNull(model.Request(100000, 42));
+    Assert.True(model.Receive(Nv5LpsTestData.Packet(Nv5LpsTestData.Status(42, 5)), "route",
+        110000));
+    // The first report of a later epoch withdraws the confirmation and is not taken itself.
+    Nv5LpsStatusMessage next = Nv5LpsTestData.Status(0, 6, 1001000);
+    next.RuntimeEpoch = 8;
+    Assert.False(model.Receive(Nv5LpsTestData.Packet(next), "route", 111000));
+    Assert.False(model.Received);
+    Assert.True(model.ChallengeDue(111000));
+
+    // Reports captured before it arrive late: one from the epoch before, the confirmed report
+    // repeated, and the withdrawing report repeated. None is taken in its place.
+    Nv5LpsStatusMessage repeated = Nv5LpsTestData.Status(0, 5);
+    Assert.False(model.Receive(Nv5LpsTestData.Packet(Nv5LpsTestData.Status(0, 4, 900000)),
+        "route", 111500));
+    Assert.False(model.Receive(Nv5LpsTestData.Packet(repeated), "route", 111600));
+    Assert.False(model.Receive(Nv5LpsTestData.Packet(next), "route", 111700));
+    Assert.False(model.Received);
+    Assert.False(model.Verified(111700));
+    Assert.True(model.ChallengeDue(111700));
+
+    // The later epoch's next report is taken, unconfirmed, and its challenge confirms it.
+    next.SnapshotSeq = 7;
+    next.SnapshotTimeUs = 1002000;
+    Assert.True(model.Receive(Nv5LpsTestData.Packet(next), "route", 112000));
+    Assert.False(model.Verified(112000));
+    Assert.NotNull(model.Request(112000, 43));
+    Nv5LpsStatusMessage answer = Nv5LpsTestData.Status(43, 8, 1003000);
+    answer.RuntimeEpoch = 8;
+    Assert.True(model.Receive(Nv5LpsTestData.Packet(answer), "route", 113000));
+    Assert.True(model.Verified(113000));
+    Assert.Equal((8ul, 8ul), (model.Status.RuntimeEpoch, model.Status.SnapshotSeq));
   }
 
   [Fact]

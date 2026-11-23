@@ -564,7 +564,9 @@ public sealed partial class NvModemLpsFieldViewModel : ObservableObject {
   /// <summary>Writes the field shown as a field document.</summary>
   /// <remarks>The document is written to a new, unpredictably named file beside it, which only
   /// this export can have created (CreateNew fails on any existing path), and then replaces the
-  /// destination. A failed export removes that file and touches no other.</remarks>
+  /// destination. That name is short and does not grow with the document's, so any name the
+  /// folder accepts can be exported to. A failed export removes that file and touches no
+  /// other.</remarks>
   internal void ExportField(string path) {
     string error = Nv5LpsField.Validate(_text);
     if (error.Length != 0) {
@@ -573,8 +575,8 @@ public sealed partial class NvModemLpsFieldViewModel : ObservableObject {
     }
     string fullPath = Path.GetFullPath(path);
     string temporary = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".",
-        $".{Path.GetFileName(fullPath)}."
-            + $"{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}.tmp");
+        $".lps-field-{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}"
+            + ".tmp");
     bool created = false;
     try {
       using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,

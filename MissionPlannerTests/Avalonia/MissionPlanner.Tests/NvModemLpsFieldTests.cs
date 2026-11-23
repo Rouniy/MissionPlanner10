@@ -467,6 +467,24 @@ public class NvModemLpsFieldTests {
   }
 
   [Fact]
+  public void A_field_is_exported_under_the_longest_name_a_folder_takes() {
+    var bench = new LpsFieldBench(Nv5LpsTestData.Modem(0, Nv5LpsRoles.Rover, 0),
+        Nv5LpsTestData.Modem(1, Nv5LpsRoles.Beacon, uint.MaxValue));
+    NvModemLpsFieldViewModel field = bench.Open();
+    string directory = Directory.CreateTempSubdirectory("lps-field-").FullName;
+    try {
+      // 255 bytes, the usual limit for one name: a temporary name grown from it would not fit.
+      string path = Path.Combine(directory, new string('f', 250) + ".json");
+      field.ExportField(path);
+      Assert.Equal("Field exported.", field.Status);
+      Assert.True(Nv5LpsField.FromJson(File.ReadAllBytes(path), out _, out string error), error);
+      Assert.Equal([path], Directory.GetFiles(directory));
+    } finally {
+      Directory.Delete(directory, recursive: true);
+    }
+  }
+
+  [Fact]
   public void A_modem_shows_the_field_another_modem_holds() {
     Nv5FakeModem other = Nv5LpsTestData.Modem(1, Nv5LpsRoles.Beacon, uint.MaxValue);
     other.Set("LPS_B3_E_MM", 2500);
