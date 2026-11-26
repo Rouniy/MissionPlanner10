@@ -64,6 +64,54 @@ public class DroneCanSessionSafetyTests {
     Assert.True(viewModel.CanToggleConnection);
   }
 
+  /// <summary>
+  /// The parameter table is what the operator works in: it must take the height the node list and
+  /// the debug log do not need, down to the bottom edge of the page, at the content area a
+  /// minimum-size main window leaves and on a tall screen alike.
+  /// </summary>
+  [AvaloniaTheory]
+  [InlineData(880, 560, 140)]
+  [InlineData(1600, 1200, 700)]
+  public void Native_view_gives_the_parameter_table_the_remaining_height(
+      double width, double height, double expectedTableHeight) {
+    using var viewModel = new ConfigDroneCanViewModel(() => null);
+    for (byte id = 123; id <= 125; id++) {
+      viewModel.Nodes.Add(new DroneCanNode { Id = id, Name = "org.ardupilot.MatekL431-Periph" });
+    }
+    for (int i = 0; i < 87; i++) {
+      viewModel.NodeParams.Add(new DroneCanParam { Name = "PARAM_" + i, Value = i.ToString() });
+    }
+    var view = new ConfigDroneCanView { DataContext = viewModel };
+    var window = new Window { Width = width, Height = height, Content = view };
+    window.Show();
+    try {
+      Dispatcher.UIThread.RunJobs();
+      var nodes = view.FindControl<DataGrid>("DroneCanNodeGrid")!;
+      var parameters = view.FindControl<DataGrid>("DroneCanParameterGrid")!;
+      var log = view.FindControl<DataGrid>("DroneCanDebugLogGrid")!;
+      // Bounds are relative to the page grid, which sits inside a 16 px margin on every side.
+      double bottom = view.Bounds.Height - 32;
+
+      Assert.False(log.IsVisible);
+      Assert.False(view.FindControl<Expander>("DroneCanNodeDetails")!.IsExpanded);
+      Assert.True(nodes.Bounds.Height <= 200, $"node list {nodes.Bounds.Height}");
+      Assert.True(Math.Abs(parameters.Bounds.Bottom - bottom) < 1,
+          $"parameter table ends at {parameters.Bounds.Bottom}, page content at {bottom}");
+      Assert.True(parameters.Bounds.Height >= expectedTableHeight,
+          $"parameter table is {parameters.Bounds.Height} of {height} high; nodes {nodes.Bounds.Height}");
+
+      // A node that logs gets its log back, below the table, without pushing anything off the page.
+      viewModel.DebugLog.Add(new DroneCanLog { Node = "125", Text = "hello" });
+      Dispatcher.UIThread.RunJobs();
+      Assert.True(log.IsVisible);
+      Assert.True(log.Bounds.Height <= 130);
+      Assert.True(Math.Abs(log.Bounds.Bottom - bottom) < 1, $"log ends at {log.Bounds.Bottom}");
+      Assert.True(parameters.Bounds.Height >= 96, $"parameter table {parameters.Bounds.Height} with the log shown");
+    } finally {
+      window.Close();
+    }
+  }
+
   [Fact]
   public void Direct_slcan_port_identity_rejects_the_same_open_device() {
     Assert.True(ConfigDroneCanViewModel.PortsIdentifySameDevice("COM7", "COM7"));
