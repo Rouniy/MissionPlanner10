@@ -1,6 +1,30 @@
 # Avalonia in-place migration status
 
-Updated: **2026-11-04**.
+Updated: **2026-11-26**.
+
+## DroneCAN page: parameter table height; bench CAN diagnosis — 2026-11-26
+
+- Branch `fix/dronecan-param-grid-height` from `master` `56fdef124`: `cf1c05547` (node list sized to
+  its rows up to 200 px, debug log shown only once a node has logged, node details in a
+  collapsed expander, parameter table fills the page down to the bottom edge). Headless layout
+  theory: table 150 px at an 880x560 content area, 790 px at 1600x1200. Full Release tests
+  **1922/1922**, none skipped; six `build/porting/check-*.sh` audits and `git diff --check` pass.
+  Solution-wide Release build not rerun (test project build only, two pre-existing CS8604
+  warnings in `ParameterMetadataIndexTests.cs`). Not checked in the real GUI.
+- User report "CAN nodes visible only sometimes, maybe damaged by hot-plugging": no hardware or
+  application fault. Read-only probe of the bench (second CUAV-X7, USB serial `3B003D00…`):
+  CAN1 node 124 MatekG474-Periph, CAN2 nodes 123 MatekL431-BDShot and 125 MatekL431-Periph,
+  240 s without a missed NodeStatus, 0 rx errors, 0 bus-off; application code read 75-87
+  parameters per node in ~1 s at ~350 forwarded frames/s. Causes found in the tlogs: the first
+  X7 (USB serial `2C002A00…`, until 11:34) had `CAN_P2_DRIVER=0`; the 12:05 and 12:10 sessions
+  were connected to a SkyComm modem (10:11, saved `comport` `/dev/ttyACM3`), not the autopilot;
+  the boards are split over two buses and only one is forwarded at a time. No autopilot
+  parameter was changed.
+- `DroneCanLiveHardwareTests` fails on this bench only on its "other bus shows the
+  autopilot-only hint" assertion, which assumes an empty second bus. Not fixed.
+- Next executable step: user confirms the page in the GUI, then PR with `--repo
+  Rouniy/MissionPlanner10`. Offered, not started: warn on the DroneCAN page when the selected
+  MAVLink target is not an autopilot; relax the live test's other-bus assertion.
 
 ## MAVLink serial throughput, DroneCAN firmware update over MAVLink CAN — 2026-11-04
 
